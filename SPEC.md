@@ -145,13 +145,22 @@ Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback
 - Shell: a handheld **device chassis**, not a full-screen overlay — the screen
   sits in a dark bezel at the top of a light device body, with an opaque
   control deck below: d-pad cross (left), small MENU pill (center), offset
-  A/B buttons (right, Game Boy style). Screen integer-scales when possible;
-  the deck keeps a finger-friendly height (~20% of viewport, clamped
-  112–150px); the whole device centers in larger windows. Multi-touch with
-  8-way d-pad angle detection; keyboard input; Escape or MENU opens a pause
-  menu (RESUME / RESET) confined to the screen area — game logic does not
-  step while paused, and no catch-up burst fires on resume. rAF loop with
-  fixed-step accumulator (max 4 catch-up steps).
+  A/B buttons (right, Game Boy style), plus a ribbed **volume thumbwheel**
+  next to MENU (drag or scroll; perceptual `vol²` curve into a master
+  GainNode; persisted as localStorage `con-vol`, default 60%). Screen
+  scaling: **FIT** (default) fills the viewport fractionally; the pause menu
+  has a **PIXELS: FIT/SHARP** toggle for integer-scaled crispness
+  (localStorage `con-pp`). The deck keeps a finger-friendly height (~19% of
+  viewport, clamped 108–150px); the device centers in larger windows.
+  Multi-touch with 8-way d-pad angle detection; keyboard input; Escape or
+  MENU opens the pause menu (RESUME / RESET / PIXELS) confined to the screen
+  area — game logic does not step while paused, no catch-up burst on resume.
+  rAF loop with fixed-step accumulator (max 4 catch-up steps). Audio output
+  chain: AudioWorklet loaded from a `data:` module URL first on `file://`
+  pages (null origin — some browsers refuse `blob:null` module loads) and a
+  Blob URL otherwise, falling back to a ScriptProcessorNode; ~50ms silent
+  prebuffer; `window.__console.audioState()` exposes
+  mode/errors/framesPushed/volume for headless verification.
 - C ABI (console-web): `con_init(cart_ptr, cart_len) -> i32` (0 ok),
   `con_step(input_mask)`, `con_fb() -> *const u8` (144*256 palette indices),
   `con_palette() -> *const u8` (16×3 RGB), `con_error() -> *const u8` (NUL-terminated

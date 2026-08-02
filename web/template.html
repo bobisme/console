@@ -86,13 +86,42 @@
   #dpad::after { width: 100px; height: 34px; }
   #dpad.held::before, #dpad.held::after { background: #2e3450; }
 
-  /* menu pill */
+  /* menu pill + volume wheel cluster */
   #menuwrap {
+    position: relative;
     flex: none;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+  }
+  .minicol {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 3px;
+  }
+  #volwheel {
+    width: 18px; height: 46px;
+    border-radius: 9px;
+    border: 2px solid #171826;
+    background: repeating-linear-gradient(to bottom, #cdb6ac 0px, #cdb6ac 3px, #a08a80 3px, #a08a80 6px);
+    box-shadow: inset 2px 0 3px rgba(0, 0, 0, 0.35), inset -2px 0 3px rgba(0, 0, 0, 0.35);
+    touch-action: none;
+    cursor: ns-resize;
+  }
+  #voltip {
+    display: none;
+    position: absolute;
+    top: -26px; left: 50%;
+    transform: translateX(-50%);
+    background: #171826;
+    color: #e7d6ce;
+    border-radius: 4px;
+    padding: 3px 7px;
+    font: 700 9px/1 monospace;
+    letter-spacing: 1px;
+    white-space: nowrap;
   }
   #menubtn {
     width: 46px; height: 22px;
@@ -102,7 +131,7 @@
     box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25);
   }
   #menubtn:active, #menubtn.held { background: #b79d92; }
-  #menulabel {
+  .ctl-label {
     font: 700 8px/1 monospace;
     letter-spacing: 2px;
     color: #6b5a54;
@@ -178,8 +207,15 @@
   <div id="deck">
     <div id="dpad"></div>
     <div id="menuwrap">
-      <div id="menubtn"></div>
-      <div id="menulabel">MENU</div>
+      <div class="minicol" id="menucol">
+        <div id="menubtn"></div>
+        <div class="ctl-label">MENU</div>
+      </div>
+      <div class="minicol">
+        <div id="volwheel"></div>
+        <div class="ctl-label">VOL</div>
+      </div>
+      <div id="voltip"></div>
     </div>
     <div id="ab">
       <div id="btnB" class="btn">B</div>
@@ -189,6 +225,7 @@
   <div id="menu">
     <div class="mitem" id="mresume">RESUME</div>
     <div class="mitem" id="mreset">RESET</div>
+    <div class="mitem" id="mpixel">PIXELS: FIT</div>
   </div>
 </div>
 <pre id="errbox"></pre>
@@ -222,14 +259,19 @@
   // keeps a finger-friendly height carved out of the viewport budget.
   var CHROME_W = 2 * (10 + 7 + 3);   // (device padding + bezel + border) both sides
   var CHROME_H = 10 + 2 * 7 + 2 * 3; // top padding + bezel top/bottom + borders
+  // Scaling: "FIT" (default) fills the viewport with fractional scaling;
+  // "SHARP" (pause-menu toggle) floors to integer scale for pixel-perfect
+  // crispness at the cost of margins.
+  var pixelPerfect = false;
+  try { pixelPerfect = localStorage.getItem("con-pp") === "1"; } catch (e) { /* private mode */ }
   function layout() {
     var vw = window.innerWidth, vh = window.innerHeight;
-    var deckH = Math.max(112, Math.min(150, Math.round(vh * 0.20)));
-    var margin = 12;
+    var deckH = Math.max(108, Math.min(150, Math.round(vh * 0.19)));
+    var margin = 6;
     var availW = vw - margin * 2 - CHROME_W;
     var availH = vh - margin * 2 - CHROME_H - deckH;
     var scale = Math.min(availW / W, availH / H);
-    if (scale >= 1) scale = Math.floor(scale); // crisp integer scaling when possible
+    if (pixelPerfect && scale >= 1) scale = Math.floor(scale);
     if (scale <= 0) scale = 0.5;               // degenerate tiny window
     canvas.style.width = Math.max(1, Math.round(W * scale)) + "px";
     canvas.style.height = Math.max(1, Math.round(H * scale)) + "px";
@@ -336,7 +378,7 @@
     if (menuOpen) { pointers = {}; refreshInput(); } // drop held touches while paused
     if (audioCtx) { if (menuOpen) { audioCtx.suspend(); } else { audioCtx.resume(); } }
   }
-  document.getElementById("menuwrap").addEventListener("pointerdown", function (e) {
+  document.getElementById("menucol").addEventListener("pointerdown", function (e) {
     toggleMenu();
     e.stopPropagation();
     e.preventDefault();
@@ -346,6 +388,62 @@
     resetConsole();
     toggleMenu(false);
   });
+  var mpixel = document.getElementById("mpixel");
+  function pixelLabel() {
+    mpixel.textContent = "PIXELS: " + (pixelPerfect ? "SHARP" : "FIT");
+  }
+  mpixel.addEventListener("click", function () {
+    pixelPerfect = !pixelPerfect;
+    try { localStorage.setItem("con-pp", pixelPerfect ? "1" : "0"); } catch (e) { /* private mode */ }
+    pixelLabel();
+    layout();
+  });
+  pixelLabel();
+
+  // ---- volume: skeuomorphic side-wheel next to MENU ----
+  var volume = 0.6;
+  try {
+    var storedVol = parseFloat(localStorage.getItem("con-vol"));
+    if (storedVol >= 0 && storedVol <= 1) volume = storedVol;
+  } catch (e) { /* private mode */ }
+  var volwheel = document.getElementById("volwheel");
+  var voltip = document.getElementById("voltip");
+  var voltipTimer = null;
+  function setVolume(v, showTip) {
+    volume = Math.max(0, Math.min(1, v));
+    if (masterGain) masterGain.gain.value = volume * volume; // perceptual curve
+    try { localStorage.setItem("con-vol", volume.toFixed(3)); } catch (e) { /* private mode */ }
+    // ridges scroll as the wheel "turns"
+    volwheel.style.backgroundPositionY = (volume * 60).toFixed(1) + "px";
+    if (showTip) {
+      voltip.textContent = "VOL " + Math.round(volume * 100) + "%";
+      voltip.style.display = "block";
+      if (voltipTimer) clearTimeout(voltipTimer);
+      voltipTimer = setTimeout(function () { voltip.style.display = "none"; }, 700);
+    }
+  }
+  var volDragY = null;
+  volwheel.addEventListener("pointerdown", function (e) {
+    volDragY = e.clientY;
+    volwheel.setPointerCapture(e.pointerId);
+    unlockAudio();
+    setVolume(volume, true);
+    e.stopPropagation();
+    e.preventDefault();
+  });
+  volwheel.addEventListener("pointermove", function (e) {
+    if (volDragY === null) return;
+    setVolume(volume + (volDragY - e.clientY) * 0.006, true);
+    volDragY = e.clientY;
+    e.stopPropagation();
+  });
+  volwheel.addEventListener("pointerup", function () { volDragY = null; });
+  volwheel.addEventListener("pointercancel", function () { volDragY = null; });
+  volwheel.addEventListener("wheel", function (e) {
+    setVolume(volume - e.deltaY * 0.0015, true);
+    e.preventDefault();
+  }, { passive: false });
+  setVolume(volume, false);
 
   // ---- engine ----
   var Module;
@@ -417,7 +515,7 @@
     "  constructor() { super(); this.q = []; this.off = 0;\n" +
     "    this.port.onmessage = (e) => {\n" +
     "      this.q.push(e.data);\n" +
-    "      if (this.q.length > 16) this.q.splice(0, this.q.length - 16);\n" +
+    "      if (this.q.length > 24) this.q.splice(0, this.q.length - 24);\n" +
     "    };\n" +
     "  }\n" +
     "  process(inputs, outputs) {\n" +
@@ -433,14 +531,27 @@
     "    return true;\n" +
     "  }\n" +
     "});\n";
-  var audioMode = null, workletError = null;
-  // Fallback player for browsers that refuse the Blob-URL worklet module:
+  var audioMode = null, workletError = null, masterGain = null;
+  function prebuffer() {
+    // A little silence up front so the first real frames aren't racing the
+    // audio clock (glitch guard, ~50ms).
+    for (var i = 0; i < 3; i++) {
+      var z = new Float32Array(AUDIO_FRAME);
+      audioNode.port.postMessage(z, [z.buffer]);
+    }
+  }
+  function audioLive(mode) {
+    audioReady = true;
+    audioMode = mode;
+    prebuffer();
+  }
+  // Last-resort player for browsers where no worklet module URL is accepted:
   // a ScriptProcessorNode (deprecated but universal) draining the same kind
   // of queue on the main thread. Mimics the worklet's port.postMessage
   // interface so pushAudio() is agnostic.
   function initScriptProcessor() {
     var q = [], off = 0;
-    var node = audioCtx.createScriptProcessor(1024, 0, 1);
+    var node = audioCtx.createScriptProcessor(2048, 0, 1);
     node.onaudioprocess = function (ev) {
       var out = ev.outputBuffer.getChannelData(0), i = 0;
       while (i < out.length) {
@@ -452,17 +563,16 @@
         if (off >= c.length) { q.shift(); off = 0; }
       }
     };
-    node.connect(audioCtx.destination);
+    node.connect(masterGain);
     audioNode = {
       port: {
         postMessage: function (samples) {
           q.push(samples);
-          if (q.length > 16) q.splice(0, q.length - 16);
+          if (q.length > 24) q.splice(0, q.length - 24);
         }
       }
     };
-    audioReady = true;
-    audioMode = "scriptprocessor";
+    audioLive("scriptprocessor");
   }
   function initAudio() {
     if (audioCtx || !con_audio) return;
@@ -471,23 +581,38 @@
     } catch (e) {
       try { audioCtx = new AudioContext(); } catch (e2) { return; } // ~9% pitch shift at 48k; acceptable fallback
     }
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = volume * volume;
+    masterGain.connect(audioCtx.destination);
     if (!window.AudioWorkletNode || !audioCtx.audioWorklet) {
       initScriptProcessor();
       return;
     }
-    var url = URL.createObjectURL(new Blob([WORKLET_SRC], { type: "text/javascript" }));
-    audioCtx.audioWorklet.addModule(url).then(function () {
-      audioNode = new AudioWorkletNode(audioCtx, "con-player", {
-        numberOfInputs: 0,
-        outputChannelCount: [1]
+    // Worklet module URL: file:// pages have a null origin, and some browsers
+    // refuse blob:null/... module loads ("Not allowed to load local
+    // resource") — but accept a data: URL. Try the likely-working one first
+    // so no console error is logged on the happy path; fall through the
+    // chain otherwise.
+    var attempts = [
+      ["worklet-blob", URL.createObjectURL(new Blob([WORKLET_SRC], { type: "text/javascript" }))],
+      ["worklet-data", "data:text/javascript;base64," + btoa(WORKLET_SRC)]
+    ];
+    if (location.protocol === "file:") attempts.reverse();
+    function tryWorklet(i) {
+      if (i >= attempts.length) { initScriptProcessor(); return; }
+      audioCtx.audioWorklet.addModule(attempts[i][1]).then(function () {
+        audioNode = new AudioWorkletNode(audioCtx, "con-player", {
+          numberOfInputs: 0,
+          outputChannelCount: [1]
+        });
+        audioNode.connect(masterGain);
+        audioLive(attempts[i][0]);
+      }).catch(function (e) {
+        workletError = (workletError ? workletError + " | " : "") + attempts[i][0] + ": " + e;
+        tryWorklet(i + 1);
       });
-      audioNode.connect(audioCtx.destination);
-      audioReady = true;
-      audioMode = "worklet";
-    }).catch(function (e) {
-      workletError = String(e);
-      initScriptProcessor();
-    });
+    }
+    tryWorklet(0);
   }
   function unlockAudio() {
     initAudio();
@@ -520,7 +645,8 @@
         framesPushed: audioFramesPushed,
         lastFrameNonzero: audioLastNonzero,
         mode: audioMode,
-        workletError: workletError
+        workletError: workletError,
+        volume: Math.round(volume * 100)
       };
     }
   };
