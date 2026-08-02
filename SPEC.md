@@ -43,11 +43,13 @@ Color 0 is the default clear color and the default transparent color in `spr()`.
 
 ## Input
 
-6 buttons, one bit each in an input bitmask (u8):
-bit 0 = left, 1 = right, 2 = up, 3 = down, 4 = A, 5 = B.
+7 buttons, one bit each in an input bitmask (u8):
+bit 0 = left, 1 = right, 2 = up, 3 = down, 4 = A, 5 = B,
+6 = **menu** (start/select-style game input — carts read it like any button,
+e.g. to open an in-game menu; distinct from the web shell's device menu).
 
-Keyboard: arrows/WASD for d-pad, Z/J = A, X/K = B. Letter form for CLI/RPC input
-specs: `L R U D A B` (e.g. `"RA"` = right + A).
+Keyboard: arrows/WASD for d-pad, Z/J = A, X/K = B, Enter = menu. Letter form
+for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 
 ## Lua environment
 
@@ -144,8 +146,9 @@ Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback
   from `file://`. The cart stays human/agent-editable inside the HTML.
 - Shell: a handheld **device chassis**, not a full-screen overlay — the screen
   sits in a dark bezel at the top of a light device body, with an opaque
-  control deck below: d-pad cross (left), small MENU pill (center), offset
-  A/B buttons (right, Game Boy style). Screen scaling: **FIT** (default)
+  control deck below: d-pad cross (left), a center cluster of a **triangle
+  game-menu button** (input bit 6, Enter on keyboard) above the small
+  device-MENU pill, and offset A/B buttons (right, Game Boy style). Screen scaling: **FIT** (default)
   fills the viewport fractionally; the pause menu has a **PIXELS: FIT/SHARP**
   toggle for integer-scaled crispness (localStorage `con-pp`). The deck
   keeps a finger-friendly height (~19% of viewport, clamped 108–150px); the

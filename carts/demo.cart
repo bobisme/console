@@ -21,6 +21,7 @@ function _init()
   px, py = 68, 176
   face_left = false
   burst_col = 10
+  show_help = true
   for i = 1, 28 do
     stars[i] = {
       x = flr(rnd(144)),
@@ -76,6 +77,11 @@ function _update()
     printh("reset at frame " .. flr(t() * 60))
   end
 
+  if btnp(6) then
+    show_help = not show_help
+    printh("help " .. (show_help and "on" or "off"))
+  end
+
   for i = #parts, 1, -1 do
     local p = parts[i]
     p.x = p.x + p.dx
@@ -119,7 +125,9 @@ function _draw()
     local h = 200 + flr(sin(x / 96 + t() * 0.25) * 3)
     line(x, h, x, 200, 6)
   end
-  rectfill(4, 232, 139, 251, 15)
+  if show_help then
+    rectfill(4, 232, 139, 251, 15)
+  end
 
   -- particles
   for i = 1, #parts do
@@ -140,8 +148,10 @@ function _draw()
   print("MICRO DASH", 4, 4, 12)
   print("T=" .. flr(t() * 10) / 10, 4, 12, 11)
   print("BURSTS=" .. bursts, 4, 20, 11)
-  print("ARROWS MOVE  A BURST  B RESET", 6, 238, 13)
-  print("PARTS=" .. #parts, 6, 245, 14)
+  if show_help then
+    print("ARROWS MOVE  A BURST  B RESET", 6, 238, 13)
+    print("PARTS=" .. #parts, 6, 245, 14)
+  end
 end
 
 __sprites__

@@ -86,9 +86,24 @@
   #dpad::after { width: 100px; height: 34px; }
   #dpad.held::before, #dpad.held::after { background: #2e3450; }
 
-  /* menu pill */
+  /* menu cluster: triangle = game menu button (input bit 6),
+     pill below = device menu (shell pause overlay) */
   #menuwrap {
     flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+  #gmenu {
+    width: 32px; height: 24px;
+    margin-bottom: 6px;
+    clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+    background: #232738;
+    box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.35);
+  }
+  #gmenu.held { background: #2e3450; }
+  .minicol {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -188,8 +203,11 @@
   <div id="deck">
     <div id="dpad"></div>
     <div id="menuwrap">
-      <div id="menubtn"></div>
-      <div class="ctl-label">MENU</div>
+      <div id="gmenu"></div>
+      <div id="devmenu" class="minicol">
+        <div id="menubtn"></div>
+        <div class="ctl-label">MENU</div>
+      </div>
     </div>
     <div id="ab">
       <div id="btnB" class="btn">B</div>
@@ -218,7 +236,7 @@
 "use strict";
 (async function () {
   var W = 144, H = 256, FPS = 60;
-  var BTN = { L: 1, R: 2, U: 4, D: 8, A: 16, B: 32 };
+  var BTN = { L: 1, R: 2, U: 4, D: 8, A: 16, B: 32, M: 64 };
 
   var canvas = document.getElementById("screen");
   var ctx = canvas.getContext("2d");
@@ -275,7 +293,8 @@
     ArrowUp: BTN.U, KeyW: BTN.U,
     ArrowDown: BTN.D, KeyS: BTN.D,
     KeyZ: BTN.A, KeyJ: BTN.A,
-    KeyX: BTN.B, KeyK: BTN.B
+    KeyX: BTN.B, KeyK: BTN.B,
+    Enter: BTN.M
   };
   window.addEventListener("keydown", function (e) {
     if (e.code === "Escape") { toggleMenu(); e.preventDefault(); return; }
@@ -294,6 +313,7 @@
   var dpad = document.getElementById("dpad");
   var btnA = document.getElementById("btnA");
   var btnB = document.getElementById("btnB");
+  var gmenu = document.getElementById("gmenu");
 
   function inRect(el, x, y, pad) {
     var r = el.getBoundingClientRect();
@@ -308,6 +328,7 @@
       var p = pointers[id];
       if (inRect(btnA, p.x, p.y, 10)) m |= BTN.A;
       else if (inRect(btnB, p.x, p.y, 10)) m |= BTN.B;
+      else if (inRect(gmenu, p.x, p.y, 6)) m |= BTN.M;
       else if (inRect(dpad, p.x, p.y, 22)) {
         var dx = p.x - cx, dy = p.y - cy;
         if (Math.hypot(dx, dy) > dr.width * 0.12) {
@@ -327,6 +348,7 @@
     dpad.classList.toggle("held", (touchBits & 15) !== 0);
     btnA.classList.toggle("held", (touchBits & BTN.A) !== 0);
     btnB.classList.toggle("held", (touchBits & BTN.B) !== 0);
+    gmenu.classList.toggle("held", (touchBits & BTN.M) !== 0);
   }
   window.addEventListener("pointerdown", function (e) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
@@ -356,7 +378,7 @@
     if (menuOpen) { pointers = {}; refreshInput(); } // drop held touches while paused
     if (audioCtx) { if (menuOpen) { audioCtx.suspend(); } else { audioCtx.resume(); } }
   }
-  document.getElementById("menuwrap").addEventListener("pointerdown", function (e) {
+  document.getElementById("devmenu").addEventListener("pointerdown", function (e) {
     toggleMenu();
     e.stopPropagation();
     e.preventDefault();

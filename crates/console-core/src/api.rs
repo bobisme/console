@@ -9,7 +9,7 @@ use crate::gfx::{self, col, fl};
 use crate::state::State;
 
 /// Number of buttons in the input mask.
-pub const BUTTON_COUNT: i32 = 6;
+pub const BUTTON_COUNT: i32 = 7;
 
 const TAU: f64 = std::f64::consts::TAU;
 

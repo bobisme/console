@@ -57,8 +57,11 @@ pub mod input {
     pub const DOWN: u8 = 1 << 3;
     pub const A: u8 = 1 << 4;
     pub const B: u8 = 1 << 5;
+    /// Game-facing menu/start button (the triangle above the device-menu
+    /// pill on the web shell). Distinct from the shell's own pause menu.
+    pub const MENU: u8 = 1 << 6;
     /// All defined buttons.
-    pub const MASK: u8 = 0b0011_1111;
+    pub const MASK: u8 = 0b0111_1111;
 
     /// Parse a letter input spec such as `"RA"` (right + A). Unknown letters
     /// are reported to the caller. Case-insensitive; `-`, `.` and spaces are
@@ -73,6 +76,7 @@ pub mod input {
                 'D' => DOWN,
                 'A' => A,
                 'B' => B,
+                'M' => MENU,
                 ' ' | '-' | '.' | '_' | ',' => 0,
                 other => return Err(other),
             };
@@ -313,7 +317,7 @@ mod tests {
         assert_eq!(input::parse("RA"), Ok(input::RIGHT | input::A));
         assert_eq!(input::parse(""), Ok(0));
         assert_eq!(input::parse("--"), Ok(0));
-        assert_eq!(input::parse("ludrab"), Ok(input::MASK));
+        assert_eq!(input::parse("ludrabm"), Ok(input::MASK));
         assert_eq!(input::parse("q"), Err('Q'));
     }
 
