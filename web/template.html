@@ -433,12 +433,47 @@
     "    return true;\n" +
     "  }\n" +
     "});\n";
+  var audioMode = null, workletError = null;
+  // Fallback player for browsers that refuse the Blob-URL worklet module:
+  // a ScriptProcessorNode (deprecated but universal) draining the same kind
+  // of queue on the main thread. Mimics the worklet's port.postMessage
+  // interface so pushAudio() is agnostic.
+  function initScriptProcessor() {
+    var q = [], off = 0;
+    var node = audioCtx.createScriptProcessor(1024, 0, 1);
+    node.onaudioprocess = function (ev) {
+      var out = ev.outputBuffer.getChannelData(0), i = 0;
+      while (i < out.length) {
+        var c = q[0];
+        if (!c) { while (i < out.length) out[i++] = 0; break; }
+        var n = Math.min(out.length - i, c.length - off);
+        out.set(c.subarray(off, off + n), i);
+        i += n; off += n;
+        if (off >= c.length) { q.shift(); off = 0; }
+      }
+    };
+    node.connect(audioCtx.destination);
+    audioNode = {
+      port: {
+        postMessage: function (samples) {
+          q.push(samples);
+          if (q.length > 16) q.splice(0, q.length - 16);
+        }
+      }
+    };
+    audioReady = true;
+    audioMode = "scriptprocessor";
+  }
   function initAudio() {
-    if (audioCtx || !con_audio || !window.AudioWorkletNode) return;
+    if (audioCtx || !con_audio) return;
     try {
       audioCtx = new AudioContext({ sampleRate: 44100 });
     } catch (e) {
       try { audioCtx = new AudioContext(); } catch (e2) { return; } // ~9% pitch shift at 48k; acceptable fallback
+    }
+    if (!window.AudioWorkletNode || !audioCtx.audioWorklet) {
+      initScriptProcessor();
+      return;
     }
     var url = URL.createObjectURL(new Blob([WORKLET_SRC], { type: "text/javascript" }));
     audioCtx.audioWorklet.addModule(url).then(function () {
@@ -448,7 +483,11 @@
       });
       audioNode.connect(audioCtx.destination);
       audioReady = true;
-    }).catch(function () { /* no worklet: stay silent */ });
+      audioMode = "worklet";
+    }).catch(function (e) {
+      workletError = String(e);
+      initScriptProcessor();
+    });
   }
   function unlockAudio() {
     initAudio();
@@ -479,7 +518,9 @@
         ready: audioReady,
         sampleRate: audioCtx ? audioCtx.sampleRate : null,
         framesPushed: audioFramesPushed,
-        lastFrameNonzero: audioLastNonzero
+        lastFrameNonzero: audioLastNonzero,
+        mode: audioMode,
+        workletError: workletError
       };
     }
   };
