@@ -21,7 +21,7 @@ bash -c 'source ~/emsdk/emsdk_env.sh && \
 -C link-arg=-sMODULARIZE=1 \
 -C link-arg=-sEXPORT_NAME=ConsoleEngine \
 -C link-arg=-sALLOW_MEMORY_GROWTH=1 \
--C link-arg=-sEXPORTED_FUNCTIONS=_main,_con_alloc,_con_free,_con_init,_con_step,_con_fb,_con_palette,_con_error \
+-C link-arg=-sEXPORTED_FUNCTIONS=_main,_con_alloc,_con_free,_con_init,_con_step,_con_fb,_con_audio,_con_palette,_con_error \
 -C link-arg=-sEXPORTED_RUNTIME_METHODS=cwrap,UTF8ToString,HEAPU8" \
   cargo build -p console-web --target wasm32-unknown-emscripten --release'
 ```
@@ -51,6 +51,10 @@ Why each piece matters:
 - `EXPORTED_FUNCTIONS` — the `con_*` C ABI (see `SPEC.md`). `_main` must be
   listed too: naming the list overrides emcc's default, and this is an
   executable. Leading underscores are the C-symbol convention emcc expects.
+  `_con_audio` (PoC v1) is part of that list: omit it and the shell silently
+  falls back to a mute console — `web/template.html` feature-detects
+  `Module["_con_audio"]` rather than failing, so a missing export costs you
+  sound with no error message. `web/smoke.cjs` asserts it is present.
 - `EXPORTED_RUNTIME_METHODS=cwrap,UTF8ToString,HEAPU8` — the JS-side helpers
   `web/template.html` uses. Without these they are stripped in a release build
   and the shell dies with `Module.cwrap is not a function`.
@@ -71,6 +75,15 @@ Smoke test without a browser:
 ```bash
 node web/smoke.cjs           # loads web/engine.js, runs carts/demo.cart 120 frames
 ```
+
+Besides the C ABI and framebuffer checks, it cross-checks the synth: a fresh
+console stepped 120 frames with input 0 must hash to `DEMO_AUDIO_GOLDEN` from
+`crates/console-core/tests/audio.rs`, i.e. the wasm build renders **bit-identical
+f32 samples** to the native build. Beware that console-core's test hasher
+multiplies by `0x1000_0000_01b3`, which is 2^44 + 0x1b3 and *not* the canonical
+FNV-1a-64 prime `0x100000001b3`; `smoke.cjs` mirrors that multiplier
+(`CORE_HASH_PRIME`) so the constants line up. The two primes agree in the low 40
+bits, so a mismatch shows up only in the top three nibbles of the hash.
 
 Then pack and eyeball the result:
 

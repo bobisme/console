@@ -157,8 +157,88 @@ Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback
   `con_palette() -> *const u8` (16×3 RGB), `con_error() -> *const u8` (NUL-terminated
   UTF-8 or NULL), `con_alloc(len) -> *mut u8` / `con_free(ptr, len)` for the cart copy.
 
+## Audio (PoC v1)
+
+Principles: **deterministic** (const note table + linear ops + LFSR only — no
+`powf`/`sin` at runtime, so native and wasm render bit-identical f32 samples),
+**text-native** tracker format, and audio never feeds back into game logic
+(framebuffer determinism is independent of audio).
+
+- 44100 Hz, mono f32, exactly **735 samples per frame** (44100/60). The synth
+  advances inside `step()`; a halted console renders silence.
+- **4 channels**, summed with 0.25 gain each, output clamped to [-1, 1].
+- Waveforms: 0 = pulse 12.5%, 1 = pulse 25%, 2 = square 50%, 3 = triangle,
+  4 = saw, 5 = noise (16-bit LFSR, NES-style taps, clocked from the channel
+  frequency).
+- Notes `C0`–`B7` (A4 = 440). Frequencies come from a `const` table of 96 f32
+  literals baked into the source (generated once, committed) — never computed
+  at runtime.
+- Volume 0–7, linear (`vol/7`). On any change of a channel's frequency,
+  waveform, or volume, amplitude ramps linearly over 64 samples to avoid
+  clicks (deterministic).
+- Channels are continuous-phase: a new row sets freq/wave/vol without
+  resetting phase (legato); rests just set volume 0.
+
+### `__sfx__` section
+
+```
+sfx <id 0-63> speed=<frames-per-row 1-255> [loop=<start-row>,<end-row>]
+C#4 2 7        <- row: NOTE WAVE VOL
+---            <- rest (silence this row)
+```
+
+Up to 32 rows per sfx. `loop` jumps from end-row back to start-row while the
+sfx keeps playing (looped sfx play until the channel is stopped or stolen).
+
+### `__music__` section
+
+```
+pat <id 0-63> [stop|loop=<pat-id>] : <sfx|-> <sfx|-> <sfx|-> <sfx|->
+```
+
+Four slots = channels 0–3, `-` = silent channel. Pattern duration = one pass
+of `max(rows*speed)` over its sfx (sfx `loop` flags are ignored under music).
+When a pattern ends: `loop=<id>` jumps there, `stop` halts music, otherwise
+play the next existing pattern id, else halt.
+
+### Lua API additions
+
+| fn | behavior |
+|----|----------|
+| `sfx(n, [ch=-1])` | play sfx n; ch −1 auto-picks the first channel not busy with music or sfx, stealing channel 3 if all are busy. `sfx(-1, ch)` stops that channel. |
+| `music(n)` | start music at pattern n (claims that pattern's non-`-` channels; re-claims per pattern). `music(-1)` stops music. |
+
+### Host surfaces
+
+- console-core: `audio_frame(&self) -> &[f32; 735]` — the samples rendered by
+  the most recent `step()`.
+- console-agent — agents can't hear, so audio is inspectable in three layers
+  (the session keeps an audio log + note-event log alongside the input log;
+  replay-based `load_state` reproduces both):
+  1. **Ground truth as data**: `audio_state {}` (per-channel: sfx, row,
+     resolved note name, wave, vol, music ownership; current music pattern)
+     and `audio_events {from_frame?}` (note_on / row_change / note_off /
+     pattern_change log with frame numbers).
+  2. **Signal stats**: `audio_stats {window_frames?=6}` — per-window RMS,
+     peak, clipped-sample count over the rendered mix.
+  3. **Vision**: `spectrogram {path, from_frame?, to_frame?, cell?=4}` — PNG
+     heatmap on a semitone × time grid (96 rows = the console's own C0–B7
+     note space, Goertzel per note bin, octave gridlines, 1s time ticks), so
+     melodies read as note-block patterns.
+  Plus `wav {path, from_frame?, to_frame?}` (16-bit PCM mono 44100, for
+  humans and regression hashes; hand-rolled header, no new deps). Oneshot
+  equivalents: `--wav`, `--spectrogram`, `--audio-events`, `--audio-stats`.
+- console-web C ABI: `con_audio() -> *const f32` (latest frame's 735 samples,
+  valid until the next `con_step`).
+- Web shell: `AudioContext({sampleRate: 44100})` + an AudioWorklet created
+  from a Blob URL (single-file safe). Created/resumed on the first user
+  gesture (pointer or key). Main thread posts each frame's samples to the
+  worklet (transferred); the worklet keeps a small ring (~8 frames) and plays
+  silence on underrun. Pause menu open ⇒ no steps ⇒ ring drains to silence.
+
 ## Out of scope for PoC
 
-Audio/music, map section, camera, palette remap, multiple carts,
-save data, sprite editor. Design must not preclude them. (A minimal pause
-menu — RESUME/RESET — already exists in the web shell.)
+Map section, camera, palette remap, multiple carts, save data, sprite/sfx
+editors, sfx effects columns (arpeggio/slide/vibrato), stereo. Design must
+not preclude them. (A minimal pause menu — RESUME/RESET — already exists in
+the web shell.)

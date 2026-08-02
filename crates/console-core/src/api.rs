@@ -338,6 +338,32 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         lua.create_function(|_, x: f64| Ok((x * TAU).cos()))?,
     )?;
 
+    // ---- audio -------------------------------------------------------------
+    // Both take effect immediately, so a call from `_update` or `_draw` is
+    // audible in the same frame's 735 samples.
+    let st = state.clone();
+    g.set(
+        "sfx",
+        lua.create_function(move |_, (n, ch): (f64, Option<f64>)| {
+            let ch = ch.map_or(-1, fl);
+            st.borrow_mut()
+                .audio
+                .lua_sfx(fl(n), ch)
+                .map_err(mlua::Error::RuntimeError)
+        })?,
+    )?;
+
+    let st = state.clone();
+    g.set(
+        "music",
+        lua.create_function(move |_, n: f64| {
+            st.borrow_mut()
+                .audio
+                .lua_music(fl(n))
+                .map_err(mlua::Error::RuntimeError)
+        })?,
+    )?;
+
     // ---- host --------------------------------------------------------------
     let st = state.clone();
     g.set(

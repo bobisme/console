@@ -20,6 +20,7 @@
 //! ```
 
 mod api;
+mod audio;
 mod cart;
 mod error;
 mod font;
@@ -33,6 +34,11 @@ use std::rc::Rc;
 use mlua::{Function, Lua, StdLib, Value};
 
 pub use crate::api::BUTTON_COUNT;
+pub use crate::audio::{
+    AudioBank, AudioFrame, CHANNEL_COUNT, ChannelInfo, MAX_ID, MAX_SFX_ROWS, MAX_VOL, NOTE_FREQ,
+    Pattern, PatternEnd, RAMP_SAMPLES, SAMPLE_RATE, SAMPLES_PER_FRAME, Sfx, SfxRow, WAVE_COUNT,
+    parse_note,
+};
 pub use crate::cart::Cart;
 pub use crate::error::Error;
 pub use crate::gfx::{
@@ -82,6 +88,9 @@ pub struct Console {
     /// Snapshot of the framebuffer, refreshed after every step/eval so
     /// [`Console::framebuffer`] can hand out a plain reference.
     fb: Box<Framebuffer>,
+    /// Samples rendered by the most recent successful [`Console::step`].
+    /// All zeros before the first step and after a halt.
+    audio: Box<AudioFrame>,
     cart: Cart,
     seed: u64,
     halted: Option<Error>,
@@ -108,6 +117,7 @@ impl Console {
         let st = Rc::new(RefCell::new(state::State::new(
             Box::new(*cart.sprites()),
             seed,
+            cart.audio().clone(),
         )));
 
         api::sandbox(&lua)?;
@@ -117,6 +127,7 @@ impl Console {
             lua,
             state: st,
             fb: Box::new([0u8; FB_LEN]),
+            audio: Box::new([0.0; SAMPLES_PER_FRAME]),
             cart,
             seed,
             halted: None,
@@ -137,12 +148,16 @@ impl Console {
         Ok(console)
     }
 
-    /// Advance exactly one frame: latch input, run `_update()` then `_draw()`.
+    /// Advance exactly one frame: latch input, run `_update()` then `_draw()`,
+    /// then render exactly [`SAMPLES_PER_FRAME`] audio samples from the
+    /// post-update channel state.
     ///
     /// On a Lua error the console halts: the error is remembered and every
-    /// later call returns the same `Err` without running any cart code.
+    /// later call returns the same `Err` without running any cart code. A
+    /// halted console renders silence.
     pub fn step(&mut self, input: u8) -> Result<(), Error> {
         if let Some(err) = &self.halted {
+            self.audio.fill(0.0);
             return Err(err.clone());
         }
         {
@@ -155,10 +170,19 @@ impl Console {
         self.sync_framebuffer();
         match result {
             Ok(()) => {
-                self.state.borrow_mut().frame += 1;
+                let mut s = self.state.borrow_mut();
+                s.frame += 1;
+                // Render this frame's samples from the state `_update`/`_draw`
+                // left behind, then advance the sequencer for the next frame.
+                s.audio.render();
+                self.audio.copy_from_slice(s.audio.frame());
+                s.audio.advance();
+                drop(s);
                 Ok(())
             }
             Err(e) => {
+                self.state.borrow_mut().audio.silence();
+                self.audio.fill(0.0);
                 self.halted = Some(e.clone());
                 Err(e)
             }
@@ -186,6 +210,23 @@ impl Console {
     /// row-major, 144 wide by 256 tall.
     pub fn framebuffer(&self) -> &Framebuffer {
         &self.fb
+    }
+
+    /// The mono 44100 Hz samples rendered by the most recent [`Console::step`].
+    ///
+    /// All zeros before the first step and for every step of a halted console.
+    pub fn audio_frame(&self) -> &AudioFrame {
+        &self.audio
+    }
+
+    /// Read-only snapshot of the four synth channels.
+    pub fn audio_channels(&self) -> [ChannelInfo; CHANNEL_COUNT] {
+        self.state.borrow().audio.channel_info()
+    }
+
+    /// The music pattern currently playing, if any.
+    pub fn music_pattern(&self) -> Option<u8> {
+        self.state.borrow().audio.music_pattern()
     }
 
     /// Number of completed frames. `t()` in Lua is this divided by 60.

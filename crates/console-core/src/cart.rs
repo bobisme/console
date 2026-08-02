@@ -1,7 +1,9 @@
-//! Cart text format parser (`__meta__` / `__lua__` / `__sprites__`).
+//! Cart text format parser (`__meta__` / `__lua__` / `__sprites__` /
+//! `__sfx__` / `__music__`).
 
 use std::collections::BTreeMap;
 
+use crate::audio::{AudioBank, Pattern, Sfx};
 use crate::error::Error;
 use crate::gfx::{SHEET_LEN, SHEET_W, SpriteSheet};
 
@@ -11,6 +13,7 @@ pub struct Cart {
     meta: BTreeMap<String, String>,
     lua: String,
     sprites: Box<SpriteSheet>,
+    audio: AudioBank,
     /// Raw text of every section, keyed by section name (without the `__`
     /// markers), including unknown ones so tools can round-trip them.
     sections: BTreeMap<String, String>,
@@ -57,10 +60,16 @@ impl Cart {
             None => Box::new([0u8; SHEET_LEN]),
         };
 
+        let audio = AudioBank::parse(
+            sections.get("sfx").map(String::as_str),
+            sections.get("music").map(String::as_str),
+        )?;
+
         Ok(Cart {
             meta,
             lua,
             sprites,
+            audio,
             sections,
         })
     }
@@ -73,6 +82,21 @@ impl Cart {
     /// The 128x128 sprite sheet (all zeros if the cart had no sprites).
     pub fn sprites(&self) -> &SpriteSheet {
         &self.sprites
+    }
+
+    /// The cart's `__sfx__` + `__music__` data (empty if it had neither).
+    pub fn audio(&self) -> &AudioBank {
+        &self.audio
+    }
+
+    /// Sfx `id` from `__sfx__`.
+    pub fn sfx(&self, id: u8) -> Option<&Sfx> {
+        self.audio.sfx(id)
+    }
+
+    /// Pattern `id` from `__music__`.
+    pub fn pattern(&self, id: u8) -> Option<&Pattern> {
+        self.audio.pattern(id)
     }
 
     /// All `key=value` pairs from `__meta__`.

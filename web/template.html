@@ -334,6 +334,7 @@
     menuOpen = force !== undefined ? force : !menuOpen;
     menuEl.classList.toggle("open", menuOpen);
     if (menuOpen) { pointers = {}; refreshInput(); } // drop held touches while paused
+    if (audioCtx) { if (menuOpen) { audioCtx.suspend(); } else { audioCtx.resume(); } }
   }
   document.getElementById("menuwrap").addEventListener("pointerdown", function (e) {
     toggleMenu();
@@ -360,6 +361,10 @@
   var con_fb = Module.cwrap("con_fb", "number", []);
   var con_palette = Module.cwrap("con_palette", "number", []);
   var con_error = Module.cwrap("con_error", "number", []);
+  // Audio is optional: engines built before the synth existed lack con_audio.
+  var con_audio = typeof Module["_con_audio"] === "function"
+    ? Module.cwrap("con_audio", "number", [])
+    : null;
 
   function currentError() {
     var p = con_error();
@@ -402,6 +407,75 @@
   var palPtr = con_palette();
   var pal = Module.HEAPU8.slice(palPtr, palPtr + 48); // 16 * RGB
 
+  // ---- audio: AudioWorklet fed one 735-sample frame per con_step ----
+  // Single-file safe: the worklet module loads from a Blob URL. The context
+  // is created/resumed on the first user gesture (browser autoplay policy).
+  var AUDIO_FRAME = 735;
+  var audioCtx = null, audioNode = null, audioReady = false;
+  var WORKLET_SRC =
+    "registerProcessor('con-player', class extends AudioWorkletProcessor {\n" +
+    "  constructor() { super(); this.q = []; this.off = 0;\n" +
+    "    this.port.onmessage = (e) => {\n" +
+    "      this.q.push(e.data);\n" +
+    "      if (this.q.length > 16) this.q.splice(0, this.q.length - 16);\n" +
+    "    };\n" +
+    "  }\n" +
+    "  process(inputs, outputs) {\n" +
+    "    var out = outputs[0][0], i = 0;\n" +
+    "    while (i < out.length) {\n" +
+    "      var c = this.q[0];\n" +
+    "      if (!c) { while (i < out.length) out[i++] = 0; break; }\n" +
+    "      var n = Math.min(out.length - i, c.length - this.off);\n" +
+    "      out.set(c.subarray(this.off, this.off + n), i);\n" +
+    "      i += n; this.off += n;\n" +
+    "      if (this.off >= c.length) { this.q.shift(); this.off = 0; }\n" +
+    "    }\n" +
+    "    return true;\n" +
+    "  }\n" +
+    "});\n";
+  function initAudio() {
+    if (audioCtx || !con_audio || !window.AudioWorkletNode) return;
+    try {
+      audioCtx = new AudioContext({ sampleRate: 44100 });
+    } catch (e) {
+      try { audioCtx = new AudioContext(); } catch (e2) { return; } // ~9% pitch shift at 48k; acceptable fallback
+    }
+    var url = URL.createObjectURL(new Blob([WORKLET_SRC], { type: "text/javascript" }));
+    audioCtx.audioWorklet.addModule(url).then(function () {
+      audioNode = new AudioWorkletNode(audioCtx, "con-player", {
+        numberOfInputs: 0,
+        outputChannelCount: [1]
+      });
+      audioNode.connect(audioCtx.destination);
+      audioReady = true;
+    }).catch(function () { /* no worklet: stay silent */ });
+  }
+  function unlockAudio() {
+    initAudio();
+    if (audioCtx && audioCtx.state === "suspended" && !menuOpen) audioCtx.resume();
+  }
+  function pushAudio() {
+    if (!audioReady) return;
+    var p = con_audio();
+    var samples = new Float32Array(AUDIO_FRAME);
+    samples.set(new Float32Array(Module.HEAPU8.buffer, p, AUDIO_FRAME));
+    audioNode.port.postMessage(samples, [samples.buffer]);
+  }
+  window.addEventListener("pointerdown", unlockAudio);
+  window.addEventListener("keydown", unlockAudio);
+  // Read-only debug handle so headless/browser-driving agents can verify the
+  // audio plumbing without ears.
+  window.__console = {
+    audioState: function () {
+      return {
+        supported: !!con_audio,
+        ctx: audioCtx ? audioCtx.state : null,
+        ready: audioReady,
+        sampleRate: audioCtx ? audioCtx.sampleRate : null
+      };
+    }
+  };
+
   // ---- render ----
   var imageData = ctx.createImageData(W, H);
   var rgba = imageData.data;
@@ -434,6 +508,7 @@
       var mask = inputMask();
       while (acc >= STEP && steps < 4) {
         con_step(mask);
+        pushAudio();
         acc -= STEP;
         steps++;
       }

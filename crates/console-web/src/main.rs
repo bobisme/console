@@ -25,6 +25,9 @@
 //! * `con_fb()` points into a persistent buffer that is allocated once and
 //!   never reallocated, so the pointer stays valid for the life of the module;
 //!   its *contents* are refreshed on each `con_fb()` call.
+//! * `con_audio()` works exactly like `con_fb()`, but hands out `f32` samples.
+//!   The buffer is `f32`-aligned, so JS can wrap it directly in a
+//!   `Float32Array(HEAPU8.buffer, ptr, 735)` view.
 //! * `con_palette()` points at immutable static data; always valid.
 //! * `con_error()` points into a `CString` owned by this module. It stays valid
 //!   until the next `con_init` / `con_step`.
@@ -34,7 +37,7 @@ use std::cell::RefCell;
 use std::ffi::CString;
 use std::ptr;
 
-use console_core::{Console, FB_LEN};
+use console_core::{Console, FB_LEN, SAMPLES_PER_FRAME};
 
 /// A real `static` copy of the palette: `console_core::PALETTE` is a `const`,
 /// so calling `.as_ptr()` on it directly would hand out a pointer to a
@@ -46,6 +49,8 @@ thread_local! {
     static CONSOLE: RefCell<Option<Console>> = const { RefCell::new(None) };
     /// Persistent framebuffer mirror handed out by `con_fb`.
     static FB: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// Persistent audio mirror handed out by `con_audio`.
+    static AUDIO: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     /// Last error (init failure or runtime halt), NUL-terminated.
     static ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
 }
@@ -180,6 +185,32 @@ pub extern "C" fn con_fb() -> *const u8 {
             }
         });
         fb.as_ptr()
+    })
+}
+
+/// Pointer to the latest frame's audio: [`SAMPLES_PER_FRAME`] mono f32 samples
+/// at 44100 Hz, in [-1, 1]. Never null.
+///
+/// These are the samples rendered by the most recent [`con_step`]. The pointer
+/// is stable across calls and 4-byte aligned (it is the data pointer of a
+/// `Vec<f32>`), so JS can view it as `Float32Array(HEAPU8.buffer, p, 735)`.
+/// Contents are refreshed per call: before the first [`con_step`] — and for a
+/// halted console — the buffer reads as silence (all zeros).
+#[unsafe(no_mangle)]
+pub extern "C" fn con_audio() -> *const f32 {
+    AUDIO.with(|audio| {
+        let mut audio = audio.borrow_mut();
+        if audio.len() != SAMPLES_PER_FRAME {
+            // Allocated exactly once, so the pointer below never moves.
+            audio.clear();
+            audio.resize(SAMPLES_PER_FRAME, 0.0);
+        }
+        CONSOLE.with(|slot| {
+            if let Some(con) = slot.borrow().as_ref() {
+                audio.copy_from_slice(con.audio_frame());
+            }
+        });
+        audio.as_ptr()
     })
 }
 

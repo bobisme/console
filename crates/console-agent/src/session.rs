@@ -2,12 +2,18 @@
 //!
 //! A [`Session`] owns at most one running [`Console`], the cart text and
 //! seed it was built from, the full per-frame input log since the last
-//! reset/load (needed for save/load state and for replay-based resets), and
-//! a table of named save states.
+//! reset/load (needed for save/load state and for replay-based resets), a
+//! parallel per-frame audio sample log and sequencer event log (see
+//! [`crate::audio`]), and a table of named save states.
 
 use std::collections::BTreeMap;
 
-use console_core::{Console, Error, FB_LEN, PALETTE, SCREEN_H, SCREEN_W, input};
+use console_core::{
+    CHANNEL_COUNT, ChannelInfo, Console, Error, FB_LEN, PALETTE, SAMPLES_PER_FRAME, SCREEN_H,
+    SCREEN_W, input,
+};
+
+use crate::audio::{self, AudioEvent, AudioState, Spectrogram, StatsWindow};
 
 /// A named save state: enough to recreate the exact console state via
 /// replay (`Console::new(cart_text, seed)` + step every mask in order).
@@ -60,13 +66,53 @@ impl std::fmt::Display for SessionError {
     }
 }
 
-#[derive(Default)]
+/// A channel with no sfx/music claim: the baseline the very first frame's
+/// audio events are diffed against, so a channel that's *already* busy on
+/// frame 1 (e.g. `music()` started from `_init`, before any `step()`) still
+/// emits a `note_on`.
+fn idle_channels() -> [ChannelInfo; CHANNEL_COUNT] {
+    [ChannelInfo {
+        sfx: None,
+        row: 0,
+        wave: 0,
+        vol: 0,
+        from_music: false,
+        busy: false,
+    }; CHANNEL_COUNT]
+}
+
 pub struct Session {
     cart_text: Option<String>,
     console: Option<Console>,
     seed: u64,
     input_log: Vec<u8>,
     saved_states: BTreeMap<String, SavedState>,
+    /// Every sample rendered by every stepped frame since the last
+    /// reset/load, in order. `audio_log.len() / SAMPLES_PER_FRAME` is the
+    /// number of frames stepped.
+    audio_log: Vec<f32>,
+    /// Sequencer events (note_on/row_change/note_off/music_pattern_change)
+    /// derived by diffing `audio_channels()` frame over frame.
+    audio_events: Vec<AudioEvent>,
+    /// The channel snapshot the *next* stepped frame diffs against.
+    prev_channels: [ChannelInfo; CHANNEL_COUNT],
+    prev_pattern: Option<u8>,
+}
+
+impl Default for Session {
+    fn default() -> Session {
+        Session {
+            cart_text: None,
+            console: None,
+            seed: 0,
+            input_log: Vec::new(),
+            saved_states: BTreeMap::new(),
+            audio_log: Vec::new(),
+            audio_events: Vec::new(),
+            prev_channels: idle_channels(),
+            prev_pattern: None,
+        }
+    }
 }
 
 impl Session {
@@ -74,10 +120,17 @@ impl Session {
         Session::default()
     }
 
+    fn clear_audio_log(&mut self) {
+        self.audio_log.clear();
+        self.audio_events.clear();
+        self.prev_channels = idle_channels();
+        self.prev_pattern = None;
+    }
+
     /// Load a new cart from source text and (re)build the console. Clears
-    /// the input log and any save states from a previous cart, since a
-    /// save state's replay only makes sense against the cart it was
-    /// recorded on.
+    /// the input log, audio log, event log and any save states from a
+    /// previous cart, since a save state's replay only makes sense against
+    /// the cart it was recorded on.
     pub fn load_cart(&mut self, text: &str, seed: u64) -> Result<(), SessionError> {
         let console = Console::new(text, seed)?;
         self.cart_text = Some(text.to_string());
@@ -85,12 +138,14 @@ impl Session {
         self.console = Some(console);
         self.input_log.clear();
         self.saved_states.clear();
+        self.clear_audio_log();
         Ok(())
     }
 
     /// Recreate the console from the stored cart text, optionally with a
-    /// new seed, and clear the input log. The save-state table survives
-    /// (states are self-contained: cart text + their own seed + log).
+    /// new seed, and clear the input/audio/event logs. The save-state table
+    /// survives (states are self-contained: cart text + their own seed +
+    /// log).
     pub fn reset(&mut self, seed: Option<u64>) -> Result<(), SessionError> {
         let text = self.cart_text.clone().ok_or(SessionError::NoCart)?;
         let seed = seed.unwrap_or(self.seed);
@@ -98,6 +153,7 @@ impl Session {
         self.seed = seed;
         self.console = Some(console);
         self.input_log.clear();
+        self.clear_audio_log();
         Ok(())
     }
 
@@ -116,9 +172,9 @@ impl Session {
     /// halts *during* this call, that's reported in the returned
     /// [`StepOutcome`] instead, since the call did make progress.
     pub fn step(&mut self, frames: u64, mask: u8) -> Result<StepOutcome, SessionError> {
-        // Access the field directly (rather than via a `&mut self` helper
-        // method) so the borrow checker can see `self.console` and
-        // `self.input_log` as disjoint and let the loop below mutate both.
+        // Access fields directly (rather than via a `&mut self` helper
+        // method) so the borrow checker can see `self.console` and the
+        // logs as disjoint and let the loop below mutate all of them.
         let console = self.console.as_mut().ok_or(SessionError::NoCart)?;
         if let Some(err) = console.halted() {
             return Err(SessionError::AlreadyHalted(err.message().to_string()));
@@ -128,9 +184,28 @@ impl Session {
         let mut halt_message = None;
         for _ in 0..frames {
             self.input_log.push(mask);
-            if let Err(e) = console.step(mask) {
-                halt_message = Some(e.message().to_string());
-                break;
+            match console.step(mask) {
+                Ok(()) => {
+                    self.audio_log.extend_from_slice(console.audio_frame());
+                    let frame = console.frame_count();
+                    let channels = console.audio_channels();
+                    let pattern = console.music_pattern();
+                    audio::record_events(
+                        &mut self.audio_events,
+                        frame,
+                        &self.prev_channels,
+                        &channels,
+                        self.prev_pattern,
+                        pattern,
+                        console.cart(),
+                    );
+                    self.prev_channels = channels;
+                    self.prev_pattern = pattern;
+                }
+                Err(e) => {
+                    halt_message = Some(e.message().to_string());
+                    break;
+                }
             }
         }
 
@@ -190,8 +265,10 @@ impl Session {
     }
 
     /// Recreate the console from the cart text and the saved state's seed,
-    /// then replay its input log frame-by-frame. Returns the number of
-    /// frames replayed.
+    /// then replay its input log frame-by-frame, rebuilding the audio log
+    /// and event log identically to a continuous run (the synth is
+    /// deterministic, so replay reproduces both byte-for-byte). Returns the
+    /// number of frames replayed.
     pub fn load_state(&mut self, name: &str) -> Result<StepOutcome, SessionError> {
         let text = self.cart_text.clone().ok_or(SessionError::NoCart)?;
         let saved = self
@@ -201,11 +278,32 @@ impl Session {
             .ok_or_else(|| SessionError::BadParams(format!("no saved state named {name:?}")))?;
 
         let mut console = Console::new(&text, saved.seed)?;
+        let mut audio_log = Vec::new();
+        let mut audio_events = Vec::new();
+        let mut prev_channels = idle_channels();
+        let mut prev_pattern = None;
         let mut halt_message = None;
         let mut replayed = 0u64;
         for &mask in &saved.input_log {
             match console.step(mask) {
-                Ok(()) => replayed += 1,
+                Ok(()) => {
+                    replayed += 1;
+                    audio_log.extend_from_slice(console.audio_frame());
+                    let frame = console.frame_count();
+                    let channels = console.audio_channels();
+                    let pattern = console.music_pattern();
+                    audio::record_events(
+                        &mut audio_events,
+                        frame,
+                        &prev_channels,
+                        &channels,
+                        prev_pattern,
+                        pattern,
+                        console.cart(),
+                    );
+                    prev_channels = channels;
+                    prev_pattern = pattern;
+                }
                 Err(e) => {
                     halt_message = Some(e.message().to_string());
                     break;
@@ -216,6 +314,10 @@ impl Session {
         self.seed = saved.seed;
         self.input_log = saved.input_log;
         self.console = Some(console);
+        self.audio_log = audio_log;
+        self.audio_events = audio_events;
+        self.prev_channels = prev_channels;
+        self.prev_pattern = prev_pattern;
 
         Ok(StepOutcome {
             frame_count: replayed,
@@ -243,6 +345,86 @@ impl Session {
 
     pub fn input_log(&self) -> &[u8] {
         &self.input_log
+    }
+
+    /// Every sample rendered since the last load/reset/load_state, in
+    /// order.
+    pub fn audio_log(&self) -> &[f32] {
+        &self.audio_log
+    }
+
+    /// Number of frames represented in the audio log.
+    pub fn audio_frame_count(&self) -> u64 {
+        (self.audio_log.len() / SAMPLES_PER_FRAME) as u64
+    }
+
+    /// Resolve `{from_frame, to_frame}` against the audio log, clamping to
+    /// valid bounds. `to_frame` is exclusive; both default to the full log.
+    fn audio_range(&self, from_frame: Option<u64>, to_frame: Option<u64>) -> (u64, u64) {
+        let total = self.audio_frame_count();
+        let from = from_frame.unwrap_or(0).min(total);
+        let to = to_frame.unwrap_or(total).clamp(from, total);
+        (from, to)
+    }
+
+    /// The audio log's samples for `[from_frame, to_frame)`, plus the
+    /// clamped `(from, to)` frame indices actually used.
+    pub fn audio_slice(
+        &self,
+        from_frame: Option<u64>,
+        to_frame: Option<u64>,
+    ) -> Result<(&[f32], u64, u64), SessionError> {
+        self.console()?;
+        let (from, to) = self.audio_range(from_frame, to_frame);
+        let start = from as usize * SAMPLES_PER_FRAME;
+        let end = to as usize * SAMPLES_PER_FRAME;
+        Ok((&self.audio_log[start..end], from, to))
+    }
+
+    /// Encode `[from_frame, to_frame)` of the audio log as a WAV file.
+    /// Returns `(bytes, frames_covered, samples_covered)`.
+    pub fn wav_bytes(
+        &self,
+        from_frame: Option<u64>,
+        to_frame: Option<u64>,
+    ) -> Result<(Vec<u8>, u64, usize), SessionError> {
+        let (samples, from, to) = self.audio_slice(from_frame, to_frame)?;
+        Ok((audio::encode_wav(samples), to - from, samples.len()))
+    }
+
+    /// Current per-channel state (with resolved note names) + music pattern
+    /// + frame count.
+    pub fn audio_state(&self) -> Result<AudioState, SessionError> {
+        Ok(audio::audio_state(self.console()?))
+    }
+
+    /// The event log, optionally filtered to events at or after
+    /// `from_frame`.
+    pub fn audio_events(&self, from_frame: Option<u64>) -> Result<Vec<AudioEvent>, SessionError> {
+        self.console()?;
+        Ok(self
+            .audio_events
+            .iter()
+            .filter(|e| from_frame.is_none_or(|f| e.frame >= f))
+            .cloned()
+            .collect())
+    }
+
+    /// Per-window RMS/peak/clip-count stats over the whole audio log.
+    pub fn audio_stats(&self, window_frames: u64) -> Result<Vec<StatsWindow>, SessionError> {
+        self.console()?;
+        Ok(audio::compute_stats(&self.audio_log, window_frames))
+    }
+
+    /// Render a semitone-grid spectrogram PNG of `[from_frame, to_frame)`.
+    pub fn spectrogram_png(
+        &self,
+        from_frame: Option<u64>,
+        to_frame: Option<u64>,
+        cell: u32,
+    ) -> Result<Spectrogram, SessionError> {
+        let (samples, _from, _to) = self.audio_slice(from_frame, to_frame)?;
+        Ok(audio::render_spectrogram(samples, cell))
     }
 }
 

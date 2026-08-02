@@ -14,6 +14,10 @@ pub struct RunArgs {
     pub screen_text: bool,
     pub eval: Option<String>,
     pub seed: u64,
+    pub wav: Option<String>,
+    pub spectrogram: Option<String>,
+    pub audio_events: bool,
+    pub audio_stats: bool,
 }
 
 /// Parse the arguments following `run` (i.e. `args[2..]` of `argv`).
@@ -25,6 +29,10 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
     let mut screen_text = false;
     let mut eval: Option<String> = None;
     let mut seed: u64 = 0;
+    let mut wav: Option<String> = None;
+    let mut spectrogram: Option<String> = None;
+    let mut audio_events = false;
+    let mut audio_stats = false;
 
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -55,6 +63,16 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
                     .parse()
                     .map_err(|_| format!("invalid --seed value {v:?}"))?;
             }
+            "--wav" => {
+                let v = iter.next().ok_or("--wav requires a value")?;
+                wav = Some(v.clone());
+            }
+            "--spectrogram" => {
+                let v = iter.next().ok_or("--spectrogram requires a value")?;
+                spectrogram = Some(v.clone());
+            }
+            "--audio-events" => audio_events = true,
+            "--audio-stats" => audio_stats = true,
             other if other.starts_with("--") => return Err(format!("unknown flag {other:?}")),
             other => {
                 if cart_path.is_some() {
@@ -73,6 +91,10 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
         screen_text,
         eval,
         seed,
+        wav,
+        spectrogram,
+        audio_events,
+        audio_stats,
     })
 }
 
@@ -139,12 +161,43 @@ pub fn run(args: &RunArgs) -> i32 {
         }
     }
 
-    // --screenshot / --screen-text reflect the final frame (after --eval,
-    // in case the evaluated code itself drew something).
+    // --screenshot / --screen-text / --wav / --spectrogram / --audio-events
+    // / --audio-stats all reflect the final frame (after --eval, in case the
+    // evaluated code itself drew or played something).
     if let Some(path) = &args.screenshot {
         match session.screenshot_png() {
             Ok(bytes) => {
                 if let Err(e) = std::fs::write(path, &bytes) {
+                    eprintln!("error: cannot write {path:?}: {e}");
+                    return 1;
+                }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        }
+    }
+
+    if let Some(path) = &args.wav {
+        match session.wav_bytes(None, None) {
+            Ok((bytes, _frames, _samples)) => {
+                if let Err(e) = std::fs::write(path, &bytes) {
+                    eprintln!("error: cannot write {path:?}: {e}");
+                    return 1;
+                }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        }
+    }
+
+    if let Some(path) = &args.spectrogram {
+        match session.spectrogram_png(None, None, 4) {
+            Ok(spec) => {
+                if let Err(e) = std::fs::write(path, &spec.png) {
                     eprintln!("error: cannot write {path:?}: {e}");
                     return 1;
                 }
@@ -163,6 +216,42 @@ pub fn run(args: &RunArgs) -> i32 {
                     println!("{line}");
                 }
             }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        }
+    }
+
+    if args.audio_events {
+        match session.audio_events(None) {
+            Ok(events) => {
+                for event in events {
+                    match serde_json::to_string(&event) {
+                        Ok(line) => println!("{line}"),
+                        Err(e) => {
+                            eprintln!("error: {e}");
+                            return 1;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        }
+    }
+
+    if args.audio_stats {
+        match session.audio_stats(6) {
+            Ok(windows) => match serde_json::to_string(&windows) {
+                Ok(json) => println!("{json}"),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            },
             Err(e) => {
                 eprintln!("error: {e}");
                 return 1;
@@ -205,6 +294,12 @@ mod tests {
             "1+1".into(),
             "--seed".into(),
             "7".into(),
+            "--wav".into(),
+            "out.wav".into(),
+            "--spectrogram".into(),
+            "spec.png".into(),
+            "--audio-events".into(),
+            "--audio-stats".into(),
         ])
         .unwrap();
 
@@ -218,6 +313,10 @@ mod tests {
                 screen_text: true,
                 eval: Some("1+1".into()),
                 seed: 7,
+                wav: Some("out.wav".into()),
+                spectrogram: Some("spec.png".into()),
+                audio_events: true,
+                audio_stats: true,
             }
         );
     }

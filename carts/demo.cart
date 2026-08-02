@@ -30,6 +30,9 @@ function _init()
     }
   end
   printh("micro dash init")
+  -- mellow 2-pattern loop on channels 0 (triangle bass) and 1 (pulse melody);
+  -- channels 2 and 3 stay free so blips never steal the tune.
+  music(0)
 end
 
 local function spawn_burst()
@@ -62,12 +65,14 @@ function _update()
     bursts = bursts + 1
     burst_col = 8 + (bursts % 8)
     spawn_burst()
+    sfx(4)                    -- bright blip, auto channel (2 or 3)
     printh("burst " .. bursts .. " at frame " .. flr(t() * 60))
   end
 
   if btnp(5) then
     px, py = 68, 176
     parts = {}
+    sfx(5)                    -- low thud, auto channel (2 or 3)
     printh("reset at frame " .. flr(t() * 60))
   end
 
@@ -148,3 +153,95 @@ __sprites__
 00000000022222200440044000b66b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 000000000222222044000044000bb000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000033003300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+
+__sfx__
+# background tune: Am - F - C - G, speed 8 (7.5 rows/sec, 16 rows = ~2.1 s/bar-pair).
+# sfx 0/2 = triangle bass, 1/3 = pulse melody, 4 = A blip, 5 = B thud.
+# repeated rows hold a note (same freq+wave, so the volume just glides);
+# `---` is the breath before the next chord.
+
+sfx 0 speed=8
+A2 3 5
+A2 3 5
+A2 3 4
+---
+E3 3 4
+E3 3 4
+E3 3 3
+E3 3 2
+F2 3 5
+F2 3 5
+F2 3 4
+---
+C3 3 4
+C3 3 4
+C3 3 3
+C3 3 2
+
+sfx 1 speed=8
+A4 1 4
+A4 1 3
+C5 1 4
+C5 1 3
+E5 1 4
+E5 1 4
+E5 1 3
+---
+D5 1 4
+D5 1 3
+C5 1 4
+C5 1 3
+A4 1 4
+A4 1 3
+A4 1 2
+---
+
+sfx 2 speed=8
+C3 3 5
+C3 3 5
+C3 3 4
+---
+G2 3 4
+G2 3 4
+G2 3 3
+G2 3 2
+G2 3 5
+G2 3 5
+G2 3 4
+---
+D3 3 4
+D3 3 4
+D3 3 3
+D3 3 2
+
+sfx 3 speed=8
+G4 1 4
+G4 1 3
+B4 1 4
+B4 1 3
+D5 1 4
+D5 1 4
+D5 1 3
+---
+B4 1 4
+B4 1 3
+A4 1 4
+A4 1 3
+G4 1 4
+G4 1 3
+G4 1 2
+---
+
+sfx 4 speed=2
+E6 0 6
+B6 0 5
+E7 0 3
+
+sfx 5 speed=3
+A1 3 7
+F1 3 5
+C1 3 3
+
+__music__
+pat 0 : 0 1 - -
+pat 1 loop=0 : 2 3 - -

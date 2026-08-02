@@ -4,13 +4,17 @@
 //! binary.
 //!
 //! - [`session`] — session state: the running console, its cart text/seed,
-//!   the per-frame input log, and named save states.
+//!   the per-frame input log, a parallel audio sample log and sequencer
+//!   event log, and named save states.
 //! - [`rpc`] — JSON-RPC 2.0 request/response handling on top of a session.
 //! - [`oneshot`] — the `run` subcommand.
 //! - [`value`] — `mlua::Value` -> JSON, shared by `eval`/`get_global` in
 //!   both modes.
 //! - [`input_spec`] — the oneshot `--input` `COUNT:BUTTONS` mini-language.
+//! - [`audio`] — audio inspection tooling: WAV encoding, sequencer event
+//!   diffing, signal stats and the semitone-grid spectrogram.
 
+pub mod audio;
 pub mod input_spec;
 pub mod oneshot;
 pub mod rpc;
@@ -20,6 +24,7 @@ pub mod value;
 const USAGE: &str = "\
 usage:
   console-agent run <cart> [--frames N] [--input SPEC] [--screenshot out.png] [--screen-text] [--eval CODE] [--seed N]
+                    [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats]
   console-agent serve";
 
 /// Entry point shared by `main.rs` and integration tests: takes a full

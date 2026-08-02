@@ -153,6 +153,11 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "save_state" => m_save_state(session, params),
         "load_state" => m_load_state(session, params),
         "info" => m_info(session),
+        "wav" => m_wav(session, params),
+        "audio_state" => m_audio_state(session),
+        "audio_events" => m_audio_events(session, params),
+        "audio_stats" => m_audio_stats(session, params),
+        "spectrogram" => m_spectrogram(session, params),
         other => Err(RpcErr::new(-32601, format!("unknown method {other:?}"))),
     }
 }
@@ -284,5 +289,66 @@ fn m_info(session: &Session) -> Result<Value, RpcErr> {
         "meta": info.meta,
         "input_log_len": info.input_log_len,
         "saved_states": info.saved_states,
+    }))
+}
+
+fn u64_param(params: &Value, name: &str) -> Option<u64> {
+    params.get(name).and_then(Value::as_u64)
+}
+
+fn m_wav(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let path = string_param(params, "path")
+        .ok_or_else(|| RpcErr::bad_params("wav requires a \"path\" string param"))?;
+    let from_frame = u64_param(params, "from_frame");
+    let to_frame = u64_param(params, "to_frame");
+    let (bytes, frames, samples) = session.wav_bytes(from_frame, to_frame)?;
+    std::fs::write(path, &bytes)
+        .map_err(|e| RpcErr::bad_params(format!("cannot write {path:?}: {e}")))?;
+    Ok(json!({
+        "path": path,
+        "frames": frames,
+        "samples": samples,
+        "duration_seconds": samples as f64 / f64::from(console_core::SAMPLE_RATE),
+    }))
+}
+
+fn m_audio_state(session: &Session) -> Result<Value, RpcErr> {
+    let state = session.audio_state()?;
+    serde_json::to_value(state)
+        .map_err(|e| RpcErr::new(-32000, format!("failed to serialize audio state: {e}")))
+}
+
+fn m_audio_events(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let from_frame = u64_param(params, "from_frame");
+    let events = session.audio_events(from_frame)?;
+    serde_json::to_value(events)
+        .map_err(|e| RpcErr::new(-32000, format!("failed to serialize audio events: {e}")))
+}
+
+fn m_audio_stats(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let window_frames = u64_param(params, "window_frames").unwrap_or(6);
+    let windows = session.audio_stats(window_frames)?;
+    serde_json::to_value(windows)
+        .map_err(|e| RpcErr::new(-32000, format!("failed to serialize audio stats: {e}")))
+}
+
+fn m_spectrogram(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let path = string_param(params, "path")
+        .ok_or_else(|| RpcErr::bad_params("spectrogram requires a \"path\" string param"))?;
+    let from_frame = u64_param(params, "from_frame");
+    let to_frame = u64_param(params, "to_frame");
+    let cell = params
+        .get("cell")
+        .and_then(Value::as_u64)
+        .map(|c| c as u32)
+        .unwrap_or(4);
+    let spec = session.spectrogram_png(from_frame, to_frame, cell)?;
+    std::fs::write(path, &spec.png)
+        .map_err(|e| RpcErr::bad_params(format!("cannot write {path:?}: {e}")))?;
+    Ok(json!({
+        "path": path,
+        "windows": spec.windows,
+        "width": spec.width,
+        "height": spec.height,
     }))
 }
