@@ -1,0 +1,209 @@
+//! C ABI over `console-core`, built for `wasm32-unknown-emscripten`.
+//!
+//! This is a *binary* crate: `main` does nothing, the real surface is the
+//! `con_*` C ABI below (see `SPEC.md`, "Single-file HTML"). Emscripten keeps
+//! the symbols alive via `-sEXPORTED_FUNCTIONS` (see `web/build-engine.sh`).
+//!
+//! Nothing here is emscripten-specific, so the crate also builds and links
+//! natively as a workspace member; the ABI is simply unused there.
+//!
+//! # Threading
+//!
+//! [`console_core::Console`] is `!Send` (it owns a Lua VM), and the wasm build
+//! is single-threaded, so all global state lives in `thread_local!` +
+//! `RefCell`. Every entry point below must be called from the one JS thread.
+//!
+//! # Ownership / lifetime contract
+//!
+//! * `con_alloc(len)` returns a buffer from the Rust global allocator
+//!   (alignment 1). Free it with `con_free(ptr, len)` **or** hand it to
+//!   `con_init`.
+//! * **`con_init` takes ownership of the cart buffer**: it copies the bytes out
+//!   and then frees the allocation itself. The caller must not use or free the
+//!   pointer afterwards. (The JS shell in `web/template.html` relies on this:
+//!   it allocs, writes, calls `con_init`, and never frees.)
+//! * `con_fb()` points into a persistent buffer that is allocated once and
+//!   never reallocated, so the pointer stays valid for the life of the module;
+//!   its *contents* are refreshed on each `con_fb()` call.
+//! * `con_palette()` points at immutable static data; always valid.
+//! * `con_error()` points into a `CString` owned by this module. It stays valid
+//!   until the next `con_init` / `con_step`.
+
+use std::alloc::{Layout, alloc, dealloc};
+use std::cell::RefCell;
+use std::ffi::CString;
+use std::ptr;
+
+use console_core::{Console, FB_LEN};
+
+/// A real `static` copy of the palette: `console_core::PALETTE` is a `const`,
+/// so calling `.as_ptr()` on it directly would hand out a pointer to a
+/// temporary. 16 entries x RGB = 48 contiguous bytes.
+static PALETTE_RGB: [[u8; 3]; 16] = console_core::PALETTE;
+
+thread_local! {
+    /// The one live console, if a cart has been loaded successfully.
+    static CONSOLE: RefCell<Option<Console>> = const { RefCell::new(None) };
+    /// Persistent framebuffer mirror handed out by `con_fb`.
+    static FB: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// Last error (init failure or runtime halt), NUL-terminated.
+    static ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
+}
+
+/// Store (or clear) the message returned by [`con_error`].
+fn set_error(msg: Option<&str>) {
+    let cstr = msg.map(|m| {
+        // Interior NULs would truncate the C string; replace them.
+        let sanitized = m.replace('\0', " ");
+        CString::new(sanitized).unwrap_or_else(|_| CString::new("error").unwrap())
+    });
+    ERROR.with(|slot| *slot.borrow_mut() = cstr);
+}
+
+/// Send any `printh` output to emscripten's stdout (i.e. `console.log`).
+fn drain_logs(con: &mut Console) {
+    for line in con.take_logs() {
+        println!("{line}");
+    }
+}
+
+/// Allocate `len` bytes for the host to write a cart into.
+///
+/// Returns null if the allocation fails. `len == 0` still returns a unique
+/// non-null pointer that must be freed.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_alloc(len: usize) -> *mut u8 {
+    let size = len.max(1);
+    let Ok(layout) = Layout::from_size_align(size, 1) else {
+        return ptr::null_mut();
+    };
+    // SAFETY: `size` is non-zero and the layout is valid.
+    unsafe { alloc(layout) }
+}
+
+/// Free a buffer previously returned by [`con_alloc`].
+///
+/// # Safety
+///
+/// `ptr` must have come from [`con_alloc`] with the same `len`, and must not
+/// have been consumed by [`con_init`] or already freed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn con_free(ptr: *mut u8, len: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    let size = len.max(1);
+    let Ok(layout) = Layout::from_size_align(size, 1) else {
+        return;
+    };
+    // SAFETY: guaranteed by the caller; layout matches `con_alloc`.
+    unsafe { dealloc(ptr, layout) }
+}
+
+/// Load a cart (UTF-8 text) with seed 0 and run its `_init`.
+///
+/// Returns 0 on success, -1 on failure (see [`con_error`]). **Takes ownership
+/// of `cart_ptr`**: the buffer is freed before returning, in both the success
+/// and failure cases.
+///
+/// # Safety
+///
+/// `cart_ptr` must be a buffer of `cart_len` readable bytes returned by
+/// [`con_alloc`] (with that same length), and must not be used afterwards.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn con_init(cart_ptr: *mut u8, cart_len: usize) -> i32 {
+    CONSOLE.with(|slot| *slot.borrow_mut() = None);
+
+    if cart_ptr.is_null() {
+        set_error(Some("con_init: null cart pointer"));
+        return -1;
+    }
+
+    // SAFETY: caller guarantees `cart_len` readable bytes at `cart_ptr`.
+    let bytes = unsafe { std::slice::from_raw_parts(cart_ptr, cart_len) }.to_vec();
+    // SAFETY: caller guarantees the buffer came from `con_alloc(cart_len)`.
+    unsafe { con_free(cart_ptr, cart_len) };
+
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+
+    match Console::new(&text, 0) {
+        Ok(mut con) => {
+            drain_logs(&mut con);
+            CONSOLE.with(|slot| *slot.borrow_mut() = Some(con));
+            set_error(None);
+            0
+        }
+        Err(e) => {
+            set_error(Some(&e.to_string()));
+            -1
+        }
+    }
+}
+
+/// Advance one frame with the given input bitmask (bit 0 = left ... 5 = B).
+///
+/// Bits above 7 are ignored. A no-op if no cart is loaded. If the cart halts,
+/// the error is latched into [`con_error`] and stays there (further steps keep
+/// reporting it).
+#[unsafe(no_mangle)]
+pub extern "C" fn con_step(input_mask: u32) {
+    CONSOLE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(con) = slot.as_mut() else {
+            return;
+        };
+        let result = con.step((input_mask & 0xff) as u8);
+        drain_logs(con);
+        match result {
+            Ok(()) => set_error(None),
+            Err(e) => set_error(Some(&e.to_string())),
+        }
+    });
+}
+
+/// Pointer to 144*256 palette indices, row-major. Never null.
+///
+/// The pointer is stable across calls; the contents are refreshed per call.
+/// Before a successful [`con_init`] the buffer reads as all zeros.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_fb() -> *const u8 {
+    FB.with(|fb| {
+        let mut fb = fb.borrow_mut();
+        if fb.len() != FB_LEN {
+            // Allocated exactly once, so the pointer below never moves.
+            fb.clear();
+            fb.resize(FB_LEN, 0);
+        }
+        CONSOLE.with(|slot| {
+            if let Some(con) = slot.borrow().as_ref() {
+                fb.copy_from_slice(con.framebuffer());
+            }
+        });
+        fb.as_ptr()
+    })
+}
+
+/// Pointer to the fixed 16x3 RGB palette (48 bytes). Never null.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_palette() -> *const u8 {
+    PALETTE_RGB.as_ptr().cast::<u8>()
+}
+
+/// NUL-terminated UTF-8 error message, or null when there is no error.
+///
+/// Covers both `con_init` failures and runtime halts. Valid until the next
+/// `con_init` / `con_step`.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_error() -> *const u8 {
+    ERROR.with(|slot| match slot.borrow().as_ref() {
+        // The CString stays owned by the thread-local, so the pointer outlives
+        // this borrow; see the module-level lifetime contract.
+        Some(msg) => msg.as_ptr().cast::<u8>(),
+        None => ptr::null(),
+    })
+}
+
+fn main() {
+    // Intentionally empty: this binary exists to be built for
+    // wasm32-unknown-emscripten; the real surface is the con_* C ABI.
+}

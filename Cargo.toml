@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/console-core",
+    "crates/console-agent",
+    "crates/console-web",
+    "crates/console-pack",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+# Shared across crates. console-core is the only consumer today; console-agent /
+# console-web / console-pack should pull these from here as they are added.
+mlua = { version = "0.12", features = ["lua54", "vendored"] }
+console-core = { path = "crates/console-core" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"

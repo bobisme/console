@@ -1,0 +1,150 @@
+__meta__
+title=Micro Dash
+author=console-core
+version=0
+
+__lua__
+-- micro dash -- console-core demo cart
+-- deterministic: no wall clock, no math.random, no pairs() iteration.
+
+local px, py            -- player position (top-left of the 8x8 sprite)
+local face_left         -- sprite flip
+local burst_col         -- particle colour, cycled by A
+local stars = {}        -- background starfield, laid out from rnd() in _init
+local parts = {}        -- particle list
+local bursts = 0        -- how many times A has been pressed
+
+local PW = 8            -- player sprite size
+local SPEED = 2
+
+function _init()
+  px, py = 68, 176
+  face_left = false
+  burst_col = 10
+  for i = 1, 28 do
+    stars[i] = {
+      x = flr(rnd(144)),
+      y = flr(rnd(196)),
+      c = 5 + flr(rnd(3)) * 4,   -- 5, 9 or 13
+      p = flr(rnd(60)),          -- twinkle phase
+    }
+  end
+  printh("micro dash init")
+end
+
+local function spawn_burst()
+  for i = 1, 14 do
+    local a = rnd(1)
+    local sp = 0.4 + rnd(1.4)
+    parts[#parts + 1] = {
+      x = px + PW / 2,
+      y = py + PW / 2,
+      dx = cos(a) * sp,
+      dy = sin(a) * sp - 0.6,
+      life = 20 + flr(rnd(24)),
+      c = burst_col,
+    }
+  end
+end
+
+function _update()
+  local dx, dy = 0, 0
+  if btn(0) then dx = dx - SPEED end
+  if btn(1) then dx = dx + SPEED end
+  if btn(2) then dy = dy - SPEED end
+  if btn(3) then dy = dy + SPEED end
+  if dx < 0 then face_left = true elseif dx > 0 then face_left = false end
+
+  px = mid(0, px + dx, 144 - PW)
+  py = mid(0, py + dy, 256 - PW)
+
+  if btnp(4) then
+    bursts = bursts + 1
+    burst_col = 8 + (bursts % 8)
+    spawn_burst()
+    printh("burst " .. bursts .. " at frame " .. flr(t() * 60))
+  end
+
+  if btnp(5) then
+    px, py = 68, 176
+    parts = {}
+    printh("reset at frame " .. flr(t() * 60))
+  end
+
+  for i = #parts, 1, -1 do
+    local p = parts[i]
+    p.x = p.x + p.dx
+    p.y = p.y + p.dy
+    p.dy = p.dy + 0.05
+    p.life = p.life - 1
+    if p.life <= 0 or p.y > 256 then
+      table.remove(parts, i)
+    end
+  end
+end
+
+function _draw()
+  cls(0)
+
+  -- sky
+  rectfill(0, 0, 143, 63, 15)
+  rectfill(0, 64, 143, 127, 8)
+
+  -- moon
+  circfill(110, 30, 13, 4)
+  circfill(104, 25, 11, 8)
+  circ(110, 30, 13, 12)
+
+  -- starfield (twinkles on a frame counter, not a clock)
+  local f = flr(t() * 60)
+  for i = 1, #stars do
+    local s = stars[i]
+    if (f + s.p) % 64 < 46 then
+      pset(s.x, s.y, s.c)
+    end
+  end
+
+  -- collectible star sprite, bobbing
+  spr(2, 20, 40 + flr(sin(t() * 0.5) * 4))
+  spr(3, 118, 150 + flr(cos(t() * 0.35) * 5))
+
+  -- ground
+  rectfill(0, 200, 143, 255, 7)
+  for x = 0, 143, 4 do
+    local h = 200 + flr(sin(x / 96 + t() * 0.25) * 3)
+    line(x, h, x, 200, 6)
+  end
+  rectfill(4, 232, 139, 251, 15)
+
+  -- particles
+  for i = 1, #parts do
+    local p = parts[i]
+    if p.life > 8 then
+      circfill(p.x, p.y, 1, p.c)
+    else
+      pset(p.x, p.y, p.c)
+    end
+  end
+
+  -- player + shadow
+  circfill(px + 4, py + 9, 3, 15)
+  spr(1, px, py, 1, 1, face_left, false)
+  rect(px - 2, py - 2, px + 9, py + 9, burst_col)
+
+  -- hud
+  print("MICRO DASH", 4, 4, 12)
+  print("T=" .. flr(t() * 10) / 10, 4, 12, 11)
+  print("BURSTS=" .. bursts, 4, 20, 11)
+  print("ARROWS MOVE  A BURST  B RESET", 6, 238, 13)
+  print("PARTS=" .. #parts, 6, 245, 14)
+end
+
+__sprites__
+00000000004444000004400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000444444000044000000bb000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000004f44f40444cc44400b66b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000044444400444c4400b6666b0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000222200004444000b6666b0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000022222200440044000b66b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000222222044000044000bb000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000033003300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000

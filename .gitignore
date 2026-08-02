@@ -1,0 +1,28 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Local cargo config overrides
+.cargo/config.local.toml
+
+# Scratch / generated artifacts
+/scratch/
+/tmp/
+/out/
+/scratch/**/*.png
+/out/**/*.png
+*.screenshot.png
+game.html
+# Packed single-file builds (console-pack output)
+/dist/
+
+# Emscripten build scratch (web/engine.js is committed deliberately)
+/crates/console-web/target/
+*.wasm
+
+# Editors / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

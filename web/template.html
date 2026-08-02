@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>{{TITLE}}</title>
+<style>
+  /* Single-file fantasy console shell, styled as a handheld device body:
+     screen in a bezel up top, opaque control deck (d-pad / MENU / A+B) below.
+     console-pack substitutes three placeholders, spelled here WITHOUT their
+     braces on purpose: a doubled-brace token in this comment would be expanded
+     too, dumping the whole engine JS into a CSS comment.
+       TITLE      -> cart meta title (HTML-escaped)
+       ENGINE_JS  -> emscripten SINGLE_FILE+MODULARIZE build (EXPORT_NAME=ConsoleEngine)
+       CART_TEXT  -> raw cart text ("</script" must be escaped by the packer as <\/script) */
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #10121c;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ---- device body ---- */
+  #device {
+    position: relative;
+    background: #e7d6ce;
+    border: 3px solid #171826;
+    border-radius: 22px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55), inset 0 2px 0 rgba(255, 255, 255, 0.35);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px 10px 0 10px;
+    min-width: 290px;
+    box-sizing: border-box;
+  }
+  #screenframe {
+    background: #171826;
+    border-radius: 12px;
+    padding: 7px;
+    line-height: 0;
+  }
+  #screen {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #000;
+    border-radius: 4px;
+  }
+
+  /* ---- control deck ---- */
+  #deck {
+    position: relative;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 6px;
+    box-sizing: border-box;
+  }
+
+  /* d-pad: classic cross */
+  #dpad {
+    position: relative;
+    width: 104px; height: 104px;
+    flex: none;
+  }
+  #dpad::before, #dpad::after {
+    content: "";
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    background: #232738;
+    border-radius: 9px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35), inset 0 -3px 0 rgba(0, 0, 0, 0.35);
+  }
+  #dpad::before { width: 34px; height: 100px; }
+  #dpad::after { width: 100px; height: 34px; }
+  #dpad.held::before, #dpad.held::after { background: #2e3450; }
+
+  /* menu pill */
+  #menuwrap {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+  #menubtn {
+    width: 46px; height: 22px;
+    border-radius: 11px;
+    background: #cdb6ac;
+    border: 2px solid #171826;
+    box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+  }
+  #menubtn:active, #menubtn.held { background: #b79d92; }
+  #menulabel {
+    font: 700 8px/1 monospace;
+    letter-spacing: 2px;
+    color: #6b5a54;
+  }
+
+  /* A / B: offset pair, B high, A low (Game Boy style) */
+  #ab {
+    position: relative;
+    width: 118px; height: 104px;
+    flex: none;
+  }
+  .btn {
+    position: absolute;
+    width: 52px; height: 52px;
+    border-radius: 50%;
+    background: #e8737f;
+    border: 2px solid #171826;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 -4px 0 rgba(0, 0, 0, 0.22);
+    color: #4d1f2b;
+    font: 800 20px/48px monospace;
+    text-align: center;
+  }
+  .btn.held { background: #d05a67; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3); }
+  #btnB { left: 62px; top: 4px; }
+  #btnA { left: 0; top: 46px; }
+
+  /* ---- pause menu overlay (covers the screen frame only) ---- */
+  #menu {
+    display: none;
+    position: absolute;
+    z-index: 15;
+    background: rgba(23, 24, 38, 0.88);
+    border-radius: 12px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+  }
+  #menu.open { display: flex; }
+  .mitem {
+    min-width: 130px;
+    padding: 10px 18px;
+    background: #e7d6ce;
+    border: 2px solid #171826;
+    border-radius: 8px;
+    color: #171826;
+    font: 700 14px/1 monospace;
+    letter-spacing: 1px;
+    text-align: center;
+  }
+  .mitem:active { background: #cdb6ac; }
+
+  #errbox {
+    display: none;
+    position: fixed; z-index: 20;
+    left: 8px; right: 8px; top: 8px;
+    max-height: 60%;
+    overflow: auto;
+    background: rgba(26, 28, 44, 0.95);
+    color: #ef7d57;
+    border: 2px solid #b13e53;
+    border-radius: 6px;
+    padding: 10px;
+    font: 12px/1.5 monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+</style>
+</head>
+<body>
+<div id="device">
+  <div id="screenframe"><canvas id="screen" width="144" height="256"></canvas></div>
+  <div id="deck">
+    <div id="dpad"></div>
+    <div id="menuwrap">
+      <div id="menubtn"></div>
+      <div id="menulabel">MENU</div>
+    </div>
+    <div id="ab">
+      <div id="btnB" class="btn">B</div>
+      <div id="btnA" class="btn">A</div>
+    </div>
+  </div>
+  <div id="menu">
+    <div class="mitem" id="mresume">RESUME</div>
+    <div class="mitem" id="mreset">RESET</div>
+  </div>
+</div>
+<pre id="errbox"></pre>
+
+<script type="text/cart" id="cart">{{CART_TEXT}}</script>
+
+<script>
+{{ENGINE_JS}}
+</script>
+
+<script>
+"use strict";
+(async function () {
+  var W = 144, H = 256, FPS = 60;
+  var BTN = { L: 1, R: 2, U: 4, D: 8, A: 16, B: 32 };
+
+  var canvas = document.getElementById("screen");
+  var ctx = canvas.getContext("2d");
+  var errbox = document.getElementById("errbox");
+  var frameEl = document.getElementById("screenframe");
+  var deck = document.getElementById("deck");
+  var menuEl = document.getElementById("menu");
+
+  function fatal(msg) {
+    errbox.textContent = String(msg);
+    errbox.style.display = "block";
+  }
+
+  // ---- layout ----
+  // The device body sizes itself around the scaled screen; the control deck
+  // keeps a finger-friendly height carved out of the viewport budget.
+  var CHROME_W = 2 * (10 + 7 + 3);   // (device padding + bezel + border) both sides
+  var CHROME_H = 10 + 2 * 7 + 2 * 3; // top padding + bezel top/bottom + borders
+  function layout() {
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var deckH = Math.max(112, Math.min(150, Math.round(vh * 0.20)));
+    var margin = 12;
+    var availW = vw - margin * 2 - CHROME_W;
+    var availH = vh - margin * 2 - CHROME_H - deckH;
+    var scale = Math.min(availW / W, availH / H);
+    if (scale >= 1) scale = Math.floor(scale); // crisp integer scaling when possible
+    if (scale <= 0) scale = 0.5;               // degenerate tiny window
+    canvas.style.width = Math.max(1, Math.round(W * scale)) + "px";
+    canvas.style.height = Math.max(1, Math.round(H * scale)) + "px";
+    deck.style.height = deckH + "px";
+    // pause menu covers exactly the screen frame
+    menuEl.style.left = frameEl.offsetLeft + "px";
+    menuEl.style.top = frameEl.offsetTop + "px";
+    menuEl.style.width = frameEl.offsetWidth + "px";
+    menuEl.style.height = frameEl.offsetHeight + "px";
+  }
+  window.addEventListener("resize", layout);
+  layout();
+
+  // ---- input ----
+  // Keyboard and touch masks are tracked separately and OR'd, so releasing a
+  // touch never clears a still-held key (and vice versa).
+  var kbBits = 0, touchBits = 0;
+  function inputMask() { return kbBits | touchBits; }
+
+  var KEYMAP = {
+    ArrowLeft: BTN.L, KeyA: BTN.L,
+    ArrowRight: BTN.R, KeyD: BTN.R,
+    ArrowUp: BTN.U, KeyW: BTN.U,
+    ArrowDown: BTN.D, KeyS: BTN.D,
+    KeyZ: BTN.A, KeyJ: BTN.A,
+    KeyX: BTN.B, KeyK: BTN.B
+  };
+  window.addEventListener("keydown", function (e) {
+    if (e.code === "Escape") { toggleMenu(); e.preventDefault(); return; }
+    var b = KEYMAP[e.code];
+    if (b) { kbBits |= b; e.preventDefault(); }
+  });
+  window.addEventListener("keyup", function (e) {
+    var b = KEYMAP[e.code];
+    if (b) { kbBits &= ~b; e.preventDefault(); }
+  });
+
+  // Touch: track every active pointer; d-pad direction from angle+deadzone,
+  // buttons by hit-test. Recomputed from all live pointers on every change so
+  // sliding a thumb across the d-pad works.
+  var pointers = {}; // pointerId -> {x, y}
+  var dpad = document.getElementById("dpad");
+  var btnA = document.getElementById("btnA");
+  var btnB = document.getElementById("btnB");
+
+  function inRect(el, x, y, pad) {
+    var r = el.getBoundingClientRect();
+    return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
+  }
+
+  function touchMask() {
+    var m = 0;
+    var dr = dpad.getBoundingClientRect();
+    var cx = dr.left + dr.width / 2, cy = dr.top + dr.height / 2;
+    for (var id in pointers) {
+      var p = pointers[id];
+      if (inRect(btnA, p.x, p.y, 10)) m |= BTN.A;
+      else if (inRect(btnB, p.x, p.y, 10)) m |= BTN.B;
+      else if (inRect(dpad, p.x, p.y, 22)) {
+        var dx = p.x - cx, dy = p.y - cy;
+        if (Math.hypot(dx, dy) > dr.width * 0.12) {
+          var a = Math.atan2(dy, dx); // 8-way: 4 cardinals + diagonals
+          if (Math.cos(a) > 0.38) m |= BTN.R;
+          if (Math.cos(a) < -0.38) m |= BTN.L;
+          if (Math.sin(a) > 0.38) m |= BTN.D;
+          if (Math.sin(a) < -0.38) m |= BTN.U;
+        }
+      }
+    }
+    return m;
+  }
+
+  function refreshInput() {
+    touchBits = touchMask();
+    dpad.classList.toggle("held", (touchBits & 15) !== 0);
+    btnA.classList.toggle("held", (touchBits & BTN.A) !== 0);
+    btnB.classList.toggle("held", (touchBits & BTN.B) !== 0);
+  }
+  window.addEventListener("pointerdown", function (e) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (menuOpen) return; // menu items handle their own clicks
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    refreshInput();
+    e.preventDefault();
+  }, { passive: false });
+  window.addEventListener("pointermove", function (e) {
+    if (pointers[e.pointerId]) {
+      pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+      refreshInput();
+    }
+  });
+  function pointerUp(e) {
+    delete pointers[e.pointerId];
+    refreshInput();
+  }
+  window.addEventListener("pointerup", pointerUp);
+  window.addEventListener("pointercancel", pointerUp);
+
+  // ---- pause menu ----
+  var menuOpen = false;
+  function toggleMenu(force) {
+    menuOpen = force !== undefined ? force : !menuOpen;
+    menuEl.classList.toggle("open", menuOpen);
+    if (menuOpen) { pointers = {}; refreshInput(); } // drop held touches while paused
+  }
+  document.getElementById("menuwrap").addEventListener("pointerdown", function (e) {
+    toggleMenu();
+    e.stopPropagation();
+    e.preventDefault();
+  });
+  document.getElementById("mresume").addEventListener("click", function () { toggleMenu(false); });
+  document.getElementById("mreset").addEventListener("click", function () {
+    resetConsole();
+    toggleMenu(false);
+  });
+
+  // ---- engine ----
+  var Module;
+  try {
+    Module = await ConsoleEngine();
+  } catch (e) {
+    return fatal("Engine failed to load:\n" + e);
+  }
+
+  var con_alloc = Module.cwrap("con_alloc", "number", ["number"]);
+  var con_init = Module.cwrap("con_init", "number", ["number", "number"]);
+  var con_step = Module.cwrap("con_step", null, ["number"]);
+  var con_fb = Module.cwrap("con_fb", "number", []);
+  var con_palette = Module.cwrap("con_palette", "number", []);
+  var con_error = Module.cwrap("con_error", "number", []);
+
+  function currentError() {
+    var p = con_error();
+    return p ? Module.UTF8ToString(p) : null;
+  }
+
+  var cartText = document.getElementById("cart").textContent;
+  // Undo packer escaping and strip the leading newline after the opening tag.
+  cartText = cartText.replace(/<\\\//g, "</");
+  if (cartText[0] === "\n") cartText = cartText.slice(1);
+  var cartBytes = new TextEncoder().encode(cartText);
+
+  var dead = false;
+  var rafPending = false;
+  function initConsole() {
+    var ptr = con_alloc(cartBytes.length); // con_init takes ownership and frees
+    Module.HEAPU8.set(cartBytes, ptr);
+    return con_init(ptr, cartBytes.length) === 0;
+  }
+  function resetConsole() {
+    if (initConsole()) {
+      dead = false;
+      errbox.style.display = "none";
+      blit();
+      if (!rafPending) {
+        last = performance.now();
+        acc = 0;
+        rafPending = true;
+        requestAnimationFrame(frame);
+      }
+    } else {
+      fatal("Cart failed to load:\n" + (currentError() || "unknown error"));
+    }
+  }
+
+  if (!initConsole()) {
+    return fatal("Cart failed to load:\n" + (currentError() || "unknown error"));
+  }
+
+  var palPtr = con_palette();
+  var pal = Module.HEAPU8.slice(palPtr, palPtr + 48); // 16 * RGB
+
+  // ---- render ----
+  var imageData = ctx.createImageData(W, H);
+  var rgba = imageData.data;
+  function blit() {
+    var fbPtr = con_fb();
+    var fb = Module.HEAPU8.subarray(fbPtr, fbPtr + W * H);
+    for (var i = 0, j = 0; i < W * H; i++, j += 4) {
+      var c = (fb[i] & 15) * 3;
+      rgba[j] = pal[c];
+      rgba[j + 1] = pal[c + 1];
+      rgba[j + 2] = pal[c + 2];
+      rgba[j + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+  }
+
+  // ---- main loop: fixed timestep with accumulator ----
+  var STEP = 1000 / FPS;
+  var last = performance.now();
+  var acc = 0;
+
+  function frame(now) {
+    if (dead) { rafPending = false; return; }
+    acc += Math.min(now - last, 100); // clamp huge tab-switch gaps
+    last = now;
+    if (menuOpen) {
+      acc = 0; // paused: no catch-up burst on resume
+    } else {
+      var steps = 0;
+      var mask = inputMask();
+      while (acc >= STEP && steps < 4) {
+        con_step(mask);
+        acc -= STEP;
+        steps++;
+      }
+      if (steps === 4) acc = 0; // running behind: drop the backlog
+      var err = currentError();
+      if (err) {
+        dead = true;
+        rafPending = false;
+        blit();
+        return fatal("Cart crashed:\n" + err);
+      }
+      if (steps > 0) blit();
+    }
+    requestAnimationFrame(frame);
+  }
+  blit();
+  rafPending = true;
+  requestAnimationFrame(frame);
+})().catch(function (e) {
+  document.getElementById("errbox").textContent = "Shell error:\n" + e;
+  document.getElementById("errbox").style.display = "block";
+});
+</script>
+</body>
+</html>
