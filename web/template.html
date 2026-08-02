@@ -454,11 +454,17 @@
     initAudio();
     if (audioCtx && audioCtx.state === "suspended" && !menuOpen) audioCtx.resume();
   }
+  var audioFramesPushed = 0, audioLastNonzero = false;
   function pushAudio() {
     if (!audioReady) return;
     var p = con_audio();
     var samples = new Float32Array(AUDIO_FRAME);
     samples.set(new Float32Array(Module.HEAPU8.buffer, p, AUDIO_FRAME));
+    audioFramesPushed++;
+    audioLastNonzero = false;
+    for (var i = 0; i < AUDIO_FRAME; i++) {
+      if (samples[i] !== 0) { audioLastNonzero = true; break; }
+    }
     audioNode.port.postMessage(samples, [samples.buffer]);
   }
   window.addEventListener("pointerdown", unlockAudio);
@@ -471,7 +477,9 @@
         supported: !!con_audio,
         ctx: audioCtx ? audioCtx.state : null,
         ready: audioReady,
-        sampleRate: audioCtx ? audioCtx.sampleRate : null
+        sampleRate: audioCtx ? audioCtx.sampleRate : null,
+        framesPushed: audioFramesPushed,
+        lastFrameNonzero: audioLastNonzero
       };
     }
   };
