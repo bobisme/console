@@ -86,42 +86,23 @@
   #dpad::after { width: 100px; height: 34px; }
   #dpad.held::before, #dpad.held::after { background: #2e3450; }
 
-  /* menu pill + volume wheel cluster */
+  /* menu pill */
   #menuwrap {
-    position: relative;
     flex: none;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
-  }
-  .minicol {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 3px;
   }
-  #volwheel {
-    width: 18px; height: 46px;
-    border-radius: 9px;
-    border: 2px solid #171826;
-    background: repeating-linear-gradient(to bottom, #cdb6ac 0px, #cdb6ac 3px, #a08a80 3px, #a08a80 6px);
-    box-shadow: inset 2px 0 3px rgba(0, 0, 0, 0.35), inset -2px 0 3px rgba(0, 0, 0, 0.35);
-    touch-action: none;
-    cursor: ns-resize;
+  .mvol {
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
-  #voltip {
-    display: none;
-    position: absolute;
-    top: -26px; left: 50%;
-    transform: translateX(-50%);
-    background: #171826;
-    color: #e7d6ce;
-    border-radius: 4px;
-    padding: 3px 7px;
-    font: 700 9px/1 monospace;
-    letter-spacing: 1px;
-    white-space: nowrap;
+  #mvolslider {
+    width: 100px;
+    accent-color: #b13e53;
+    touch-action: none;
   }
   #menubtn {
     width: 46px; height: 22px;
@@ -207,15 +188,8 @@
   <div id="deck">
     <div id="dpad"></div>
     <div id="menuwrap">
-      <div class="minicol" id="menucol">
-        <div id="menubtn"></div>
-        <div class="ctl-label">MENU</div>
-      </div>
-      <div class="minicol">
-        <div id="volwheel"></div>
-        <div class="ctl-label">VOL</div>
-      </div>
-      <div id="voltip"></div>
+      <div id="menubtn"></div>
+      <div class="ctl-label">MENU</div>
     </div>
     <div id="ab">
       <div id="btnB" class="btn">B</div>
@@ -226,6 +200,10 @@
     <div class="mitem" id="mresume">RESUME</div>
     <div class="mitem" id="mreset">RESET</div>
     <div class="mitem" id="mpixel">PIXELS: FIT</div>
+    <div class="mitem mvol">
+      <span id="mvollabel">VOL 60</span>
+      <input type="range" id="mvolslider" min="0" max="100" step="1" value="60">
+    </div>
   </div>
 </div>
 <pre id="errbox"></pre>
@@ -378,7 +356,7 @@
     if (menuOpen) { pointers = {}; refreshInput(); } // drop held touches while paused
     if (audioCtx) { if (menuOpen) { audioCtx.suspend(); } else { audioCtx.resume(); } }
   }
-  document.getElementById("menucol").addEventListener("pointerdown", function (e) {
+  document.getElementById("menuwrap").addEventListener("pointerdown", function (e) {
     toggleMenu();
     e.stopPropagation();
     e.preventDefault();
@@ -400,50 +378,29 @@
   });
   pixelLabel();
 
-  // ---- volume: skeuomorphic side-wheel next to MENU ----
+  // ---- volume: slider in the pause menu ----
   var volume = 0.6;
   try {
     var storedVol = parseFloat(localStorage.getItem("con-vol"));
     if (storedVol >= 0 && storedVol <= 1) volume = storedVol;
   } catch (e) { /* private mode */ }
-  var volwheel = document.getElementById("volwheel");
-  var voltip = document.getElementById("voltip");
-  var voltipTimer = null;
-  function setVolume(v, showTip) {
+  var mvolslider = document.getElementById("mvolslider");
+  var mvollabel = document.getElementById("mvollabel");
+  function setVolume(v) {
     volume = Math.max(0, Math.min(1, v));
     if (masterGain) masterGain.gain.value = volume * volume; // perceptual curve
     try { localStorage.setItem("con-vol", volume.toFixed(3)); } catch (e) { /* private mode */ }
-    // ridges scroll as the wheel "turns"
-    volwheel.style.backgroundPositionY = (volume * 60).toFixed(1) + "px";
-    if (showTip) {
-      voltip.textContent = "VOL " + Math.round(volume * 100) + "%";
-      voltip.style.display = "block";
-      if (voltipTimer) clearTimeout(voltipTimer);
-      voltipTimer = setTimeout(function () { voltip.style.display = "none"; }, 700);
-    }
+    var pct = Math.round(volume * 100);
+    mvolslider.value = pct;
+    mvollabel.textContent = "VOL " + pct;
   }
-  var volDragY = null;
-  volwheel.addEventListener("pointerdown", function (e) {
-    volDragY = e.clientY;
-    volwheel.setPointerCapture(e.pointerId);
-    unlockAudio();
-    setVolume(volume, true);
-    e.stopPropagation();
-    e.preventDefault();
+  mvolslider.addEventListener("input", function () {
+    setVolume(mvolslider.value / 100);
   });
-  volwheel.addEventListener("pointermove", function (e) {
-    if (volDragY === null) return;
-    setVolume(volume + (volDragY - e.clientY) * 0.006, true);
-    volDragY = e.clientY;
-    e.stopPropagation();
-  });
-  volwheel.addEventListener("pointerup", function () { volDragY = null; });
-  volwheel.addEventListener("pointercancel", function () { volDragY = null; });
-  volwheel.addEventListener("wheel", function (e) {
-    setVolume(volume - e.deltaY * 0.0015, true);
-    e.preventDefault();
-  }, { passive: false });
-  setVolume(volume, false);
+  // The slider lives inside the menu overlay; keep its pointer events from
+  // reaching the game-input handler (menuOpen guards it anyway, belt+braces).
+  mvolslider.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+  setVolume(volume);
 
   // ---- engine ----
   var Module;

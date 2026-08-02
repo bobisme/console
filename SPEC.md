@@ -145,16 +145,16 @@ Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback
 - Shell: a handheld **device chassis**, not a full-screen overlay — the screen
   sits in a dark bezel at the top of a light device body, with an opaque
   control deck below: d-pad cross (left), small MENU pill (center), offset
-  A/B buttons (right, Game Boy style), plus a ribbed **volume thumbwheel**
-  next to MENU (drag or scroll; perceptual `vol²` curve into a master
-  GainNode; persisted as localStorage `con-vol`, default 60%). Screen
-  scaling: **FIT** (default) fills the viewport fractionally; the pause menu
-  has a **PIXELS: FIT/SHARP** toggle for integer-scaled crispness
-  (localStorage `con-pp`). The deck keeps a finger-friendly height (~19% of
-  viewport, clamped 108–150px); the device centers in larger windows.
-  Multi-touch with 8-way d-pad angle detection; keyboard input; Escape or
-  MENU opens the pause menu (RESUME / RESET / PIXELS) confined to the screen
-  area — game logic does not step while paused, no catch-up burst on resume.
+  A/B buttons (right, Game Boy style). Screen scaling: **FIT** (default)
+  fills the viewport fractionally; the pause menu has a **PIXELS: FIT/SHARP**
+  toggle for integer-scaled crispness (localStorage `con-pp`). The deck
+  keeps a finger-friendly height (~19% of viewport, clamped 108–150px); the
+  device centers in larger windows. Multi-touch with 8-way d-pad angle
+  detection; keyboard input; Escape or MENU opens the pause menu
+  (RESUME / RESET / PIXELS / a **VOL slider** — perceptual `vol²` curve into
+  a master GainNode, persisted as localStorage `con-vol`, default 60%)
+  confined to the screen area — game logic does not step while paused, no
+  catch-up burst on resume.
   rAF loop with fixed-step accumulator (max 4 catch-up steps). Audio output
   chain: AudioWorklet loaded from a `data:` module URL first on `file://`
   pages (null origin — some browsers refuse `blob:null` module loads) and a
