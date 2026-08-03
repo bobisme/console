@@ -218,6 +218,45 @@ fn poke_frame_selects_a_displaced_rect() {
 }
 
 #[test]
+fn poke_animation_frames_honor_frames_rect_and_explicit_tiles() {
+    let text = cart(
+        "sprite player rect=0,0 size=1x1\n\
+         anim player.dash frames=0,2:3 fps=4 frames_rect=5,0",
+        &["00000000"; 32],
+    );
+    let path = temp_cart("poke-anim-frames", &text);
+
+    let code = cli_poke(&args(&[
+        path.to_str().unwrap(),
+        "player.dash",
+        "--frame",
+        "0",
+        "--rows",
+        &["aaaaaaaa"; 8].join(","),
+    ]));
+    assert_eq!(code, 0);
+
+    let code = cli_poke(&args(&[
+        path.to_str().unwrap(),
+        "player.dash",
+        "--frame",
+        "1",
+        "--rows",
+        &["bbbbbbbb"; 8].join(","),
+    ]));
+    assert_eq!(code, 0);
+
+    let out = read(&path);
+    let rows: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
+    for row in &rows[..8] {
+        assert_eq!(*row, row128(&[(40, "aaaaaaaa")]));
+    }
+    for row in &rows[24..32] {
+        assert_eq!(*row, row128(&[(16, "bbbbbbbb")]));
+    }
+}
+
+#[test]
 fn poke_dry_run_leaves_the_file_untouched_and_prints_report() {
     let text = cart("sprite player rect=0,0 size=1x1", &["00000000"; 8]);
     let path = temp_cart("poke-dry-run", &text);

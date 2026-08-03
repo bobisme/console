@@ -69,8 +69,10 @@ fn known_targets(meta: &GfxMeta) -> String {
 }
 
 /// Pixel-space rect (x, y, w, h) on the 128x128 sheet for a target's frame
-/// `i` (frame index beyond 0 is only meaningful for named sprites; rects
-/// ignore it after frame 0 validation).
+/// `i`. For an animation target, `i` indexes the animation's declared frame
+/// list and therefore honors `frames_rect` and explicit `tx:ty` entries. For
+/// a sprite target, it remains the raw sprite-relative frame index. Rects
+/// reject any frame other than zero.
 pub fn frame_pixel_rect(
     cart: &Cart,
     target: &Target,
@@ -83,12 +85,29 @@ pub fn frame_pixel_rect(
             }
             Ok((*tx as u32 * 8, *ty as u32 * 8, *w as u32 * 8, *h as u32 * 8))
         }
-        Target::Sprite { name, .. } => {
-            let def = cart
-                .gfx_meta()
+        Target::Sprite { name, anim } => {
+            let meta = cart.gfx_meta();
+            let sprite = meta
                 .sprite(name)
                 .ok_or_else(|| format!("sprite {name:?} not in __gfx_meta__"))?;
-            def.frame_rect(frame)
+            if let Some(anim_name) = anim {
+                let def = meta
+                    .anim(anim_name)
+                    .ok_or_else(|| format!("anim {anim_name:?} not in __gfx_meta__"))?;
+                let pos = usize::from(frame);
+                if pos >= def.frames.len() {
+                    return Err(format!(
+                        "frame {pos} out of range: anim {anim_name:?} has {} frame(s) (0-{})",
+                        def.frames.len(),
+                        def.frames.len().saturating_sub(1)
+                    ));
+                }
+                return def.resolve_frame(sprite, pos).ok_or_else(|| {
+                    format!("frame {pos} of anim {anim_name:?} falls off the sheet")
+                });
+            }
+            sprite
+                .frame_rect(frame)
                 .ok_or_else(|| format!("frame {frame} of sprite {name:?} falls off the sheet"))
         }
     }
@@ -103,12 +122,10 @@ pub fn target_sprite<'c>(cart: &'c Cart, target: &Target) -> Option<&'c SpriteDe
 }
 
 /// Parse a `<target>` string and resolve it straight to a pixel-space rect
-/// against `cart`, at raw sheet frame `frame` — the shared entry point for
-/// every command that mutates or dumps pixels in place (`sprite edit`,
-/// `sprite dump`, `sprite poke`). Note this is *not* the same as
-/// `view::render`'s anim-aware `--frame` (which indexes an anim's own frame
-/// list); here `frame` is always the raw sprite frame index, matching how
-/// `sprite edit`'s ops have always treated it.
+/// against `cart` — the shared entry point for every command that mutates or
+/// dumps pixels in place (`sprite edit`, `sprite dump`, `sprite poke`). Frame
+/// semantics match `view::render`: animation targets index their declared
+/// frame list, while plain sprite targets use raw sprite-relative frames.
 pub fn resolve_rect(
     cart: &Cart,
     target_str: &str,

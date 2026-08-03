@@ -901,10 +901,11 @@ fn lint_anim_gated(
 /// to bottom, exactly the cart's own `__sprites__` alphabet (lowercase hex
 /// digits, one char per pixel), preceded by a `#`-comment header naming the
 /// region's pixel-space coordinates on the 128x128 sheet. Frame resolution
-/// matches `sprite edit`'s and `sprite poke`'s: `frame` is the raw sheet
-/// frame index (an anim's own frame list is not consulted), so a `dump`'d
-/// region and the `poke` that writes it back always agree on where the
-/// pixels live.
+/// matches `sprite edit`, `sprite poke`, and `sprite render`: animation
+/// targets index their declared frame list (including `frames_rect` and
+/// explicit `tx:ty` entries), while plain sprite targets retain raw
+/// sprite-relative frame semantics. A `dump` and matching `poke` therefore
+/// always agree on where the pixels live.
 ///
 /// The header is a comment specifically so `sprite dump | sprite poke
 /// --stdin` round-trips without the caller having to strip it first —

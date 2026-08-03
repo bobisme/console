@@ -109,18 +109,16 @@ fn mixed_index_and_explicit_tile_frames_resolve_through_one_strip() {
 }
 
 #[test]
-fn dump_of_an_explicit_tile_frame_matches_the_frames_rect_index_frame_side_by_side() {
-    // A `dump`-comparison-style check (SPEC.md calls this out as an
-    // acceptable alternative to a pixel probe): dump the raw sheet regions
-    // both frame forms resolve to and confirm they read back exactly what
-    // `strip` rendered above, pinning the resolution independent of the
-    // image path.
+fn dump_animation_frames_honor_frames_rect_and_explicit_tiles() {
     let cart = cart();
-    let index_via_frames_rect = view::dump(&cart, "5,0,1,1", 0).expect("dump tile 5,0");
-    assert!(
-        index_via_frames_rect.contains('3'),
-        "{index_via_frames_rect}"
+    let index_via_frames_rect = view::dump(&cart, "p.mixed", 0).expect("dump anim frame 0");
+    assert_eq!(
+        index_via_frames_rect.lines().next(),
+        Some("# x=40 y=0 w=8 h=8")
     );
-    let explicit_tile = view::dump(&cart, "2,3,1,1", 0).expect("dump tile 2,3");
+    assert!(index_via_frames_rect.contains('3'));
+
+    let explicit_tile = view::dump(&cart, "p.mixed", 1).expect("dump anim frame 1");
+    assert_eq!(explicit_tile.lines().next(), Some("# x=16 y=24 w=8 h=8"));
     assert!(explicit_tile.contains('5'), "{explicit_tile}");
 }
