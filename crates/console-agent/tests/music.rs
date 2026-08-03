@@ -327,6 +327,32 @@ fn lint_vib_delay_exceeds_row() {
 }
 
 #[test]
+fn lint_trem_delay_exceeds_row() {
+    let fires = lint_text(&build_cart(
+        "function _init() music(0) end",
+        "inst pad wave=2 trem=8,4,12",
+        "sfx 0 speed=8\nC4 pad 5",
+        "pat 0 stop : 0 - - -",
+    ));
+    let hits = rule_hits(&fires, "trem_delay_exceeds_row");
+    assert_eq!(hits.len(), 1, "{fires:#}");
+    assert_eq!(hits[0]["delay"], 12);
+    assert_eq!(hits[0]["row_frames"], 8);
+
+    // Same instrument on a slower sfx: the delay now fits inside the row.
+    let quiet = lint_text(&build_cart(
+        "function _init() music(0) end",
+        "inst pad wave=2 trem=8,4,12",
+        "sfx 0 speed=16\nC4 pad 5",
+        "pat 0 stop : 0 - - -",
+    ));
+    assert!(
+        rule_hits(&quiet, "trem_delay_exceeds_row").is_empty(),
+        "{quiet:#}"
+    );
+}
+
+#[test]
 fn lint_note_out_of_range() {
     let fires = lint_text(&build_cart(
         "function _init() music(0) end",

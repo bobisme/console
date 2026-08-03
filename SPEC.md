@@ -1142,6 +1142,10 @@ invisible in the cart text (severity in brackets):
   the quiet rows swell **up** to it.
 - `vib_delay_exceeds_row` [warn] — a vibrato delay at least as long as its
   row: the vibrato never speaks.
+- `trem_delay_exceeds_row` [warn] — a tremolo delay at least as long as its
+  row: the tremolo never speaks. `trem` is instrument-only (no fx-column
+  spelling), so unlike `vib_delay_exceeds_row` this only ever comes from
+  the instrument.
 - `note_out_of_range` [warn] — a note plus its `sweep`/`arp`/`sl` offset
   leaving C0–B7, where `freq_at` clamps.
 - `fm_aliasing` [info] — an FM modulator (note x ratio) past Nyquist at a

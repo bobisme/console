@@ -18,6 +18,7 @@
 //! |------|----------|-----------------|
 //! | `env_sustain_swell` | warn | an `env` instrument with a non-zero sustain played at more than one row volume — the sustain is an *absolute* level, so the quiet rows swell **up** to it |
 //! | `vib_delay_exceeds_row` | warn | `vib=...,<delay>` at least as long as the row it plays on: the vibrato never speaks |
+//! | `trem_delay_exceeds_row` | warn | `trem=...,<delay>` at least as long as the row it plays on: the tremolo never speaks |
 //! | `note_out_of_range` | warn | a row whose note plus its `sweep`/`arp`/`sl` offset leaves the C0-B7 table, where the synth clamps |
 //! | `fm_aliasing` | info | an FM instrument whose modulator (note x ratio) passes Nyquist at a note it actually plays: deterministic, but it will fold back |
 //! | `wavetable_dc_offset` | warn | a `wavetable` whose codes do not pair around the centre (`dc_sum != 0`), i.e. a constant DC offset |
@@ -272,6 +273,29 @@ fn instrument_rules(cart: &Cart, d: &mut Vec<Value>) {
                     ),
                     json!({
                         "sfx": sid, "row": row, "delay": delay, "row_frames": speed,
+                        "instrument": inst.map(|i| i.name.clone()),
+                    }),
+                ));
+            }
+
+            // Tremolo that never speaks: the delay outlives the row. Unlike
+            // vibrato, trem is instrument-only (no fx-column spelling), so
+            // there is no "row fx" source to check alongside it.
+            if let Some(trem) = inst.and_then(|i| i.trem)
+                && u32::from(trem.delay) >= speed
+                && trem.delay > 0
+            {
+                d.push(diag(
+                    "trem_delay_exceeds_row",
+                    "warn",
+                    format!(
+                        "sfx {sid} row {row}: tremolo delay {} frames (instrument) is not shorter \
+                         than the row's {speed} frames, so the tremolo never starts. Lower the \
+                         delay below {speed} or slow the sfx down.",
+                        trem.delay,
+                    ),
+                    json!({
+                        "sfx": sid, "row": row, "delay": trem.delay, "row_frames": speed,
                         "instrument": inst.map(|i| i.name.clone()),
                     }),
                 ));

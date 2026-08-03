@@ -407,9 +407,9 @@ console-agent music import-abc game.cart tune.abc --sfx 0            # ABC notat
    i.e. what `music(N)` would play.
 2. **Numbers**: `music lint` — JSON, always exit 0 unless `--strict`. It
    catches the traps in the list below mechanically (env-sustain swell,
-   vibrato that never speaks, no channel left for `sfx()`, notes swept off
-   the note table, `music(n)`/`sfx(n)` calls naming ids the cart lacks,
-   unreachable patterns, a chain with no `loop=`/`stop`, DC-offset
+   vibrato and tremolo that never speak, no channel left for `sfx()`, notes
+   swept off the note table, `music(n)`/`sfx(n)` calls naming ids the cart
+   lacks, unreachable patterns, a chain with no `loop=`/`stop`, DC-offset
    wavetables, FM modulators past Nyquist) and reports every pattern's
    measured peak/RMS/clipped from a headless render of that pattern alone.
    Then `audio_stats` for the *running* mix (per-window RMS/peak/clipped)
