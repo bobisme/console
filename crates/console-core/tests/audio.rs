@@ -3,8 +3,9 @@
 
 use console_core::{
     CHANNEL_COUNT, Cart, Console, DUCK_ATTACK_SAMPLES, Duck, Echo, Env, Error, Fx,
-    MASTER_REF_LEVEL, MAX_DRIVE, MAX_DUCK_DEPTH, MAX_HISS, MAX_TONE, Master, PatternEnd,
-    SAMPLE_RATE, SAMPLES_PER_FRAME, SfxRow, Sweep, Vib, freq_at, input,
+    MASTER_REF_LEVEL, MAX_DRIVE, MAX_DUCK_DEPTH, MAX_HISS, MAX_TONE, Master, NIBBLE_LEVEL,
+    NOTE_FREQ, PatternEnd, RowMod, SAMPLE_RATE, SAMPLES_PER_FRAME, SfxRow, Sweep, Vib, WAVE_COUNT,
+    WAVE_TABLE_BASE, WAVETABLE_LEN, WAVETABLE_SLOTS, Wavetable, freq_at, input,
 };
 
 const DEMO: &str = include_str!("../../../carts/demo.cart");
@@ -2317,7 +2318,7 @@ fn a_cart_with_no_duck_instrument_never_leaves_the_legacy_path() {
 // ---------------------------------------------------------------------------
 
 /// Menu entries in `carts/soundtest.cart`.
-const SOUNDTEST_ENTRIES: usize = 15;
+const SOUNDTEST_ENTRIES: usize = 16;
 
 /// Zero-based menu index of "FULL GROOVE".
 const SOUNDTEST_GROOVE: usize = 12;
@@ -2325,12 +2326,15 @@ const SOUNDTEST_GROOVE: usize = 12;
 /// Zero-based menu index of "SATURATION A/B".
 const SOUNDTEST_AB: usize = 13;
 
-/// Zero-based menu index of "ECHO  DELAY BUS" (the last entry).
+/// Zero-based menu index of "ECHO  DELAY BUS".
 ///
 /// New entries go on the **end** on purpose: `soundtest_script` navigates by
 /// counting DOWN presses, so the two golden entries keep their exact input
 /// scripts and their hashes stay comparable across releases.
 const SOUNDTEST_ECHO: usize = 14;
+
+/// Zero-based menu index of "WAVETABLE W0-W2" (the last entry), pattern 14.
+const SOUNDTEST_WAVETABLE: usize = 15;
 
 /// Frames the A/B entry spends on each side of the comparison: two bars at
 /// 112 BPM / 4 rows per beat / speed 8 = 2 * 16 * 8.
@@ -2353,13 +2357,13 @@ fn soundtest_script(entry: usize, play_frames: usize) -> Vec<u8> {
 fn the_soundtest_cart_loads_and_describes_itself() {
     let cart = Cart::parse(SOUNDTEST).unwrap();
     assert_eq!(cart.title(), "Sound Test");
-    // 12 instruments, 21 sfx, one self-looping pattern per audition entry (the
+    // 15 instruments, 23 sfx, one self-looping pattern per audition entry (the
     // A/B entry re-uses the groove's pattern 12).
-    assert_eq!(cart.instruments().len(), 12);
-    assert_eq!(cart.audio().sfx_ids().count(), 21);
+    assert_eq!(cart.instruments().len(), 15);
+    assert_eq!(cart.audio().sfx_ids().count(), 23);
     let pats: Vec<u8> = cart.audio().pattern_ids().collect();
-    assert_eq!(pats, (0..=13).collect::<Vec<u8>>());
-    for id in 0..=13u8 {
+    assert_eq!(pats, (0..=14).collect::<Vec<u8>>());
+    for id in 0..=14u8 {
         assert_eq!(
             cart.pattern(id).unwrap().end,
             PatternEnd::Loop(id),
@@ -2457,11 +2461,11 @@ fn the_soundtest_menu_navigates_and_stops() {
     assert_eq!(con.music_pattern(), Some(2));
     assert!(con.audio_frame().iter().any(|&s| s != 0.0));
 
-    // Up wraps to the top of the list, i.e. onto the last entry (ECHO).
+    // Up wraps to the top of the list, i.e. onto the last entry (WAVETABLE).
     for mask in [input::UP, 0, input::UP, 0, input::UP, 0, input::A, 0] {
         con.step(mask).unwrap();
     }
-    assert_eq!(con.music_pattern(), Some(13), "UP past the top wraps around");
+    assert_eq!(con.music_pattern(), Some(14), "UP past the top wraps around");
 
     // ...and B stops.
     con.step(input::B).unwrap();
@@ -3206,5 +3210,375 @@ fn only_the_soundtest_echo_entry_runs_the_bus() {
     assert!(
         tail[SAMPLES_PER_FRAME..].iter().all(|&s| s == 0.0),
         "B should silence the console, echo tail included"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Wavetables: `wavetable <slot> <32 nibbles>` + `wave=w<slot>`
+// ---------------------------------------------------------------------------
+
+/// A full-scale rising staircase: nibble `i / 2`, i.e. `00112233...eeff`.
+/// Sweeps the whole nibble ladder in table order, so a playback test that
+/// matches it sample for sample has pinned both the index math and the
+/// amplitude mapping at once.
+const RAMP_HEX: &str = "00112233445566778899aabbccddeeff";
+
+/// The square wave, written as a table: the first half of the cycle at code
+/// `f` (+1.0), the second at code `0` (-1.0).
+const SQUARE_HEX: &str = "ffffffffffffffff0000000000000000";
+
+fn ramp_nibbles() -> [u8; WAVETABLE_LEN] {
+    std::array::from_fn(|i| (i / 2) as u8)
+}
+
+#[test]
+fn wavetable_lines_parse_and_round_trip() {
+    let cart = inst_cart(&format!(
+        "wavetable 0 {RAMP_HEX}\n\
+         wavetable 7 ffff0000 ffff0000 ffff0000 ffff0000\n\
+         inst saw_ish wave=w0 env=0,8,4\n\
+         inst buzzy   wave=w7"
+    ))
+    .unwrap();
+
+    let w0 = cart.wavetable(0).expect("slot 0 is defined");
+    assert_eq!(w0.nibbles, ramp_nibbles());
+    // The text round-trips: `hex()` prints exactly what the cart said.
+    assert_eq!(w0.hex(), RAMP_HEX);
+    // Whitespace grouping is purely cosmetic - four groups of eight parse to
+    // the same 32 samples as one run of 32 characters.
+    let w7 = cart.wavetable(7).expect("slot 7 is defined");
+    assert_eq!(w7.hex(), "ffff0000ffff0000ffff0000ffff0000");
+    // Untouched slots stay empty.
+    for slot in 1..7 {
+        assert!(cart.wavetable(slot).is_none(), "slot {slot} should be empty");
+    }
+    assert_eq!(cart.audio().wavetables().iter().flatten().count(), 2);
+
+    // `wave=w<slot>` resolves to WAVE_TABLE_BASE + slot, and every other
+    // instrument field is untouched by the change of oscillator.
+    let saw_ish = cart.instrument("saw_ish").unwrap();
+    assert_eq!(saw_ish.wave, WAVE_TABLE_BASE);
+    assert_eq!(saw_ish.env, Some(Env { attack: 0, decay: 8, sustain: 4 }));
+    assert_eq!(cart.instrument("buzzy").unwrap().wave, WAVE_TABLE_BASE + 7);
+    // ...and the bank can go back the other way.
+    assert_eq!(
+        cart.audio().wavetable_for_wave(WAVE_TABLE_BASE + 7).map(Wavetable::hex),
+        Some(w7.hex())
+    );
+    assert!(cart.audio().wavetable_for_wave(2).is_none(), "builtin waves have no table");
+}
+
+#[test]
+fn a_sfx_row_may_name_a_wavetable_slot_directly() {
+    // `w<slot>` is a wave *source*, so it is legal anywhere a bare wave digit
+    // is: the row means "the flat instrument on that table", exactly as `2`
+    // means "the flat instrument on the square".
+    let text = format!(
+        "__lua__\nx = 1\n\n\
+         __instruments__\nwavetable 3 {SQUARE_HEX}\n\n\
+         __sfx__\nsfx 0 speed=8\nA4 w3 6\n---\n"
+    );
+    let cart = Cart::parse(&text).unwrap();
+    assert_eq!(
+        cart.sfx(0).unwrap().rows[0],
+        SfxRow::Note { note: 57, wave: WAVE_TABLE_BASE + 3, vol: 6 }
+    );
+    // No instrument named, so no modulation and no echo send: the PoC v1 path.
+    assert_eq!(cart.sfx(0).unwrap().row_mod(0), RowMod::default());
+}
+
+#[test]
+fn malformed_wavetables_are_line_numbered_cart_errors() {
+    fn wt_err(body: &str, line: usize, needle: &str) {
+        expect_cart_error(&format!("__lua__\nx=1\n\n__instruments__\n{body}"), line, needle);
+    }
+
+    // Slot range and shape.
+    wt_err("wavetable 8 00112233445566778899aabbccddeeff\n", 1, "wavetable slot must be 0-7");
+    wt_err("wavetable 0\n", 1, "expected `wavetable <slot 0-7> <32 hex nibbles>`");
+    wt_err("wavetable\n", 1, "expected `wavetable <slot 0-7>");
+    // Too few / too many nibbles, counted after the groups are joined.
+    wt_err("wavetable 0 0011223344556677 8899aabbccddee\n", 1, "needs exactly 32 hex nibbles, found 30");
+    wt_err("wavetable 0 00112233445566778899aabbccddeeff0\n", 1, "found 33");
+    // Bad hex, reported by sample index.
+    wt_err("wavetable 0 00112233445566778899aabbccddeegf\n", 1, "sample 30: 'g' is not a hex nibble");
+    // One slot, one table.
+    wt_err(
+        "wavetable 2 00112233445566778899aabbccddeeff\nwavetable 2 ffffffffffffffff0000000000000000\n",
+        2,
+        "duplicate wavetable w2",
+    );
+    // Undefined references are errors at parse time, never a silent fallback
+    // to some default waveform - the console's house style.
+    wt_err("inst lead wave=w1\n", 1, "references wavetable w1, which the cart does not define");
+    wt_err(
+        "wavetable 0 00112233445566778899aabbccddeeff\ninst lead wave=w5\n",
+        2,
+        "defined: w0",
+    );
+    wt_err("inst lead wave=w9\n", 1, "wave slot must be 0-7");
+    wt_err("inst lead wave=wx\n", 1, "wave must be 0-5 (builtin) or w0-w7");
+    // A slot name is reserved, so `w0` in a sfx row is never ambiguous.
+    wt_err("inst w0 wave=1\n", 1, "must not look like a wavetable slot");
+
+    // Same rules from a sfx row.
+    expect_cart_error(
+        "__lua__\nx=1\n\n__sfx__\nsfx 0 speed=8\nA4 w0 6\n",
+        2,
+        "references wavetable w0, which the cart does not define",
+    );
+    expect_cart_error(
+        &format!("__lua__\nx=1\n\n__instruments__\nwavetable 0 {RAMP_HEX}\n\n__sfx__\nsfx 0 speed=8\nA4 w4 6\n"),
+        2,
+        "references wavetable w4",
+    );
+}
+
+/// A one-note cart on a wavetable, played from `_init`.
+fn wt_cart(hex: &str, row: &str) -> String {
+    format!(
+        "__lua__\nfunction _init() sfx(0, 0) end\n\n\
+         __instruments__\nwavetable 0 {hex}\n\n\
+         __sfx__\nsfx 0 speed=60\n{row}\n"
+    )
+}
+
+#[test]
+fn a_ramp_wavetable_plays_the_exact_expected_samples() {
+    // C2 (65.406395 Hz) at vol 7 on the staircase table. Every number below
+    // is reproduced from the documented model - fixed-point phase, top five
+    // bits as the index, (2n-15)/15 as the amplitude, the 64-sample click
+    // guard, then the 0.25 mix gain - so this is a bit-exact statement of
+    // what "wavetable playback" means on this console.
+    let mut con = console(&wt_cart(RAMP_HEX, "C2 w0 7"));
+    let samples = collect(&mut con, 1);
+
+    let nibbles = ramp_nibbles();
+    let inc = (f64::from(NOTE_FREQ[24]) * 4_294_967_296.0 / 44_100.0 + 0.5) as u32;
+    let mut phase: u32 = 0;
+    for (k, &got) in samples.iter().enumerate() {
+        let amp = ((k + 1) as f32 / 64.0).min(1.0);
+        phase = phase.wrapping_add(inc);
+        let level = NIBBLE_LEVEL[usize::from(nibbles[(phase >> 27) as usize])];
+        let want = (amp * level) * 0.25;
+        assert_eq!(
+            got.to_bits(),
+            want.to_bits(),
+            "sample {k}: got {got}, want {want} (phase {phase:#010x}, index {})",
+            phase >> 27
+        );
+    }
+    // ...and the staircase really did walk the whole table inside one frame.
+    assert!(samples.iter().any(|&s| s > 0.2) && samples.iter().any(|&s| s < -0.2));
+}
+
+#[test]
+fn wavetable_square_is_the_builtin_square() {
+    // The mapping is (2n-15)/15 precisely so that code 0 is -1.0 and code f is
+    // +1.0: a table written as sixteen f's then sixteen 0's is not "like" the
+    // builtin square, it *is* the builtin square, sample for sample.
+    let mut builtin = console("__lua__\nfunction _init() sfx(0, 0) end\n\n__sfx__\nsfx 0 speed=60\nA4 2 6\n");
+    let mut table = console(&wt_cart(SQUARE_HEX, "A4 w0 6"));
+    let a = collect(&mut builtin, 30);
+    let b = collect(&mut table, 30);
+    for (i, (x, y)) in a.iter().zip(&b).enumerate() {
+        assert_eq!(x.to_bits(), y.to_bits(), "sample {i}: {x} vs {y}");
+    }
+    assert!(a.iter().any(|&s| s != 0.0));
+}
+
+#[test]
+fn four_bits_cannot_hit_zero_so_a_flat_table_is_dc_not_silence() {
+    // Codes 7 and 8 straddle zero at -1/15 and +1/15. An all-8 table is
+    // therefore a constant +0.0667 DC offset rather than silence: audibly
+    // nothing, but it is not the zero signal, and this pins the documented
+    // behaviour so nobody "fixes" it into a /16 ladder later.
+    let mut con = console(&wt_cart("88888888888888888888888888888888", "A4 w0 7"));
+    let samples = collect(&mut con, 4);
+    let steady = &samples[SAMPLES_PER_FRAME..];
+    let dc = (1.0f32 / 15.0) * 0.25;
+    for (i, &s) in steady.iter().enumerate() {
+        assert_eq!(s.to_bits(), dc.to_bits(), "sample {i} is {s}, not the DC level");
+    }
+    assert!(dc.abs() < 0.02, "one half-code of DC should be inaudible, got {dc}");
+
+    // The exact-zero question is decidable on the nibbles themselves.
+    let flat = Wavetable { nibbles: [8; WAVETABLE_LEN] };
+    assert_eq!(flat.dc_sum(), 32, "all-8 is one half-code high");
+    assert_eq!(Wavetable { nibbles: [7; WAVETABLE_LEN] }.dc_sum(), -32);
+    // ...and any table that pairs each code with its mirror is exactly DC-free.
+    assert_eq!(Wavetable { nibbles: ramp_nibbles() }.dc_sum(), 0);
+    let square = Wavetable {
+        nibbles: std::array::from_fn(|i| if i < 16 { 15 } else { 0 }),
+    };
+    assert_eq!(square.dc_sum(), 0);
+}
+
+#[test]
+fn a_wavetable_voice_composes_with_env_vib_sweep_fx_and_echo() {
+    // Nothing about a wavetable is special downstream: it is a wave source, so
+    // every existing instrument and mixer feature has to work on it unchanged.
+    let cart = format!(
+        "__lua__\n\
+         function _init() sfx(0, 0) sfx(1, 1) end\n\n\
+         __instruments__\n\
+         wavetable 0 {RAMP_HEX}\n\
+         echo delay=6 feedback=4 level=6\n\
+         inst plain  wave=w0\n\
+         inst shaped wave=w0 env=6,10,3 vib=40,8,2 echo=6\n\
+         inst diving wave=w0 sweep=-12,20\n\n\
+         __sfx__\n\
+         sfx 0 speed=40\nA4 plain 6\nA4 shaped 6\nA4 diving 6 arp3,7\n\
+         sfx 1 speed=40\n---\n---\n---\n"
+    );
+    let mut con = Console::new(&cart, 0).unwrap();
+    let samples = collect(&mut con, 120);
+
+    // Row 0 is the flat wavetable voice; row 1 adds envelope + vibrato and is
+    // a different signal for it.
+    let row = |n: usize| &samples[n * 40 * SAMPLES_PER_FRAME..(n + 1) * 40 * SAMPLES_PER_FRAME];
+    assert!(
+        row(0).iter().zip(row(1)).any(|(a, b)| a.to_bits() != b.to_bits()),
+        "env/vib changed nothing on a wavetable voice"
+    );
+    // The envelope really is an envelope: row 1 starts quiet and swells.
+    let rms = |xs: &[f32]| -> f64 {
+        (xs.iter().map(|&s| f64::from(s) * f64::from(s)).sum::<f64>() / xs.len() as f64).sqrt()
+    };
+    let r1 = row(1);
+    assert!(
+        rms(&r1[..SAMPLES_PER_FRAME]) < rms(&r1[8 * SAMPLES_PER_FRAME..9 * SAMPLES_PER_FRAME]),
+        "the 6-frame attack did not swell"
+    );
+    // Vibrato moves the pitch around: the frequency is not constant inside
+    // row 1 the way it is inside row 0.
+    let flat_a = frame_freq(&samples, 20);
+    let flat_b = frame_freq(&samples, 30);
+    assert!((flat_a - flat_b).abs() < 1.0, "the flat voice drifted: {flat_a} vs {flat_b}");
+    let vib_lo = frame_freq(&samples, 50);
+    let vib_hi = frame_freq(&samples, 54);
+    assert!((vib_lo - vib_hi).abs() > 1.0, "vibrato did not bend the pitch");
+    // Sweep: row 2 dives an octave over 20 frames, so it ends far below A4.
+    let start = frame_freq(&samples, 81);
+    let end = frame_freq(&samples, 99);
+    assert!(end < start * 0.75, "sweep did not dive ({start} -> {end})");
+    // The echo bus took the `echo=6` send from a wavetable voice like any
+    // other, and the whole thing stayed inside the rails.
+    assert!(!con.echo_is_silent(), "the wavetable voice never fed the delay line");
+    assert!(samples.iter().all(|s| (-1.0..=1.0).contains(s)));
+}
+
+#[test]
+fn wavetable_playback_is_reproducible_and_seed_independent() {
+    let cart = wt_cart(RAMP_HEX, "C4 w0 6");
+    let inputs = vec![0u8; 90];
+    let a = run_audio(&cart, 0, &inputs);
+    let b = run_audio(&cart, 0, &inputs);
+    let c = run_audio(&cart, 4_242_424, &inputs);
+    for (i, ((x, y), z)) in a.iter().zip(&b).zip(&c).enumerate() {
+        assert_eq!(x.to_bits(), y.to_bits(), "sample {i} is not reproducible");
+        assert_eq!(x.to_bits(), z.to_bits(), "sample {i} depends on the seed");
+    }
+}
+
+#[test]
+fn carts_without_wavetables_are_untouched() {
+    // The bit-identity guarantee is *measured* by the four golden hashes
+    // (`demo_cart_audio_matches_the_golden_hash`, `soundtest_groove_...`,
+    // `soundtest_saturation_ab_...` and `soundtest_echo_...`), none of which
+    // moved when wavetables landed. What is asserted here is the reason they
+    // could not move: no pre-wavetable cart can produce a wave id above 5, and
+    // an empty slot table is what every such cart parses to.
+    for text in [DEMO, SOUNDTEST] {
+        let cart = Cart::parse(text).unwrap();
+        for id in 0..WAVETABLE_SLOTS as u8 {
+            if text == DEMO {
+                assert!(cart.wavetable(id).is_none(), "the demo cart declares no tables");
+            }
+        }
+    }
+    let demo = Cart::parse(DEMO).unwrap();
+    for id in demo.audio().sfx_ids() {
+        for row in &demo.sfx(id).unwrap().rows {
+            if let SfxRow::Note { wave, .. } = row {
+                assert!(*wave < WAVE_COUNT, "demo row uses wave {wave}");
+            }
+        }
+    }
+}
+
+/// Golden hash of the soundtest cart's "WAVETABLE W0-W2" entry (menu index 15,
+/// pattern 14): FNV-1a over the little-endian bits of the samples rendered
+/// while navigating there and then playing 150 frames, seed 0.
+///
+/// 150 frames is most of the first bar: the hollow-table lead over the organ
+/// pad, envelopes and all. It pins the nibble ladder, the index shift and the
+/// no-interpolation decision at once - change any of the three and this moves.
+const SOUNDTEST_WAVETABLE_GOLDEN: u64 = 0xf8c7_00f2_fd62_8f7b;
+
+#[test]
+fn soundtest_wavetable_matches_the_golden_hash() {
+    let hash = hash_samples(&run_audio(
+        SOUNDTEST,
+        0,
+        &soundtest_script(SOUNDTEST_WAVETABLE, 150),
+    ));
+    assert_eq!(
+        hash, SOUNDTEST_WAVETABLE_GOLDEN,
+        "soundtest wavetable audio changed; new hash is {hash:#018x}"
+    );
+}
+
+#[test]
+fn the_soundtest_wavetable_pad_holds_through_the_melody_gaps() {
+    // The lead rests on every other row, so anything still sounding in those
+    // gaps is the organ pad - and the pad only holds because `wt_organ` has no
+    // envelope and its rows restate the same note. If someone gives it an
+    // `env`, the retrigger turns the pad into a tremolo and this window stops
+    // being continuous.
+    let s = soundtest_played(SOUNDTEST_WAVETABLE, 130);
+    let rms = |a: usize, b: usize| -> f64 {
+        let x = &s[a * SAMPLES_PER_FRAME..b * SAMPLES_PER_FRAME];
+        (x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / x.len() as f64).sqrt()
+    };
+    // One frame-window per frame of the first bar: none of them is silent.
+    for f in 2..126 {
+        assert!(rms(f, f + 1) > 0.01, "frame {f} of the pad went silent");
+    }
+    // ...and the lead on top makes the note frames louder than the gap frames.
+    assert!(rms(2, 8) > rms(12, 16), "the lead is not on top of the pad");
+}
+
+#[test]
+fn the_soundtest_wavetable_entry_uses_three_dc_free_tables() {
+    let cart = Cart::parse(SOUNDTEST).unwrap();
+    let defined: Vec<u8> = (0..WAVETABLE_SLOTS as u8)
+        .filter(|&i| cart.wavetable(i).is_some())
+        .collect();
+    assert_eq!(defined, vec![0, 1, 2], "w0 hollow, w1 organ, w2 buzz");
+    for slot in defined {
+        let t = cart.wavetable(slot).unwrap();
+        assert_eq!(t.dc_sum(), 0, "table w{slot} is not DC-free");
+        assert_eq!(t.nibbles.iter().copied().min(), Some(0), "w{slot} wastes headroom");
+        assert_eq!(t.nibbles.iter().copied().max(), Some(15), "w{slot} wastes headroom");
+    }
+    // The three instruments that play them, and nothing else in the cart.
+    for (name, slot) in [("wt_hollow", 0), ("wt_organ", 1), ("wt_buzz", 2)] {
+        assert_eq!(cart.instrument(name).unwrap().wave, WAVE_TABLE_BASE + slot);
+    }
+    let table_voices = cart
+        .instruments()
+        .iter()
+        .filter(|i| i.wave >= WAVE_TABLE_BASE)
+        .count();
+    assert_eq!(table_voices, 3);
+    // Every other voice is still a builtin, which is why entries 0-14 render
+    // exactly as they did before.
+    assert!(
+        cart.instruments()
+            .iter()
+            .filter(|i| !i.name.starts_with("wt_"))
+            .all(|i| i.wave < WAVE_COUNT)
     );
 }

@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::audio::{AudioBank, Echo, Instrument, Master, Pattern, Sfx};
+use crate::audio::{AudioBank, Echo, Instrument, Master, Pattern, Sfx, Wavetable};
 use crate::error::Error;
 use crate::gfx::{MAP_H, MAP_LEN, MAP_W, SHEET_LEN, SHEET_W, SpriteSheet, TileMap};
 use crate::gfx_meta::GfxMeta;
@@ -131,6 +131,12 @@ impl Cart {
     /// One instrument by name.
     pub fn instrument(&self, name: &str) -> Option<&Instrument> {
         self.audio.instrument(name)
+    }
+
+    /// The cart's `wavetable <slot> <32 nibbles>` entry for slot `id` (`w<id>`),
+    /// if it declared one.
+    pub fn wavetable(&self, id: u8) -> Option<&Wavetable> {
+        self.audio.wavetable(id)
     }
 
     /// The cart's `master` line from `__instruments__`, or the all-zero

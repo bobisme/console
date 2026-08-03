@@ -42,6 +42,8 @@ local entries = {
     d1 = "THE GROOVE, TWO BARS CLEAN THEN", d2 = "TWO DRIVEN. MASTER() FROM LUA." },
   { n = "ECHO  DELAY BUS", p = 13,
     d1 = "FOUR NOTES IN 32 ROWS. ECHO",   d2 = "(24,5,6) FILLS EVERY GAP." },
+  { n = "WAVETABLE W0-W2", p = 14,
+    d1 = "HOLLOW + BUZZ LEAD OVER AN",    d2 = "ORGAN PAD. 32 NIBBLES EACH." },
 }
 
 -- The A/B entry plays the groove and flips the master bus underneath it.
@@ -129,10 +131,10 @@ end
 
 -- A level meter driven by nothing fancier than the entry index: one bar per
 -- entry, the first `sel` of them lit, the lit tip blinking while something is
--- playing.
+-- playing. 16 bars at an 8px pitch keep the last one inside the 144px screen.
 local function meter(y)
   for i = 1, #entries do
-    local x = 6 + (i - 1) * 9
+    local x = 6 + (i - 1) * 8
     local h = 1 + i
     local c = 15
     if i <= sel then
@@ -153,8 +155,9 @@ function _draw()
   print("A PLAY  B STOP", 4, 10, 13)
 
   -- menu
-  -- 15 entries at 8px a row end at y=140, which leaves the meter its strip.
-  local top = 22
+  -- 16 entries at 8px a row run from y=20 to y=140 (the highlight band ends at
+  -- 146), which is why the meter starts at 148 rather than 144.
+  local top = 20
   for i = 1, #entries do
     local y = top + (i - 1) * 8
     local c = 13
@@ -171,7 +174,7 @@ function _draw()
   end
 
   -- meter
-  meter(144)
+  meter(148)
 
   -- description of the highlighted entry
   local e = entries[sel]
@@ -248,6 +251,34 @@ inst echo_lead wave=1 env=0,12,0 echo=7
 inst kick      wave=3 sweep=-18,4 env=0,8,0 duck=3,8
 inst snare     wave=5 sweep=-8,3  env=0,5,0
 inst hat       wave=5 env=0,2,0
+
+# ---- wavetables: 32 nibbles = one single cycle, 4 bits per sample ---------
+# Nibble n plays at (2n-15)/15, so 0 is -1.0, f is +1.0 and the ladder is
+# symmetric: sample x and sample (15-x) are exact opposites. There is no code
+# for zero, so a DC-free table pairs every 8 with a 7 - each of these three
+# sums to exactly zero.
+#
+# w0 HOLLOW: odd harmonics only (1 + 0.35*3rd + 0.15*5th). Reedy and woody,
+#            the Game Boy wave-channel sound.
+# w1 ORGAN:  drawbars - fundamental + octave/2 + twelfth/3 + 15th/5. Round,
+#            churchy, and much darker than the saw.
+# w2 BUZZ:   two rising ramps per cycle, offset. Gritty and bright, with a
+#            strong octave-up edge; the aliasing on the steps is the point.
+wavetable 0 8cefeede eedeefec 73101121 11211013
+wavetable 1 8beffecb bbbaa988 77765544 44310014
+wavetable 2 78899aab bccddeef 01122334 45566778
+
+# A wavetable is just another wave source, so all the usual machinery applies:
+# `env` shapes it, `vib` bends its phase increment, the fx column arps and
+# slides it, and `echo=` would send it to the delay bus.
+#
+# `wt_organ` deliberately carries no envelope: its rows repeat the same note
+# so the pad *holds*, and a re-stated note with the same pitch, wave and volume
+# is a no-op in the mixer (no click guard, no phase reset). An env would
+# retrigger its attack on every row and turn the pad into a tremolo.
+inst wt_hollow wave=w0 env=0,10,4
+inst wt_organ  wave=w1
+inst wt_buzz   wave=w2 env=0,9,3 vib=22,10,3
 
 __sfx__
 # ---- 0-5: the same 16-row phrase on each of the six waveforms -------------
@@ -681,6 +712,73 @@ G4 echo_lead 5
 ---
 ---
 
+# ---- 21/22: the wavetable audition ---------------------------------------
+# Two bars of melody: the first on w0 (hollow), the second on w2 (buzz, with
+# vibrato and an arp), over a w1 organ pad holding one chord tone per beat.
+# Everything here goes through the ordinary flat/modulated paths - the only
+# new thing in the signal chain is which 32 numbers the oscillator reads.
+sfx 21 speed=auto
+A4 wt_hollow 6
+---
+C5 wt_hollow 5
+---
+E5 wt_hollow 6
+---
+D5 wt_hollow 5
+---
+C5 wt_hollow 6
+---
+A4 wt_hollow 5
+---
+B4 wt_hollow 6
+---
+E5 wt_buzz 6
+---
+D5 wt_buzz 5
+---
+C5 wt_buzz 6
+---
+B4 wt_buzz 5
+---
+A4 wt_buzz 6 sl-2
+G4 wt_buzz 6
+E4 wt_buzz 6 arp3,7
+---
+
+sfx 22 speed=auto
+A3 wt_organ 4
+A3 wt_organ 4
+A3 wt_organ 4
+A3 wt_organ 4
+A3 wt_organ 4
+A3 wt_organ 4
+A3 wt_organ 4
+A3 wt_organ 4
+F3 wt_organ 4
+F3 wt_organ 4
+F3 wt_organ 4
+F3 wt_organ 4
+F3 wt_organ 4
+F3 wt_organ 4
+F3 wt_organ 4
+F3 wt_organ 4
+C3 wt_organ 4
+C3 wt_organ 4
+C3 wt_organ 4
+C3 wt_organ 4
+C3 wt_organ 4
+C3 wt_organ 4
+C3 wt_organ 4
+C3 wt_organ 4
+E3 wt_organ 4
+E3 wt_organ 4
+E3 wt_organ 4
+E3 wt_organ 4
+E3 wt_organ 4
+E3 wt_organ 4
+E3 wt_organ 4
+E3 wt_organ 4
+
 __music__
 bpm=112 rows_per_beat=4
 pat 0  loop=0  : 0 - - -
@@ -697,3 +795,4 @@ pat 10 loop=10 : 11 12 13 -
 pat 11 loop=11 : 14 15 - -
 pat 12 loop=12 : 16 17 18 19
 pat 13 loop=13 : 20 - - -
+pat 14 loop=14 : 21 22 - -

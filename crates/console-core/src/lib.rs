@@ -40,9 +40,10 @@ pub use crate::audio::{
     DUCK_ATTACK_SAMPLES, Duck, ECHO_LINE_LEN, ECHO_LP_CUTOFF_HZ, Echo, Env, Fx, Instrument,
     LFO_STEPS, MASTER_REF_LEVEL, MAX_DRIVE, MAX_DUCK_DEPTH, MAX_ECHO_DELAY, MAX_ECHO_FEEDBACK,
     MAX_ECHO_LEVEL, MAX_ECHO_SEND, MAX_FX_SEMIS, MAX_HISS, MAX_ID, MAX_SFX_ROWS, MAX_TONE,
-    MAX_VIB_CENTS, MAX_VIB_RATE, MAX_VOL, Master, NOTE_FREQ, Pattern, PatternEnd, RAMP_SAMPLES,
-    RowMod, SAMPLE_RATE, SAMPLES_PER_FRAME, Sfx, SfxRow, Sweep, TONE_CUTOFF_HZ, Tempo, Vib,
-    WAVE_COUNT, freq_at, parse_note,
+    MAX_VIB_CENTS, MAX_VIB_RATE, MAX_VOL, Master, NIBBLE_LEVEL, NOTE_FREQ, Pattern, PatternEnd,
+    RAMP_SAMPLES, RowMod, SAMPLE_RATE, SAMPLES_PER_FRAME, Sfx, SfxRow, Sweep, TONE_CUTOFF_HZ,
+    Tempo, Vib, WAVE_COUNT, WAVE_TABLE_BASE, WAVETABLE_LEN, WAVETABLE_SLOTS, Wavetable, freq_at,
+    parse_note,
 };
 pub use crate::cart::Cart;
 pub use crate::error::Error;

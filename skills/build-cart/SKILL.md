@@ -59,7 +59,8 @@ __sprites__       128 lines x 128 hex chars; 1 char = 1 pixel; sprite n at (n%16
 __map__           up to 64 lines x up to 128 cells; 2 hex chars = 1 tile id (00-ff); tile 00 = empty
 __gfx_meta__      sprite <name> rect=tx,ty size=WxH [anchor=px,py]
                   anim <sprite>.<label> frames=i0,i1,... fps=N [loop]
-__instruments__   inst <name> wave=0-5 [env=a,d,s] [vib=cents,rate,delay] [sweep=semis,frames] [duck=depth,release] [echo=0-8]
+__instruments__   inst <name> wave=<0-5|w0-w7> [env=a,d,s] [vib=cents,rate,delay] [sweep=semis,frames] [duck=depth,release] [echo=0-8]
+                  wavetable <slot 0-7> <32 hex nibbles>   # custom single-cycle wave
                   master drive=0-8 [tone=0-8] [hiss=0-4]
                   echo delay=1-60 feedback=0-8 level=0-8
 __sfx__           sfx <id> speed=<n|auto> [loop=start,end]  then rows: NOTE WAVE|INST VOL [FX]  or  ---
@@ -272,6 +273,44 @@ Facts that bite:
 - Echo ADDS level (the return is post-fader and pre-mix-gain). Heavy sends plus
   high feedback can reach the clamp — check `audio_stats` for clipped samples,
   and `master drive=1` will soft-limit it for free.
+
+### Wavetables: your own waveforms
+
+`wavetable <slot 0-7> <32 hex nibbles>` in `__instruments__` defines one
+single-cycle wave, 32 samples of 4 bits. Play it with `inst lead wave=w0` or
+straight from a sfx row (`A4 w0 6`, exactly like a bare wave digit). Eight
+slots; the nibbles may be split into groups for readability.
+
+Nibble `n` plays at `(2n-15)/15`: **`0` is −1.0, `f` is +1.0, `8` is +1/15**.
+So `ffffffffffffffff0000000000000000` is literally the square wave, and 4 bits
+have no code for zero — an all-`8` table is a quiet DC offset, not silence.
+Pair every `8` with a `7` and the table is exactly DC-free. There is **no
+interpolation**: the steps alias, and that crunch is the point (Game Boy /
+VRC6 / N163 territory), so aim for character rather than a clean sine.
+
+Writing one by hand — sketch the shape in hex, one digit per sample:
+
+```
+# a sine: up 8→f, back down through the middle, mirror below the line
+wavetable 0 89acdeef ffeedca9 76532110 00112356
+# hollow/reedy (odd harmonics only), the Game-Boy wave-channel sound
+wavetable 1 8cefeede eedeefec 73101121 11211013
+# organ drawbars: fundamental + octave/2 + twelfth/3
+wavetable 2 8beffecb bbbaa988 77765544 44310014
+# gritty: two rising ramps per cycle, offset
+wavetable 3 78899aab bccddeef 01122334 45566778
+```
+
+Rules of thumb: start at `8`, rise to `f`, come back through `8`/`7`, fall to
+`0`, return — one crossing each way per cycle is a fundamental-strong tone;
+extra wiggles are extra harmonics. A ramp (`0011...eeff`) is a saw, a step is a
+pulse of whatever width you put the edge at, and sharp corners are bright.
+Everything else composes normally: `env`, `vib`, `sweep`, `duck`, `echo=` and
+the fx column all work on a wavetable voice. `audio_state`/`audio_events`
+report a wavetable voice's wave as `8 + slot` (so `w0` shows as 8).
+Undefined slot, bad hex or a nibble count other than 32 is a parse error —
+carts never silently fall back to another waveform. Entry 16 of
+`carts/soundtest.cart` auditions three tables.
 
 ## Packaging
 

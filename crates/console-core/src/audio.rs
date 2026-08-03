@@ -27,6 +27,13 @@
 //! floor. It is off by default and, when off, the mix takes literally the same
 //! statement it always did — see [`Audio::render`].
 //!
+//! Orthogonal to both is the optional [`Wavetable`] bank (`wavetable <slot>
+//! <32 nibbles>` in `__instruments__`): eight slots of a custom single-cycle
+//! waveform, 32 samples of 4 bits, addressed as `w0`-`w7` wherever a wave digit
+//! is legal. It is a wave *source* and nothing more — every envelope, effect
+//! and mixer feature applies to it unchanged — and a cart that declares none
+//! cannot produce a waveform id above 5, so its samples are untouched.
+//!
 //! Beside it sits the optional [`Echo`] bus (`echo` line in `__instruments__`,
 //! the per-instrument `echo=<0-8>` send, or the Lua `echo()` setter): one mono
 //! delay line, fed post-duck from the voices that ask for it, with feedback and
@@ -94,6 +101,65 @@ pub const MAX_VIB_RATE: u8 = 16;
 
 /// Waveform id of the LFSR noise generator.
 const WAVE_NOISE: u8 = 5;
+
+/// Samples in one wavetable: 32 nibbles describing one single cycle.
+///
+/// 32 is the classic wavetable-chip size (Game Boy wave RAM, Konami VRC6/N163)
+/// and it divides the 32-bit phase accumulator exactly: the top 5 bits of
+/// `phase` *are* the sample index, so playback is a shift and a load.
+pub const WAVETABLE_LEN: usize = 32;
+
+/// Wavetable slots a cart may define, addressed `w0`..`w7`.
+pub const WAVETABLE_SLOTS: usize = 8;
+
+/// First internal waveform id that addresses a wavetable: the cart syntax
+/// `w<slot>` parses to `WAVE_TABLE_BASE + slot`, so slots occupy ids 8..=15.
+///
+/// The builtin waves are 0..=5 and **6/7 are deliberately left free** for the
+/// oscillators still to come (2-op FM, periodic noise). Nothing an existing
+/// cart can write produces a `wave` byte above 5, which is why adding this
+/// cannot move a single sample of a cart with no `wavetable` line.
+pub const WAVE_TABLE_BASE: u8 = 8;
+
+/// Right shift that turns a phase accumulator into a wavetable index:
+/// `32 - log2(WAVETABLE_LEN)`, so `phase >> WAVETABLE_SHIFT` is always 0..=31.
+const WAVETABLE_SHIFT: u32 = 27;
+
+/// Nibble (0..=15) to amplitude: `(2n - 15) / 15`, i.e. code 0 is exactly
+/// `-1.0`, code 15 is exactly `+1.0`, and the ladder is symmetric about zero
+/// (`n` and `15 - n` are exact negations of each other).
+///
+/// Consequences worth knowing before writing a table by hand:
+///
+/// - **Full scale matches the builtin oscillators.** The table
+///   `ffffffffffffffff0000000000000000` renders the square wave (id 2)
+///   sample for sample — `wavetable_square_is_the_builtin_square` pins it.
+/// - **4 bits cannot represent zero.** The two centre codes are `7` = −1/15
+///   and `8` = +1/15, so a table of all `8`s is not silence but a constant
+///   +0.0667 DC offset. Pair every `8` with a `7` (the classic trick: write
+///   the rising zero-crossing as `8` and the falling one as `7`) and the table
+///   is exactly DC-free — the sum of `2n - 15` over the 32 samples is 0.
+/// - The mapping is a division by 15 rather than by 16 precisely so that the
+///   extremes hit ±1: a `/16` ladder would make `0f`-style tables lopsided by
+///   −1/16 and every wavetable quieter than every builtin wave.
+pub const NIBBLE_LEVEL: [f32; 16] = [
+    -1.0,
+    -13.0 / 15.0,
+    -11.0 / 15.0,
+    -9.0 / 15.0,
+    -7.0 / 15.0,
+    -5.0 / 15.0,
+    -3.0 / 15.0,
+    -1.0 / 15.0,
+    1.0 / 15.0,
+    3.0 / 15.0,
+    5.0 / 15.0,
+    7.0 / 15.0,
+    9.0 / 15.0,
+    11.0 / 15.0,
+    13.0 / 15.0,
+    1.0,
+];
 
 /// Samples a full-scale amplitude ramp takes.
 pub const RAMP_SAMPLES: u32 = 64;
@@ -840,17 +906,76 @@ pub struct Duck {
     pub release: u8,
 }
 
-/// One `inst <name> wave=<0-5> [env=...] [vib=...] [sweep=...] [duck=...]
-/// [echo=<0-8>]` entry.
+/// One `wavetable <slot 0-7> <32 hex nibbles>` entry: a custom single-cycle
+/// waveform, 32 samples of 4 bits each.
+///
+/// The nibbles are stored raw (0..=15) rather than as floats so the cart text
+/// round-trips exactly and [`Wavetable::hex`] can print it back. [`NIBBLE_LEVEL`]
+/// is the mapping to amplitude, and the synth precomputes it once per console
+/// ([`WaveSet`]) — the render loop never divides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Wavetable {
+    /// 32 nibbles, 0..=15, in phase order (index 0 is phase 0).
+    pub nibbles: [u8; WAVETABLE_LEN],
+}
+
+impl Wavetable {
+    /// Amplitude of sample `i` (wrapping), via [`NIBBLE_LEVEL`].
+    pub fn level(&self, i: usize) -> f32 {
+        NIBBLE_LEVEL[usize::from(self.nibbles[i % WAVETABLE_LEN] & 0x0f)]
+    }
+
+    /// The 32 nibbles back as lowercase hex — exactly what the cart line said.
+    pub fn hex(&self) -> String {
+        self.nibbles
+            .iter()
+            .map(|n| char::from_digit(u32::from(*n & 0x0f), 16).unwrap_or('0'))
+            .collect()
+    }
+
+    /// Sum of `2n - 15` over the table: zero for a DC-free table. Exact
+    /// integer arithmetic, so "is this table centred?" is a decidable question
+    /// rather than a float comparison.
+    pub fn dc_sum(&self) -> i32 {
+        self.nibbles.iter().map(|&n| 2 * i32::from(n) - 15).sum()
+    }
+}
+
+/// The eight wavetable slots as amplitudes, precomputed once per [`Audio`].
+///
+/// Undefined slots are all-zero and unreachable: referencing one is a parse
+/// error, so silence here is a belt-and-braces default, never a fallback the
+/// musician can hear.
+#[derive(Debug, Clone)]
+struct WaveSet([[f32; WAVETABLE_LEN]; WAVETABLE_SLOTS]);
+
+impl WaveSet {
+    fn new(tables: &[Option<Wavetable>; WAVETABLE_SLOTS]) -> WaveSet {
+        let mut out = [[0.0f32; WAVETABLE_LEN]; WAVETABLE_SLOTS];
+        for (slot, table) in tables.iter().enumerate() {
+            if let Some(t) = table {
+                for (i, v) in out[slot].iter_mut().enumerate() {
+                    *v = t.level(i);
+                }
+            }
+        }
+        WaveSet(out)
+    }
+}
+
+/// One `inst <name> wave=<0-5|w0-w7> [env=...] [vib=...] [sweep=...]
+/// [duck=...] [echo=<0-8>]` entry.
 ///
 /// A bare wave digit on a sfx row means the *implicit flat instrument*: that
 /// waveform with no envelope, vibrato or sweep, which is exactly the PoC v1
 /// behaviour.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instrument {
-    /// `[a-z0-9_]+`, unique, never all-digits (those name the bare waveforms).
+    /// `[a-z0-9_]+`, unique, never all-digits (those name the bare waveforms)
+    /// and never `w<digits>` (that spelling names a wavetable slot).
     pub name: String,
-    /// Waveform 0..=5.
+    /// Waveform: a builtin 0..=5, or [`WAVE_TABLE_BASE`]` + slot` (8..=15) when
+    /// the instrument said `wave=w<slot>`.
     pub wave: u8,
     pub env: Option<Env>,
     pub vib: Option<Vib>,
@@ -983,6 +1108,9 @@ pub struct AudioBank {
     /// Instruments in declaration order; [`RowMod::inst`] indexes this.
     instruments: Vec<Instrument>,
     inst_by_name: BTreeMap<String, u8>,
+    /// The `wavetable <slot> <32 nibbles>` lines from `__instruments__`.
+    /// All-`None` for every cart written before wavetables existed.
+    wavetables: [Option<Wavetable>; WAVETABLE_SLOTS],
     tempo: Option<Tempo>,
     /// The `master` line from `__instruments__`; all-zero when absent.
     master: Master,
@@ -1011,6 +1139,22 @@ impl AudioBank {
     /// The instrument a [`RowMod::inst`] index refers to.
     pub fn instrument_at(&self, index: u8) -> Option<&Instrument> {
         self.instruments.get(usize::from(index))
+    }
+
+    /// The wavetable in slot `id` (`w<id>`), if the cart defines it.
+    pub fn wavetable(&self, id: u8) -> Option<&Wavetable> {
+        self.wavetables.get(usize::from(id)).and_then(|t| t.as_ref())
+    }
+
+    /// All eight wavetable slots, `None` where the cart defined nothing.
+    pub fn wavetables(&self) -> &[Option<Wavetable>; WAVETABLE_SLOTS] {
+        &self.wavetables
+    }
+
+    /// The wavetable a *waveform id* refers to: `Some` only for the
+    /// [`WAVE_TABLE_BASE`]-and-up ids that `w<slot>` produces.
+    pub fn wavetable_for_wave(&self, wave: u8) -> Option<&Wavetable> {
+        self.wavetable(wave.checked_sub(WAVE_TABLE_BASE)?)
     }
 
     /// The `bpm=` line from `__music__`, if the cart has one.
@@ -1048,12 +1192,13 @@ impl AudioBank {
         self.patterns.keys().copied()
     }
 
-    /// True when the cart has no instruments, sfx, patterns, master or echo
-    /// line.
+    /// True when the cart has no instruments, wavetables, sfx, patterns,
+    /// master or echo line.
     pub fn is_empty(&self) -> bool {
         self.sfx.is_empty()
             && self.patterns.is_empty()
             && self.instruments.is_empty()
+            && self.wavetables.iter().all(Option::is_none)
             && self.master.is_bypass()
             && self.echo.is_bypass()
     }
@@ -1075,16 +1220,22 @@ impl AudioBank {
         sfx_text: Option<&str>,
         music_text: Option<&str>,
     ) -> Result<AudioBank, Error> {
-        let (instruments, inst_by_name, master, echo) = match inst_text {
+        let (instruments, inst_by_name, wavetables, master, echo) = match inst_text {
             Some(t) => parse_instruments_section(t)?,
-            None => (Vec::new(), BTreeMap::new(), Master::OFF, Echo::OFF),
+            None => (
+                Vec::new(),
+                BTreeMap::new(),
+                [None; WAVETABLE_SLOTS],
+                Master::OFF,
+                Echo::OFF,
+            ),
         };
         let tempo = match music_text {
             Some(t) => parse_tempo_line(t)?,
             None => None,
         };
         let sfx = match sfx_text {
-            Some(t) => parse_sfx_section(t, &instruments, &inst_by_name, tempo)?,
+            Some(t) => parse_sfx_section(t, &instruments, &inst_by_name, &wavetables, tempo)?,
             None => BTreeMap::new(),
         };
         let (patterns, loop_lines) = match music_text {
@@ -1110,6 +1261,7 @@ impl AudioBank {
             patterns,
             instruments,
             inst_by_name,
+            wavetables,
             tempo,
             master,
             echo,
@@ -1222,16 +1374,96 @@ fn is_wave_digit(token: &str) -> bool {
     !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// True for the `w<digits>` spelling that names a wavetable slot. Checked
+/// *before* the instrument table, which is why instrument names may not look
+/// like this ([`parse_inst_line`] rejects them).
+fn is_wave_slot_token(token: &str) -> bool {
+    match token.as_bytes() {
+        [b'w' | b'W', rest @ ..] => !rest.is_empty() && rest.iter().all(u8::is_ascii_digit),
+        _ => false,
+    }
+}
+
+/// A wave *source* token: a builtin digit `0`-`5`, or `w0`-`w7` for a
+/// wavetable slot. Returns the internal waveform id, which is
+/// [`WAVE_TABLE_BASE`]` + slot` for the wavetable form.
+///
+/// Definedness is *not* checked here — the two callers differ on when they can
+/// know (an `inst` line may precede the `wavetable` line it references), so
+/// each validates against the slot table itself.
+fn parse_wave_source(section: &str, line: usize, what: &str, token: &str) -> Result<u8, Error> {
+    if is_wave_slot_token(token) {
+        let slot = parse_u8_in(
+            section,
+            line,
+            &format!("{what} slot"),
+            &token[1..],
+            (WAVETABLE_SLOTS - 1) as u8,
+        )?;
+        return Ok(WAVE_TABLE_BASE + slot);
+    }
+    if is_wave_digit(token) {
+        return parse_u8_in(section, line, what, token, WAVE_COUNT - 1);
+    }
+    Err(cart_err(
+        section,
+        line,
+        format!(
+            "{what} must be 0-{} (builtin) or w0-w{} (a wavetable), found {token:?}",
+            WAVE_COUNT - 1,
+            WAVETABLE_SLOTS - 1
+        ),
+    ))
+}
+
+/// "…, which the cart does not define" — the one error every undefined
+/// wavetable reference reports, listing what *is* defined.
+fn undefined_wavetable(
+    section: &str,
+    line: usize,
+    who: &str,
+    slot: u8,
+    tables: &[Option<Wavetable>; WAVETABLE_SLOTS],
+) -> Error {
+    let defined: Vec<String> = tables
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.is_some())
+        .map(|(i, _)| format!("w{i}"))
+        .collect();
+    let hint = if defined.is_empty() {
+        "this cart defines no `wavetable` lines".to_string()
+    } else {
+        format!("defined: {}", defined.join(", "))
+    };
+    cart_err(
+        section,
+        line,
+        format!("{who} references wavetable w{slot}, which the cart does not define ({hint})"),
+    )
+}
+
 // ---- `__instruments__` -----------------------------------------------------
 
-type InstTable = (Vec<Instrument>, BTreeMap<String, u8>, Master, Echo);
+type InstTable = (
+    Vec<Instrument>,
+    BTreeMap<String, u8>,
+    [Option<Wavetable>; WAVETABLE_SLOTS],
+    Master,
+    Echo,
+);
 
 fn parse_instruments_section(text: &str) -> Result<InstTable, Error> {
     const SEC: &str = "__instruments__";
     let mut list: Vec<Instrument> = Vec::new();
     let mut by_name: BTreeMap<String, u8> = BTreeMap::new();
+    let mut wavetables: [Option<Wavetable>; WAVETABLE_SLOTS] = [None; WAVETABLE_SLOTS];
     let mut master: Option<Master> = None;
     let mut echo: Option<Echo> = None;
+    // `inst` lines may reference a `wavetable` line further down the section
+    // (same forward-reference rule as `__gfx_meta__`), so definedness is
+    // checked once the whole section has parsed.
+    let mut wave_refs: Vec<(usize, String, u8)> = Vec::new();
 
     for (i, raw) in text.lines().enumerate() {
         let line = i + 1;
@@ -1265,19 +1497,32 @@ fn parse_instruments_section(text: &str) -> Result<InstTable, Error> {
             echo = Some(parse_echo_line(line, &tokens)?);
             continue;
         }
+        if tokens[0].eq_ignore_ascii_case("wavetable") {
+            let (slot, table) = parse_wavetable_line(line, &tokens)?;
+            if wavetables[usize::from(slot)].is_some() {
+                return Err(cart_err(SEC, line, format!("duplicate wavetable w{slot}")));
+            }
+            wavetables[usize::from(slot)] = Some(table);
+            continue;
+        }
         if !tokens[0].eq_ignore_ascii_case("inst") {
             return Err(cart_err(
                 SEC,
                 line,
                 format!(
-                    "expected `inst <name> wave=<0-5> ...`, \
+                    "expected `inst <name> wave=<0-5|w0-w7> ...`, \
+                     `wavetable <slot 0-{}> <{WAVETABLE_LEN} hex nibbles>`, \
                      `master drive=<0-{MAX_DRIVE}> ...` or \
                      `echo delay=<1-{MAX_ECHO_DELAY}> ...`, found {:?}",
+                    WAVETABLE_SLOTS - 1,
                     tokens[0]
                 ),
             ));
         }
         let inst = parse_inst_line(line, &tokens)?;
+        if inst.wave >= WAVE_TABLE_BASE {
+            wave_refs.push((line, inst.name.clone(), inst.wave - WAVE_TABLE_BASE));
+        }
         if by_name.contains_key(&inst.name) {
             return Err(cart_err(
                 SEC,
@@ -1291,12 +1536,78 @@ fn parse_instruments_section(text: &str) -> Result<InstTable, Error> {
         by_name.insert(inst.name.clone(), list.len() as u8);
         list.push(inst);
     }
+    for (line, name, slot) in wave_refs {
+        if wavetables[usize::from(slot)].is_none() {
+            return Err(undefined_wavetable(
+                SEC,
+                line,
+                &format!("instrument {name}"),
+                slot,
+                &wavetables,
+            ));
+        }
+    }
     Ok((
         list,
         by_name,
+        wavetables,
         master.unwrap_or_default(),
         echo.unwrap_or_default(),
     ))
+}
+
+/// `wavetable <slot 0-7> <32 hex nibbles>`.
+///
+/// The nibbles may be written as one 32-character run or split across as many
+/// whitespace-separated groups as the author likes (`wavetable 0 89abcdef
+/// fedcba98 …` reads far better in a cart than one long string) — every token
+/// after the slot is concatenated, and the total must be exactly
+/// [`WAVETABLE_LEN`] hex digits.
+fn parse_wavetable_line(line: usize, tokens: &[&str]) -> Result<(u8, Wavetable), Error> {
+    const SEC: &str = "__instruments__";
+    if tokens.len() < 3 {
+        return Err(cart_err(
+            SEC,
+            line,
+            format!(
+                "expected `wavetable <slot 0-{}> <{WAVETABLE_LEN} hex nibbles>` \
+                 (the nibbles may be split into groups)",
+                WAVETABLE_SLOTS - 1
+            ),
+        ));
+    }
+    let slot = parse_u8_in(
+        SEC,
+        line,
+        "wavetable slot",
+        tokens[1],
+        (WAVETABLE_SLOTS - 1) as u8,
+    )?;
+    let digits: String = tokens[2..].concat();
+    if digits.len() != WAVETABLE_LEN {
+        return Err(cart_err(
+            SEC,
+            line,
+            format!(
+                "wavetable w{slot} needs exactly {WAVETABLE_LEN} hex nibbles, found {}",
+                digits.len()
+            ),
+        ));
+    }
+    let mut nibbles = [0u8; WAVETABLE_LEN];
+    for (i, c) in digits.chars().enumerate() {
+        let Some(v) = c.to_digit(16) else {
+            return Err(cart_err(
+                SEC,
+                line,
+                format!(
+                    "wavetable w{slot} sample {i}: {c:?} is not a hex nibble (0-9, a-f)"
+                ),
+            ));
+        };
+        nibbles[i] = v as u8;
+    }
+    Ok((slot, Wavetable { nibbles }))
 }
 
 /// `echo delay=<1-60> feedback=<0-8> level=<0-8>`.
@@ -1418,8 +1729,9 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
         return Err(cart_err(
             SEC,
             line,
-            "expected `inst <name> wave=<0-5> [env=<a>,<d>,<s>] [vib=<cents>,<rate>,<delay>] \
-             [sweep=<semis>,<frames>] [duck=<depth>,<release>] [echo=<0-8>]`",
+            "expected `inst <name> wave=<0-5|w0-w7> [env=<a>,<d>,<s>] \
+             [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>] \
+             [duck=<depth>,<release>] [echo=<0-8>]`",
         ));
     }
     let name = tokens[1];
@@ -1435,6 +1747,17 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
             SEC,
             line,
             format!("instrument name {name:?} must not be a bare wave digit (0-5 already name the built-in waveforms)"),
+        ));
+    }
+    if is_wave_slot_token(name) {
+        return Err(cart_err(
+            SEC,
+            line,
+            format!(
+                "instrument name {name:?} must not look like a wavetable slot \
+                 (w0-w{} already name the wavetables)",
+                WAVETABLE_SLOTS - 1
+            ),
         ));
     }
 
@@ -1457,7 +1780,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
             ));
         };
         match key.to_ascii_lowercase().as_str() {
-            "wave" => wave = Some(parse_u8_in(SEC, line, "wave", value, WAVE_COUNT - 1)?),
+            "wave" => wave = Some(parse_wave_source(SEC, line, "wave", value)?),
             "env" => {
                 let parts: Vec<&str> = value.split(',').collect();
                 if parts.len() != 3 {
@@ -1534,7 +1857,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
         return Err(cart_err(
             SEC,
             line,
-            format!("instrument {name} is missing `wave=<0-5>`"),
+            format!("instrument {name} is missing `wave=<0-5>` (or `wave=w<slot>`)"),
         ));
     };
     Ok(Instrument {
@@ -1646,6 +1969,7 @@ fn parse_sfx_section(
     text: &str,
     instruments: &[Instrument],
     inst_by_name: &BTreeMap<String, u8>,
+    wavetables: &[Option<Wavetable>; WAVETABLE_SLOTS],
     tempo: Option<Tempo>,
 ) -> Result<BTreeMap<u8, Sfx>, Error> {
     const SEC: &str = "__sfx__";
@@ -1702,13 +2026,22 @@ fn parse_sfx_section(
                 format!("bad note {:?} (expected C0-B7, e.g. `C#4`)", tokens[0]),
             )
         })?;
-        // Column 2 is either a bare wave digit (PoC v1) or an instrument name.
+        // Column 2 is a bare wave digit (PoC v1), a `w<slot>` wavetable or an
+        // instrument name. Both bare forms mean "the implicit flat instrument
+        // on that waveform": no envelope, no vibrato, no echo send.
         let (wave, inst_index, inst) = if is_wave_digit(tokens[1]) {
             (
                 parse_u8_in(SEC, line, "wave", tokens[1], WAVE_COUNT - 1)?,
                 None,
                 None,
             )
+        } else if is_wave_slot_token(tokens[1]) {
+            let wave = parse_wave_source(SEC, line, "wave", tokens[1])?;
+            let slot = wave - WAVE_TABLE_BASE;
+            if wavetables[usize::from(slot)].is_none() {
+                return Err(undefined_wavetable(SEC, line, "row", slot, wavetables));
+            }
+            (wave, None, None)
         } else {
             let Some(&idx) = inst_by_name.get(tokens[1]) else {
                 return Err(cart_err(
@@ -1749,7 +2082,8 @@ fn instrument_hint(instruments: &[Instrument]) -> String {
     } else {
         let names: Vec<&str> = instruments.iter().map(|i| i.name.as_str()).collect();
         format!(
-            "want a wave digit 0-5 or one of: {}",
+            "want a wave digit 0-5, a wavetable w0-w{}, or one of: {}",
+            WAVETABLE_SLOTS - 1,
             names.join(", ")
         )
     }
@@ -2252,7 +2586,7 @@ impl Channel {
         self.echo_send = 0;
     }
 
-    fn next_sample(&mut self, lfsr: &mut u16) -> f32 {
+    fn next_sample(&mut self, lfsr: &mut u16, waves: &WaveSet) -> f32 {
         if self.amp == 0.0
             && let Some((inc, wave, vol)) = self.pending.take()
         {
@@ -2288,7 +2622,7 @@ impl Channel {
         if self.wave == WAVE_NOISE && self.phase < prev {
             *lfsr = lfsr_next(*lfsr);
         }
-        self.amp * wave_value(self.wave, self.phase, *lfsr)
+        self.amp * wave_value(self.wave, self.phase, *lfsr, waves)
     }
 }
 
@@ -2305,7 +2639,22 @@ fn phase_unit(phase: u32) -> f32 {
     (phase >> 8) as f32 * (1.0 / 16_777_216.0)
 }
 
-fn wave_value(wave: u8, phase: u32, lfsr: u16) -> f32 {
+/// One oscillator sample.
+///
+/// Waves 0..=5 are the builtin shapes, unchanged since PoC v1. Anything at or
+/// above [`WAVE_TABLE_BASE`] is a wavetable slot: the top 5 bits of the phase
+/// accumulator index the 32 precomputed amplitudes **with no interpolation**.
+///
+/// *Why no interpolation*: the step edges are the sound. A 32-point table read
+/// as a staircase is what a Game Boy, a VRC6 or an N163 does, and the aliasing
+/// those edges throw off is the character the format is here to buy — smoothing
+/// it would leave a dull, band-limited oscillator that the existing saw already
+/// covers. It is also the cheapest possible read (one shift, one load, no
+/// arithmetic), and it keeps the wavetable path exactly as bit-exact as the
+/// builtin ones. Linear interpolation would be perfectly deterministic (it is
+/// rational arithmetic on values from a const table), so the door is open for a
+/// future per-instrument `interp=` flag — but the default must be crunchy.
+fn wave_value(wave: u8, phase: u32, lfsr: u16, waves: &WaveSet) -> f32 {
     match wave {
         // pulse 12.5%
         0 => {
@@ -2343,12 +2692,19 @@ fn wave_value(wave: u8, phase: u32, lfsr: u16) -> f32 {
         // saw
         4 => 2.0 * phase_unit(phase) - 1.0,
         // noise
-        _ => {
+        WAVE_NOISE => {
             if lfsr & 1 != 0 {
                 1.0
             } else {
                 -1.0
             }
+        }
+        // wavetable slot: `phase >> 27` is 0..=31, so the index is total.
+        // (Ids 6 and 7 are unreachable - no cart syntax produces them - and
+        // wrap harmlessly onto slots 6 and 7 rather than panicking.)
+        w => {
+            let slot = usize::from(w.wrapping_sub(WAVE_TABLE_BASE)) % WAVETABLE_SLOTS;
+            waves.0[slot][(phase >> WAVETABLE_SHIFT) as usize]
         }
     }
 }
@@ -2370,7 +2726,8 @@ pub struct ChannelInfo {
     pub sfx: Option<u8>,
     /// Row index within that sfx.
     pub row: u16,
-    /// Current waveform 0..=5.
+    /// Current waveform: 0..=5 for the builtins, or 8 + slot (8..=15) for a
+    /// wavetable voice, matching [`Instrument::wave`].
     pub wave: u8,
     /// Current target volume 0..=7.
     pub vol: u8,
@@ -2387,6 +2744,9 @@ pub struct Audio {
     channels: [Channel; CHANNEL_COUNT],
     music: Option<MusicState>,
     lfsr: u16,
+    /// The cart's wavetables as amplitudes, resolved once at load. Immutable
+    /// for the life of the console — nothing at runtime can rewrite a table.
+    waves: WaveSet,
     /// The live master setting: the cart's `master` line until Lua's
     /// `master()` overrides it.
     master: Master,
@@ -2415,11 +2775,13 @@ impl Audio {
     pub fn new(bank: AudioBank) -> Audio {
         let master = bank.master();
         let echo = bank.echo();
+        let waves = WaveSet::new(bank.wavetables());
         Audio {
             bank,
             channels: [const { Channel::new() }; CHANNEL_COUNT],
             music: None,
             lfsr: LFSR_SEED,
+            waves,
             master,
             mstate: MasterState::new(),
             echo,
@@ -2825,6 +3187,7 @@ impl Audio {
         let Audio {
             channels,
             lfsr,
+            waves,
             master,
             mstate,
             echo,
@@ -2838,7 +3201,7 @@ impl Audio {
             for slot in out.iter_mut() {
                 let mut acc = 0.0f32;
                 for c in channels.iter_mut() {
-                    acc += c.next_sample(lfsr);
+                    acc += c.next_sample(lfsr, waves);
                 }
                 *slot = (acc * MIX_GAIN).clamp(-1.0, 1.0);
             }
@@ -2862,7 +3225,7 @@ impl Audio {
             let mut acc = 0.0f32;
             let mut send = 0.0f32;
             for (i, c) in channels.iter_mut().enumerate() {
-                let s = c.next_sample(lfsr);
+                let s = c.next_sample(lfsr, waves);
                 let s = if exempt == Some(i as u8) { s } else { s * g };
                 acc += s;
                 // `echo_send == 0` is both the default and the common case, so
@@ -3018,12 +3381,22 @@ mod tests {
         assert!((3000..7000).contains(&zeros), "biased noise: {zeros}");
     }
 
+    /// Every slot filled with a full-scale ramp, for the oscillator tests.
+    fn ramp_waves() -> WaveSet {
+        let mut nibbles = [0u8; WAVETABLE_LEN];
+        for (i, n) in nibbles.iter_mut().enumerate() {
+            *n = (i / 2) as u8;
+        }
+        WaveSet::new(&[Some(Wavetable { nibbles }); WAVETABLE_SLOTS])
+    }
+
     #[test]
     fn waveforms_stay_in_range() {
-        for wave in 0..WAVE_COUNT {
+        let waves = ramp_waves();
+        for wave in (0..WAVE_COUNT).chain(WAVE_TABLE_BASE..WAVE_TABLE_BASE + 8) {
             for step in 0..512u32 {
                 let phase = step.wrapping_mul(0x0080_0000);
-                let v = wave_value(wave, phase, 0xACE1);
+                let v = wave_value(wave, phase, 0xACE1, &waves);
                 assert!((-1.0..=1.0).contains(&v), "wave {wave} produced {v}");
             }
         }
@@ -3031,9 +3404,41 @@ mod tests {
 
     #[test]
     fn triangle_is_continuous_at_the_peak() {
-        let a = wave_value(3, 0x7fff_ff00, 0);
-        let b = wave_value(3, 0x8000_0000, 0);
+        let waves = WaveSet::new(&[None; WAVETABLE_SLOTS]);
+        let a = wave_value(3, 0x7fff_ff00, 0, &waves);
+        let b = wave_value(3, 0x8000_0000, 0, &waves);
         assert!((a - b).abs() < 1e-4, "{a} vs {b}");
+    }
+
+    #[test]
+    fn the_nibble_ladder_is_symmetric_and_full_scale() {
+        assert_eq!(NIBBLE_LEVEL[0], -1.0);
+        assert_eq!(NIBBLE_LEVEL[15], 1.0);
+        for n in 0..16 {
+            // Code n and code 15-n are exact negations: a table and its
+            // mirror image cancel to zero DC, bit for bit.
+            assert_eq!(NIBBLE_LEVEL[n].to_bits(), (-NIBBLE_LEVEL[15 - n]).to_bits());
+        }
+        // Monotone, and the step is uniform (2/15 per code).
+        assert!(NIBBLE_LEVEL.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn a_wavetable_reads_the_top_five_bits_of_the_phase() {
+        let waves = ramp_waves();
+        for i in 0..WAVETABLE_LEN {
+            // Both ends of the sample's phase span read the same entry.
+            let lo = (i as u32) << WAVETABLE_SHIFT;
+            let hi = lo | ((1 << WAVETABLE_SHIFT) - 1);
+            let expect = NIBBLE_LEVEL[i / 2];
+            for phase in [lo, hi] {
+                assert_eq!(
+                    wave_value(WAVE_TABLE_BASE, phase, 0, &waves).to_bits(),
+                    expect.to_bits(),
+                    "sample {i} at phase {phase:#010x}"
+                );
+            }
+        }
     }
 
     // -----------------------------------------------------------------

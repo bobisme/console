@@ -324,7 +324,7 @@ Principles: **deterministic** (const note table + linear ops + LFSR only — no
   scale (see the master bus) and acts as a free limiter.
 - Waveforms: 0 = pulse 12.5%, 1 = pulse 25%, 2 = square 50%, 3 = triangle,
   4 = saw, 5 = noise (16-bit LFSR, NES-style taps, clocked from the channel
-  frequency).
+  frequency). Ids 8–15 are the cart's own wavetables (PoC v2, below).
 - Notes `C0`–`B7` (A4 = 440). Frequencies come from a `const` table of 96 f32
   literals baked into the source (generated once, committed) — never computed
   at runtime.
@@ -477,10 +477,11 @@ cents factor, LFOs are integer-phase triangles.
 ### `__instruments__` section (phase 1)
 
 ```
-inst <name> wave=<0-5> [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>] [echo=<0-8>]
+inst <name> wave=<0-5|w0-w7> [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>] [echo=<0-8>]
 ```
 
-- `name` `[a-z0-9_]+`, unique, must not shadow the bare wave digits 0–5.
+- `name` `[a-z0-9_]+`, unique, must not shadow the bare wave digits 0–5 nor the
+  `w<digits>` spelling that names a wavetable slot.
 - `env`: attack frames (vol ramps 0→row vol), decay frames (then decays
   toward sustain), sustain level 0–7 held until the row/note changes.
   Default: flat at row volume.
@@ -493,6 +494,59 @@ inst <name> wave=<0-5> [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate>,<del
   (today's behavior, still valid — old carts unchanged).
 - Percussion is just instruments: `inst kick wave=3 sweep=-14,5 env=0,6,0`,
   triggered by an ordinary note row giving the sweep's start pitch.
+
+### Wavetables (phase 1.75)
+
+```
+wavetable <slot 0-7> <32 hex nibbles>   # in __instruments__, one line per slot
+inst <name> wave=w<slot> ...            # …and any instrument may play it
+A4 w3 6                                 # …as may a sfx row, like a wave digit
+```
+
+Eight slots of a custom **single-cycle waveform, 32 samples × 4 bits** — the
+classic wavetable-chip format (Game Boy wave RAM, VRC6, N163). Off by default
+in the strongest sense: no cart written before this can produce a waveform id
+above 5, so a cart with no `wavetable` line renders bit-identical samples.
+
+- **Slots and ids.** `w0`–`w7`. Internally a wavetable is just another waveform
+  id, `8 + slot` (ids 6 and 7 stay reserved for future builtin oscillators), so
+  `ChannelInfo::wave` and `audio_state` report 8–15 for a wavetable voice.
+- **Nibbles.** Exactly 32 hex digits, most significant sample first. They may be
+  written as one run or split into whitespace-separated groups
+  (`wavetable 0 8cefeede eedeefec 73101121 11211013`) — grouping is cosmetic.
+- **Mapping**: nibble `n` plays at **`(2n − 15) / 15`**, so `0` = −1.0, `f` =
+  +1.0, and codes `n` and `15 − n` are exact negations. Dividing by 15 rather
+  than 16 is deliberate: it makes wavetables reach the same full scale as the
+  builtin oscillators, and
+  `wavetable 0 ffffffffffffffff0000000000000000` is therefore *the* square wave
+  (id 2), sample for sample. The cost is that **4 bits cannot represent zero**:
+  the two centre codes are `7` = −1/15 and `8` = +1/15, so an all-`8` table is
+  a constant +0.0667 DC offset rather than silence. A table is exactly DC-free
+  when `Σ(2n − 15) = 0`, i.e. when its codes pair up around the centre — the
+  authoring rule is "one `7` for every `8`".
+- **Playback**: the same fixed-point phase accumulator as every other wave. The
+  top 5 bits of the 32-bit phase are the sample index
+  (`phase >> 27`, always 0–31), so one cycle of the table plays per period of
+  the note and there is no rounding anywhere.
+- **No interpolation**, on purpose. The staircase edges are the sound: that
+  crunch is what a Game Boy or an N163 gives you and it is the reason to have
+  the format at all — a smoothed 32-point table would just be a duller saw.
+  It is also the cheapest possible read (a shift and a load). Linear
+  interpolation would be perfectly deterministic (rational arithmetic on const
+  values), so a future per-instrument `interp=` flag stays possible; the
+  *default* is crunchy.
+- **Composes with everything.** A wavetable is a wave source and nothing else,
+  so `env`, `vib`, `sweep`, `duck`, `echo=` and the whole fx column
+  (`arp`/`sl`/`vib`/`fade`) apply unchanged — vibrato and sweeps modulate the
+  phase increment exactly as they do for a builtin wave.
+- **Errors at parse time, never a silent fallback** (house style): a slot
+  outside 0–7, a nibble count other than 32, a non-hex character, two lines
+  claiming the same slot, or a `w<slot>` reference to a slot the cart never
+  defined. `inst` lines may reference a `wavetable` line further down the
+  section (same forward-reference rule as `__gfx_meta__`); definedness is
+  checked once the section has parsed.
+- Memory is 8 × 32 f32 resolved once at load; nothing at runtime rewrites a
+  table, and no Lua setter exposes them (a cart's timbres are cart data).
 
 ### Master bus & sidechain ducking (phase 1.5)
 
@@ -602,8 +656,9 @@ numeric speeds keep working everywhere.
 A listening-session cart: d-pad browses a menu of audition entries — each
 waveform, vibrato off/on comparison, arpeggio chord, slides, a drum kit
 pattern, the two-pulse echo trick, one full 4-channel groove, a clean/driven
-A/B of the master bus, and a sparse melody through the echo bus — A plays
-the selection, B stops. This is the vehicle for tuning instrument defaults
+A/B of the master bus, a sparse melody through the echo bus, and a wavetable
+audition (a hollow lead and a gritty one over a held organ pad, three
+32-nibble tables) — A plays the selection, B stops. This is the vehicle for tuning instrument defaults
 by ear; agents render entries to WAV via the harness for the same purpose.
 
 `master` and `echo` are both cart-global, so the two entries that demonstrate
