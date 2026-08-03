@@ -1,7 +1,7 @@
 //! Mutable console state shared between Rust and the Lua closures.
 
 use crate::audio::{Audio, AudioBank};
-use crate::gfx::{FB_LEN, Framebuffer, SHEET_LEN, SpriteSheet};
+use crate::gfx::{DrawState, FB_LEN, Framebuffer, SHEET_LEN, SpriteSheet};
 use crate::rng::Pcg32;
 
 /// Everything the Lua API can touch. Owned by the [`Console`](crate::Console)
@@ -9,6 +9,9 @@ use crate::rng::Pcg32;
 #[derive(Debug)]
 pub struct State {
     pub fb: Box<Framebuffer>,
+    /// Camera / clip / palette / transparency. Persists across frames; only a
+    /// cart call (or a fresh console) changes it.
+    pub draw: DrawState,
     pub sheet: Box<SpriteSheet>,
     /// Button mask for the frame being processed.
     pub input: u8,
@@ -28,6 +31,7 @@ impl State {
     pub fn new(sheet: Box<SpriteSheet>, seed: u64, bank: AudioBank) -> State {
         State {
             fb: Box::new([0u8; FB_LEN]),
+            draw: DrawState::new(),
             sheet,
             input: 0,
             prev_input: 0,

@@ -218,7 +218,10 @@ impl Session {
 
     pub fn screenshot_png(&self) -> Result<Vec<u8>, SessionError> {
         let console = self.console()?;
-        Ok(encode_png(console.framebuffer()))
+        // Screenshots are what the *player* sees, so the display palette
+        // (`pal(c0, c1, 1)`) applies here. `screen_text` deliberately does not
+        // apply it: that stays raw draw-space indices.
+        Ok(encode_png(console.framebuffer(), console.display_palette()))
     }
 
     /// Like [`Session::screenshot_png`] but nearest-neighbor upscaled by an
@@ -227,7 +230,11 @@ impl Session {
     /// at 1:1 for human/agent review, so callers can ask for it blown up.
     pub fn screenshot_png_zoomed(&self, zoom: u32) -> Result<Vec<u8>, SessionError> {
         let console = self.console()?;
-        Ok(encode_png_zoomed(console.framebuffer(), zoom))
+        Ok(encode_png_zoomed(
+            console.framebuffer(),
+            console.display_palette(),
+            zoom,
+        ))
     }
 
     pub fn screen_text(&self) -> Result<Vec<String>, SessionError> {
@@ -449,18 +456,24 @@ pub struct Info {
 
 /// Encode a framebuffer as an RGBA PNG at 1:1 scale using the fixed
 /// Sweetie-16 palette.
-pub fn encode_png(fb: &[u8; FB_LEN]) -> Vec<u8> {
-    encode_png_zoomed(fb, 1)
+///
+/// `dpal` is the console's display palette (`Console::display_palette`): a
+/// 16-entry index -> index map applied at scanout, identity unless the cart
+/// called `pal(c0, c1, 1)`. Pass [`console_core::IDENTITY_PAL`] for raw output.
+pub fn encode_png(fb: &[u8; FB_LEN], dpal: &[u8; 16]) -> Vec<u8> {
+    encode_png_zoomed(fb, dpal, 1)
 }
 
 /// Encode a framebuffer as an RGBA PNG, nearest-neighbor upscaled by an
 /// integer `zoom` factor (each logical pixel becomes a `zoom`x`zoom` block).
 /// `zoom <= 1` behaves exactly like [`encode_png`].
-pub fn encode_png_zoomed(fb: &[u8; FB_LEN], zoom: u32) -> Vec<u8> {
+pub fn encode_png_zoomed(fb: &[u8; FB_LEN], dpal: &[u8; 16], zoom: u32) -> Vec<u8> {
     let zoom = zoom.max(1);
+    // Fold the display map into a 16-entry RGB lookup once, not per pixel.
+    let lut: [[u8; 3]; 16] = std::array::from_fn(|i| PALETTE[(dpal[i] & 0x0f) as usize]);
     let mut rgba = Vec::with_capacity(FB_LEN * 4);
     for &idx in fb.iter() {
-        let [r, g, b] = PALETTE[(idx & 0x0f) as usize];
+        let [r, g, b] = lut[(idx & 0x0f) as usize];
         rgba.extend_from_slice(&[r, g, b, 255]);
     }
 
@@ -511,4 +524,69 @@ fn nearest_neighbor_scale(rgba: &[u8], src_w: u32, src_h: u32, zoom: u32) -> Vec
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A cart that draws, then fades the whole screen through the display
+    /// palette without redrawing a pixel.
+    const FADE_CART: &str = "\
+__lua__
+function _draw() cls(1) rectfill(0, 0, 9, 9, 7) end
+function _update() if t() * 60 >= 2 then for i = 0, 15 do pal(i, 0, 1) end end end
+";
+
+    #[test]
+    fn screenshots_apply_the_display_palette_but_screen_text_does_not() {
+        let mut session = Session::default();
+        session.load_cart(FADE_CART, 0).unwrap();
+        session.step(1, 0).unwrap();
+
+        let before_png = session.screenshot_png().unwrap();
+        let before_text = session.screen_text().unwrap();
+
+        session.step(5, 0).unwrap();
+        let after_png = session.screenshot_png().unwrap();
+        let after_text = session.screen_text().unwrap();
+
+        assert_eq!(
+            before_text, after_text,
+            "screen_text stays in raw draw space"
+        );
+        assert_ne!(
+            before_png, after_png,
+            "the screenshot must show the display-palette fade"
+        );
+    }
+
+    #[test]
+    fn encode_png_with_the_identity_map_is_the_plain_render() {
+        let mut fb = [0u8; FB_LEN];
+        fb[0] = 7;
+        fb[1] = 11;
+        let mut faded = console_core::IDENTITY_PAL;
+        faded[7] = 0;
+        assert_eq!(
+            encode_png(&fb, &console_core::IDENTITY_PAL),
+            encode_png(&fb, &console_core::IDENTITY_PAL)
+        );
+        assert_ne!(
+            encode_png(&fb, &console_core::IDENTITY_PAL),
+            encode_png(&fb, &faded)
+        );
+    }
+
+    #[test]
+    fn zoomed_screenshots_apply_the_display_palette_too() {
+        let mut fb = [0u8; FB_LEN];
+        fb[0] = 7;
+        let mut faded = console_core::IDENTITY_PAL;
+        faded[7] = 0;
+        assert_ne!(
+            encode_png_zoomed(&fb, &console_core::IDENTITY_PAL, 3),
+            encode_png_zoomed(&fb, &faded, 3)
+        );
+    }
 }

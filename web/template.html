@@ -461,6 +461,10 @@
   var con_audio = typeof Module["_con_audio"] === "function"
     ? Module.cwrap("con_audio", "number", [])
     : null;
+  // Likewise the display palette: older engines predate pal(c0, c1, 1).
+  var con_dpal = typeof Module["_con_dpal"] === "function"
+    ? Module.cwrap("con_dpal", "number", [])
+    : null;
 
   function currentError() {
     var p = con_error();
@@ -652,14 +656,42 @@
   // ---- render ----
   var imageData = ctx.createImageData(W, H);
   var rgba = imageData.data;
+
+  // 16-entry RGBA lookup, rebuilt per frame from the display palette so
+  // pal(c0, c1, 1) fades cost 16 steps, not 36864. Seeded to identity so an
+  // engine without con_dpal renders exactly as before.
+  var lut = new Uint8Array(16 * 4);
+  function identityLut() {
+    for (var k = 0; k < 16; k++) {
+      lut[k * 4] = pal[k * 3];
+      lut[k * 4 + 1] = pal[k * 3 + 1];
+      lut[k * 4 + 2] = pal[k * 3 + 2];
+      lut[k * 4 + 3] = 255;
+    }
+  }
+  identityLut();
+
   function blit() {
+    // Refresh the lookup first: ALLOW_MEMORY_GROWTH can detach HEAPU8 views,
+    // so the fb view below must be the last thing taken before it is read.
+    if (con_dpal) {
+      var dp = con_dpal();
+      var heap = Module.HEAPU8;
+      for (var k = 0; k < 16; k++) {
+        var s = (heap[dp + k] & 15) * 3;
+        lut[k * 4] = pal[s];
+        lut[k * 4 + 1] = pal[s + 1];
+        lut[k * 4 + 2] = pal[s + 2];
+        lut[k * 4 + 3] = 255;
+      }
+    }
     var fbPtr = con_fb();
     var fb = Module.HEAPU8.subarray(fbPtr, fbPtr + W * H);
     for (var i = 0, j = 0; i < W * H; i++, j += 4) {
-      var c = (fb[i] & 15) * 3;
-      rgba[j] = pal[c];
-      rgba[j + 1] = pal[c + 1];
-      rgba[j + 2] = pal[c + 2];
+      var c = (fb[i] & 15) * 4;
+      rgba[j] = lut[c];
+      rgba[j + 1] = lut[c + 1];
+      rgba[j + 2] = lut[c + 2];
       rgba[j + 3] = 255;
     }
     ctx.putImageData(imageData, 0, 0);

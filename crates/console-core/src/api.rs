@@ -100,7 +100,9 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
     g.set(
         "cls",
         lua.create_function(move |_, c: Option<f64>| {
-            gfx::cls(&mut st.borrow_mut().fb, col(c.unwrap_or(0.0)));
+            let mut s = st.borrow_mut();
+            let State { fb, draw, .. } = &mut *s;
+            gfx::cls(fb, draw, col(c.unwrap_or(0.0)));
             Ok(())
         })?,
     )?;
@@ -109,7 +111,9 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
     g.set(
         "pset",
         lua.create_function(move |_, (x, y, c): (f64, f64, Option<f64>)| {
-            gfx::pset(&mut st.borrow_mut().fb, fl(x), fl(y), col(c.unwrap_or(0.0)));
+            let mut s = st.borrow_mut();
+            let State { fb, draw, .. } = &mut *s;
+            gfx::pset(fb, draw, fl(x), fl(y), col(c.unwrap_or(0.0)));
             Ok(())
         })?,
     )?;
@@ -127,8 +131,11 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         "line",
         lua.create_function(
             move |_, (x0, y0, x1, y1, c): (f64, f64, f64, f64, Option<f64>)| {
+                let mut s = st.borrow_mut();
+                let State { fb, draw, .. } = &mut *s;
                 gfx::line(
-                    &mut st.borrow_mut().fb,
+                    fb,
+                    draw,
                     fl(x0),
                     fl(y0),
                     fl(x1),
@@ -145,8 +152,11 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         "rect",
         lua.create_function(
             move |_, (x0, y0, x1, y1, c): (f64, f64, f64, f64, Option<f64>)| {
+                let mut s = st.borrow_mut();
+                let State { fb, draw, .. } = &mut *s;
                 gfx::rect(
-                    &mut st.borrow_mut().fb,
+                    fb,
+                    draw,
                     fl(x0),
                     fl(y0),
                     fl(x1),
@@ -163,8 +173,11 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         "rectfill",
         lua.create_function(
             move |_, (x0, y0, x1, y1, c): (f64, f64, f64, f64, Option<f64>)| {
+                let mut s = st.borrow_mut();
+                let State { fb, draw, .. } = &mut *s;
                 gfx::rectfill(
-                    &mut st.borrow_mut().fb,
+                    fb,
+                    draw,
                     fl(x0),
                     fl(y0),
                     fl(x1),
@@ -179,31 +192,41 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
     let st = state.clone();
     g.set(
         "circ",
-        lua.create_function(move |_, (x, y, r, c): (f64, f64, Option<f64>, Option<f64>)| {
-            gfx::circ(
-                &mut st.borrow_mut().fb,
-                fl(x),
-                fl(y),
-                fl(r.unwrap_or(4.0)),
-                col(c.unwrap_or(0.0)),
-            );
-            Ok(())
-        })?,
+        lua.create_function(
+            move |_, (x, y, r, c): (f64, f64, Option<f64>, Option<f64>)| {
+                let mut s = st.borrow_mut();
+                let State { fb, draw, .. } = &mut *s;
+                gfx::circ(
+                    fb,
+                    draw,
+                    fl(x),
+                    fl(y),
+                    fl(r.unwrap_or(4.0)),
+                    col(c.unwrap_or(0.0)),
+                );
+                Ok(())
+            },
+        )?,
     )?;
 
     let st = state.clone();
     g.set(
         "circfill",
-        lua.create_function(move |_, (x, y, r, c): (f64, f64, Option<f64>, Option<f64>)| {
-            gfx::circfill(
-                &mut st.borrow_mut().fb,
-                fl(x),
-                fl(y),
-                fl(r.unwrap_or(4.0)),
-                col(c.unwrap_or(0.0)),
-            );
-            Ok(())
-        })?,
+        lua.create_function(
+            move |_, (x, y, r, c): (f64, f64, Option<f64>, Option<f64>)| {
+                let mut s = st.borrow_mut();
+                let State { fb, draw, .. } = &mut *s;
+                gfx::circfill(
+                    fb,
+                    draw,
+                    fl(x),
+                    fl(y),
+                    fl(r.unwrap_or(4.0)),
+                    col(c.unwrap_or(0.0)),
+                );
+                Ok(())
+            },
+        )?,
     )?;
 
     type SprArgs = (
@@ -220,9 +243,12 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         "spr",
         lua.create_function(move |_, (n, x, y, w, h, fx, fy): SprArgs| {
             let mut s = st.borrow_mut();
-            let State { fb, sheet, .. } = &mut *s;
+            let State {
+                fb, draw, sheet, ..
+            } = &mut *s;
             gfx::spr(
                 fb,
+                draw,
                 sheet,
                 fl(n),
                 fl(x),
@@ -241,8 +267,11 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
             move |lua, (s, x, y, c): (Value, Option<f64>, Option<f64>, Option<f64>)| {
                 // Coerce before borrowing: __tostring could re-enter Lua.
                 let text = to_text(lua, s);
+                let mut s = st.borrow_mut();
+                let State { fb, draw, .. } = &mut *s;
                 gfx::print(
-                    &mut st.borrow_mut().fb,
+                    fb,
+                    draw,
                     &text,
                     fl(x.unwrap_or(0.0)),
                     fl(y.unwrap_or(0.0)),
@@ -251,6 +280,87 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                 Ok(())
             },
         )?,
+    )?;
+
+    // ---- draw state ---------------------------------------------------------
+    // camera / clip / pal / palt all persist across frames (PICO-8 semantics):
+    // nothing resets them at frame boundaries, only an explicit call does.
+
+    // `camera([x], [y])`: integer draw offset subtracted from every subsequent
+    // drawing op. No arguments resets to (0, 0). `pget` is unaffected.
+    let st = state.clone();
+    g.set(
+        "camera",
+        lua.create_function(move |_, (x, y): (Option<f64>, Option<f64>)| {
+            st.borrow_mut()
+                .draw
+                .set_camera(fl(x.unwrap_or(0.0)), fl(y.unwrap_or(0.0)));
+            Ok(())
+        })?,
+    )?;
+
+    // `clip([x, y, w, h])`: clip rectangle in SCREEN space (applied after the
+    // camera offset). No arguments resets to the full screen. `cls` respects it.
+    type ClipArgs = (Option<f64>, Option<f64>, Option<f64>, Option<f64>);
+    let st = state.clone();
+    g.set(
+        "clip",
+        lua.create_function(move |_, (x, y, w, h): ClipArgs| {
+            let mut s = st.borrow_mut();
+            if x.is_none() && y.is_none() && w.is_none() && h.is_none() {
+                s.draw.reset_clip();
+            } else {
+                s.draw.set_clip(
+                    fl(x.unwrap_or(0.0)),
+                    fl(y.unwrap_or(0.0)),
+                    fl(w.unwrap_or(0.0)),
+                    fl(h.unwrap_or(0.0)),
+                );
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // `pal([c0], [c1], [p=0])`: p=0 remaps at draw time (the framebuffer really
+    // changes), p=1 remaps at scanout (the framebuffer keeps its indices — this
+    // is what makes whole-screen fades free). No arguments resets both maps and
+    // `palt`.
+    let st = state.clone();
+    g.set(
+        "pal",
+        lua.create_function(
+            move |_, (c0, c1, p): (Option<f64>, Option<f64>, Option<f64>)| {
+                let mut s = st.borrow_mut();
+                match c0 {
+                    None => s.draw.reset_pal(),
+                    Some(from) => {
+                        let (from, to) = (col(from), col(c1.unwrap_or(from)));
+                        if p.map_or(0, fl) == 1 {
+                            s.draw.set_display_pal(from, to);
+                        } else {
+                            s.draw.set_draw_pal(from, to);
+                        }
+                    }
+                }
+                Ok(())
+            },
+        )?,
+    )?;
+
+    // `palt([c], [flag])`: which colours `spr` treats as transparent. Tested on
+    // the sprite's SOURCE colour, before the draw palette remaps it. No
+    // arguments resets to "only colour 0".
+    let st = state.clone();
+    g.set(
+        "palt",
+        lua.create_function(move |_, (c, flag): (Option<f64>, Option<Value>)| {
+            let mut s = st.borrow_mut();
+            match c {
+                None => s.draw.reset_palt(),
+                Some(c) => s.draw.set_palt(col(c), truthy(flag.as_ref())),
+            }
+            Ok(())
+        })?,
     )?;
 
     // ---- input ------------------------------------------------------------

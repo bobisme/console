@@ -137,7 +137,16 @@ function hex64(v) {
     process.exit(1);
   }
   const con_audio = Module.cwrap("con_audio", "number", []);
-  check(true, "all eight con_* symbols cwrap'd");
+
+  // Same story for the display palette: web/template.html feature-detects
+  // _con_dpal and falls back to an identity lookup, so a missing export would
+  // silently disable pal(c0, c1, 1) fades rather than error.
+  if (!check(typeof Module["_con_dpal"] === "function", "_con_dpal is exported",
+             "add _con_dpal to -sEXPORTED_FUNCTIONS in web/build-engine.sh")) {
+    process.exit(1);
+  }
+  const con_dpal = Module.cwrap("con_dpal", "number", []);
+  check(true, "all nine con_* symbols cwrap'd");
 
   const currentError = () => {
     const p = con_error();
@@ -162,6 +171,12 @@ function hex64(v) {
   // --- palette ---
   const pal = Module.HEAPU8.slice(con_palette(), con_palette() + 48);
   check(pal.length === 48 && distinct(pal) > 1, "con_palette gives 48 non-uniform RGB bytes");
+
+  const dpalBytes = () => Module.HEAPU8.slice(con_dpal(), con_dpal() + 16);
+  const IDENTITY_PAL = Uint8Array.from({ length: 16 }, (_, i) => i);
+  check(equalBytes(dpalBytes(), IDENTITY_PAL),
+        "con_dpal is identity for a cart that never calls pal(c0, c1, 1)",
+        Array.from(dpalBytes()).join(","));
 
   // --- audio: silence before the first step ---
   const audioPtrFirst = con_audio();
@@ -257,6 +272,39 @@ function hex64(v) {
     );
     console.log(`     fb hash:    0x${fbHash.toString(16).padStart(8, "0")} ` +
                 `(expected 0x${FB_GOLDEN.toString(16).padStart(8, "0")})`);
+  }
+
+  // --- display-palette fade: pixels stay put, only con_dpal moves ---
+  // This is the whole point of pal(c0, c1, 1): the shell composes
+  // palette[dpal[idx]], so a cart can fade the screen without redrawing and
+  // without perturbing the framebuffer (or its goldens).
+  {
+    const fadeCart =
+      "__lua__\n" +
+      "f = 0\n" +
+      "function _update() f = f + 1 if f == 3 then for i = 0, 15 do pal(i, 0, 1) end end end\n" +
+      "function _draw() cls(0) rectfill(0, 0, 9, 9, 7) end\n";
+    const bytes = new TextEncoder().encode(fadeCart);
+    const p = con_alloc(bytes.length);
+    Module.HEAPU8.set(bytes, p);
+    if (!check(con_init(p, bytes.length) === 0, "con_init loads the fade cart",
+               currentError())) process.exit(1);
+
+    con_step(0);
+    const before = Module.HEAPU8.slice(con_fb(), con_fb() + FB_LEN);
+    check(equalBytes(dpalBytes(), IDENTITY_PAL), "dpal starts as identity");
+    check(before[0] === 7, "the cart drew colour 7 at (0, 0)", `got ${before[0]}`);
+
+    for (let f = 0; f < 5; f++) con_step(0);
+    const after = Module.HEAPU8.slice(con_fb(), con_fb() + FB_LEN);
+    check(equalBytes(dpalBytes(), new Uint8Array(16)),
+          "pal(i, 0, 1) x16 drives con_dpal to all zeros",
+          Array.from(dpalBytes()).join(","));
+    check(equalBytes(before, after),
+          "the framebuffer is byte-identical through the fade");
+    check(after[0] === 7, "framebuffer still holds raw draw-space index 7",
+          `got ${after[0]}`);
+    check(currentError() === null, "fade cart runs clean", currentError());
   }
 
   // --- error path: a deliberately broken cart must report, not crash ---

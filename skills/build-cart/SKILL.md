@@ -73,6 +73,19 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
 - Draw: `cls([c]) pset pget line rect rectfill circ circfill
   spr(n,x,y,[w,h,flip_x,flip_y]) print(s,x,y,[c])`. Color 0 is transparent
   in `spr()`.
+- Draw state (all four PERSIST across frames — nothing auto-resets them):
+  - `camera([x],[y])` — offset every later draw by `-(x,y)`; no args resets.
+    `pget` and `cls` are unaffected.
+  - `clip([x,y,w,h])` — clip rect in SCREEN space (after the camera); no args
+    resets to full screen. `cls` respects it, so it clears the window.
+  - `pal(c0,c1)` — draw-palette remap: pixels are actually written as `c1`.
+  - `pal(c0,c1,1)` — DISPLAY remap, applied at scanout only. The framebuffer
+    keeps its indices, so `for i=0,15 do pal(i,0,1) end` fades the whole
+    screen to black with no redraw (and `screen_text` still shows the real
+    pixels). Flashes: `pal(i,7,1)`. `pal()` with no args resets both maps
+    AND `palt`.
+  - `palt(c,flag)` — which colors `spr()` skips (default: only 0). Tested on
+    the sprite's SOURCE color, before `pal()` remaps it. `palt()` resets.
 - Input: `btn(i)` held / `btnp(i)` pressed-this-frame. 0=L 1=R 2=U 3=D
   4=A 5=B 6=menu (start/select-style; the web shell's triangle button).
 - Audio: `sfx(n,[ch])` with `ch` 0–5 (`sfx(-1,ch)` stops a channel),

@@ -72,6 +72,10 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `circ(x, y, r, c)` / `circfill(...)` | midpoint circle outline / filled |
 | `spr(n, x, y, [w=1], [h=1], [flip_x=false], [flip_y=false])` | draw sprite n (w×h sprites); color 0 transparent |
 | `print(s, x, y, [c=12])` | draw text with built-in 4×6 font (ASCII 32–126; lowercase may render as uppercase) |
+| `camera([x=0], [y=0])` | draw offset subtracted from all later draw coords; no args resets |
+| `clip([x, y, w, h])` | clip rectangle in **screen** space; no args resets to full screen |
+| `pal([c0], [c1], [p=0])` | p=0 draw-palette remap (rewrites pixels), p=1 display-palette remap (scanout only); no args resets both maps **and** `palt` |
+| `palt([c], [flag])` | mark color c transparent in `spr()`; no args resets to "only color 0" |
 | `btn(i)` / `btnp(i)` | button held / just-pressed this frame |
 | `rnd([n=1])` | deterministic float in [0, n) — PCG32 or xoshiro seeded PRNG in Rust |
 | `srand(seed)` | reseed PRNG (reset seeds it to 0 unless overridden) |
@@ -80,6 +84,42 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `printh(s)` | log line to host (harness `logs`, browser console). Never draws. |
 
 All draw coordinates are floats, truncated toward negative infinity (`flr`) before use.
+
+### Draw state
+
+`camera`, `clip`, `pal` and `palt` form one block of **persistent** draw state.
+It is **never auto-reset at a frame boundary** (PICO-8 semantics): a cart that
+calls `camera(0, -8)` once keeps that offset until it changes it. Only a cart
+call — or a fresh console / `reset` — moves it. Every default is a no-op, so
+carts that ignore all of this render exactly as before.
+
+- **camera(x, y)** — an integer offset subtracted from the coordinates of
+  every subsequent drawing op (`pset`, `line`, `rect`, `rectfill`, `circ`,
+  `circfill`, `spr`, `print`). `pget` reads **screen** space and is unaffected;
+  `cls` covers the whole screen and is unaffected.
+- **clip(x, y, w, h)** — an inclusive rectangle in **screen** space, applied
+  *after* the camera offset, clamped to the screen. `w` or `h` ≤ 0 (or a rect
+  entirely off screen) yields an empty clip that draws nothing. **`cls`
+  respects the clip** — it clears the clip window, not the screen, which makes
+  windowed/split-screen effects work without a manual `rectfill`. This is the
+  modern-PICO-8 behavior, not the pre-0.2 one.
+- **pal(c0, c1, 0)** — *draw* palette. Colors are translated `c0 → c1` as
+  pixels are written, so the framebuffer really holds the new index. Applies to
+  shape colors, `print` and `spr` pixels. It does **not** compose: each draw
+  does exactly one lookup. `cls` is exempt (it writes its color literally).
+- **pal(c0, c1, 1)** — *display* palette: a 16-entry index → index map applied
+  by the **host at scanout**, never to the framebuffer. This is what makes
+  whole-screen fades and flashes free — 16 calls, zero redraw — while
+  framebuffer goldens and `screen_text` stay in draw space and never move.
+- **palt(c, flag)** — which colors `spr()` treats as transparent (default: only
+  color 0). Transparency is tested on the sprite's **source** color, *before*
+  the draw palette remaps it, so `pal(1, 0)` draws color-1 pixels as color 0
+  rather than making them vanish.
+
+Host surfaces: `Console::display_palette() -> &[u8; 16]` (identity by default)
+and `Console::draw_state()`. `console-agent` applies the display palette when
+it renders PNG screenshots; `screen_text` stays raw. The web shell composes
+`palette[dpal[idx]]`.
 
 ## Cart format (`.cart`, UTF-8 text)
 
@@ -167,7 +207,10 @@ Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback
   mode/errors/framesPushed/volume for headless verification.
 - C ABI (console-web): `con_init(cart_ptr, cart_len) -> i32` (0 ok),
   `con_step(input_mask)`, `con_fb() -> *const u8` (144*256 palette indices),
-  `con_palette() -> *const u8` (16×3 RGB), `con_error() -> *const u8` (NUL-terminated
+  `con_palette() -> *const u8` (16×3 RGB),
+  `con_dpal() -> *const u8` (16 bytes: the display palette, index → index;
+  identity unless the cart called `pal(c0, c1, 1)` — the shell composes
+  `palette[dpal[idx]]`), `con_error() -> *const u8` (NUL-terminated
   UTF-8 or NULL), `con_alloc(len) -> *mut u8` / `con_free(ptr, len)` for the cart copy.
 
 ## Audio (PoC v1)
@@ -416,7 +459,7 @@ channel, ABC notation import.
 
 ## Out of scope for PoC
 
-Map section, camera, palette remap, multiple carts, save data, interactive
+Map section, multiple carts, save data, interactive
 sprite/sfx editors, sfx effects columns (arpeggio/slide/vibrato), stereo,
 runtime anim helpers (`aspr()` — revisit once `__gfx_meta__` proves out).
 Design must not preclude them. (A minimal pause menu — RESUME/RESET —

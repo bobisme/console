@@ -29,6 +29,9 @@
 //!   The buffer is `f32`-aligned, so JS can wrap it directly in a
 //!   `Float32Array(HEAPU8.buffer, ptr, 735)` view.
 //! * `con_palette()` points at immutable static data; always valid.
+//! * `con_dpal()` points into a thread-local array that is never reallocated,
+//!   so the pointer stays valid for the life of the module; its *contents* are
+//!   refreshed on each `con_dpal()` call.
 //! * `con_error()` points into a `CString` owned by this module. It stays valid
 //!   until the next `con_init` / `con_step`.
 
@@ -37,7 +40,7 @@ use std::cell::RefCell;
 use std::ffi::CString;
 use std::ptr;
 
-use console_core::{Console, FB_LEN, SAMPLES_PER_FRAME};
+use console_core::{Console, FB_LEN, IDENTITY_PAL, SAMPLES_PER_FRAME};
 
 /// A real `static` copy of the palette: `console_core::PALETTE` is a `const`,
 /// so calling `.as_ptr()` on it directly would hand out a pointer to a
@@ -51,6 +54,8 @@ thread_local! {
     static FB: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     /// Persistent audio mirror handed out by `con_audio`.
     static AUDIO: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+    /// Persistent display-palette mirror handed out by `con_dpal` (16 bytes).
+    static DPAL: RefCell<[u8; 16]> = const { RefCell::new(IDENTITY_PAL) };
     /// Last error (init failure or runtime halt), NUL-terminated.
     static ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
 }
@@ -218,6 +223,26 @@ pub extern "C" fn con_audio() -> *const f32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn con_palette() -> *const u8 {
     PALETTE_RGB.as_ptr().cast::<u8>()
+}
+
+/// Pointer to the 16-byte display palette: an index -> index map the host
+/// applies at scanout (`pal(c0, c1, 1)` in Lua). Never null.
+///
+/// The framebuffer from [`con_fb`] always holds raw draw-space indices; the
+/// shell composes `palette[dpal[idx]]`. Identity (`0..15`) unless the cart has
+/// remapped it, and before any successful [`con_init`]. The pointer is stable
+/// across calls; the contents are refreshed per call.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_dpal() -> *const u8 {
+    DPAL.with(|slot| {
+        CONSOLE.with(|console| {
+            if let Some(con) = console.borrow().as_ref() {
+                *slot.borrow_mut() = *con.display_palette();
+            }
+        });
+        // Points into the thread-local's own storage, which never moves.
+        slot.as_ptr().cast::<u8>()
+    })
 }
 
 /// NUL-terminated UTF-8 error message, or null when there is no error.

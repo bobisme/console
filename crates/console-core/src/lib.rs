@@ -46,7 +46,8 @@ pub use crate::audio::{
 pub use crate::cart::Cart;
 pub use crate::error::Error;
 pub use crate::gfx::{
-    FB_LEN, Framebuffer, PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN, SHEET_W, SPRITE_SIZE, SpriteSheet,
+    DrawState, FB_LEN, Framebuffer, IDENTITY_PAL, PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN, SHEET_W,
+    SPRITE_SIZE, SpriteSheet,
 };
 pub use crate::gfx_meta::{AnimDef, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
@@ -97,6 +98,8 @@ pub struct Console {
     /// Snapshot of the framebuffer, refreshed after every step/eval so
     /// [`Console::framebuffer`] can hand out a plain reference.
     fb: Box<Framebuffer>,
+    /// Snapshot of the display palette, refreshed alongside `fb`.
+    dpal: [u8; 16],
     /// Samples rendered by the most recent successful [`Console::step`].
     /// All zeros before the first step and after a halt.
     audio: Box<AudioFrame>,
@@ -136,6 +139,7 @@ impl Console {
             lua,
             state: st,
             fb: Box::new([0u8; FB_LEN]),
+            dpal: IDENTITY_PAL,
             audio: Box::new([0.0; SAMPLES_PER_FRAME]),
             cart,
             seed,
@@ -219,6 +223,23 @@ impl Console {
     /// row-major, 144 wide by 256 tall.
     pub fn framebuffer(&self) -> &Framebuffer {
         &self.fb
+    }
+
+    /// The display palette: a 16-entry index -> index map that the **host**
+    /// applies when it turns framebuffer indices into colours (`pal(c0, c1, 1)`
+    /// in Lua). Identity by default.
+    ///
+    /// This never touches [`Console::framebuffer`], which always holds raw
+    /// draw-space indices — that is what keeps goldens and `screen_text` stable
+    /// while a cart fades the whole screen.
+    pub fn display_palette(&self) -> &[u8; 16] {
+        &self.dpal
+    }
+
+    /// The full persistent draw state: camera, clip rectangle, both palette
+    /// maps and sprite transparency.
+    pub fn draw_state(&self) -> DrawState {
+        self.state.borrow().draw.clone()
     }
 
     /// The mono 44100 Hz samples rendered by the most recent [`Console::step`].
@@ -311,7 +332,9 @@ impl Console {
     }
 
     fn sync_framebuffer(&mut self) {
-        self.fb.copy_from_slice(&self.state.borrow().fb[..]);
+        let s = self.state.borrow();
+        self.fb.copy_from_slice(&s.fb[..]);
+        self.dpal = *s.draw.display_palette();
     }
 }
 

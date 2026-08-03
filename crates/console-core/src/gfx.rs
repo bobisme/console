@@ -65,16 +65,226 @@ fn in_bounds(x: i32, y: i32) -> bool {
     x >= 0 && y >= 0 && (x as usize) < SCREEN_W && (y as usize) < SCREEN_H
 }
 
-/// Clear the whole screen to `c`.
-pub fn cls(fb: &mut Framebuffer, c: u8) {
-    fb.fill(c & 0xf);
+/// The identity 16-entry palette map: colour `i` stays colour `i`.
+pub const IDENTITY_PAL: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+/// Default `palt` mask: only colour 0 is transparent in [`spr`].
+const DEFAULT_PALT: u16 = 1;
+
+/// Persistent, PICO-8-style draw state: camera offset, clip rectangle, the two
+/// palette maps and sprite transparency.
+///
+/// Every field survives across frames — nothing here is reset by `step()`, so a
+/// cart that calls `camera()` once keeps that offset until it changes it. All
+/// defaults are no-ops, so a cart that never touches this state draws exactly
+/// as it did before draw state existed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrawState {
+    /// Draw offset, subtracted from the coordinates of every drawing op.
+    cam_x: i32,
+    cam_y: i32,
+    /// Inclusive clip rectangle in **screen** space, always clamped to the
+    /// screen. Empty when `clip_x0 > clip_x1` or `clip_y0 > clip_y1`.
+    clip_x0: i32,
+    clip_y0: i32,
+    clip_x1: i32,
+    clip_y1: i32,
+    /// Applied at draw time to the colour of every drawing op.
+    draw_pal: [u8; 16],
+    /// Applied at scanout by the host; never touches the framebuffer.
+    display_pal: [u8; 16],
+    /// Bit `c` set = colour `c` is transparent in [`spr`].
+    palt: u16,
 }
 
-/// Set one pixel; out of bounds is a no-op.
-pub fn pset(fb: &mut Framebuffer, x: i32, y: i32, c: u8) {
-    if in_bounds(x, y) {
-        fb[y as usize * SCREEN_W + x as usize] = c & 0xf;
+impl Default for DrawState {
+    fn default() -> Self {
+        DrawState {
+            cam_x: 0,
+            cam_y: 0,
+            clip_x0: 0,
+            clip_y0: 0,
+            clip_x1: SCREEN_W as i32 - 1,
+            clip_y1: SCREEN_H as i32 - 1,
+            draw_pal: IDENTITY_PAL,
+            display_pal: IDENTITY_PAL,
+            palt: DEFAULT_PALT,
+        }
     }
+}
+
+impl DrawState {
+    /// Fresh state: no camera, full-screen clip, identity palettes, colour 0
+    /// transparent.
+    pub fn new() -> DrawState {
+        DrawState::default()
+    }
+
+    /// `camera(x, y)`: subsequent draws are offset by `-(x, y)`.
+    pub fn set_camera(&mut self, x: i32, y: i32) {
+        self.cam_x = x;
+        self.cam_y = y;
+    }
+
+    /// The current camera offset.
+    pub fn camera(&self) -> (i32, i32) {
+        (self.cam_x, self.cam_y)
+    }
+
+    /// `clip(x, y, w, h)`: screen-space clip rectangle, clamped to the screen.
+    /// A non-positive width or height yields an empty (draws-nothing) clip.
+    pub fn set_clip(&mut self, x: i32, y: i32, w: i32, h: i32) {
+        if w <= 0 || h <= 0 {
+            // Deliberately empty: x0 > x1 makes every span test fail.
+            self.clip_x0 = 0;
+            self.clip_y0 = 0;
+            self.clip_x1 = -1;
+            self.clip_y1 = -1;
+            return;
+        }
+        let x1 = x.saturating_add(w - 1);
+        let y1 = y.saturating_add(h - 1);
+        self.clip_x0 = x.max(0);
+        self.clip_y0 = y.max(0);
+        self.clip_x1 = x1.min(SCREEN_W as i32 - 1);
+        self.clip_y1 = y1.min(SCREEN_H as i32 - 1);
+    }
+
+    /// `clip()`: back to the whole screen.
+    pub fn reset_clip(&mut self) {
+        self.clip_x0 = 0;
+        self.clip_y0 = 0;
+        self.clip_x1 = SCREEN_W as i32 - 1;
+        self.clip_y1 = SCREEN_H as i32 - 1;
+    }
+
+    /// The clip rectangle as inclusive `(x0, y0, x1, y1)` screen coordinates.
+    pub fn clip(&self) -> (i32, i32, i32, i32) {
+        (self.clip_x0, self.clip_y0, self.clip_x1, self.clip_y1)
+    }
+
+    #[inline]
+    fn clip_is_empty(&self) -> bool {
+        self.clip_x0 > self.clip_x1 || self.clip_y0 > self.clip_y1
+    }
+
+    #[inline]
+    fn clip_is_full(&self) -> bool {
+        self.clip_x0 == 0
+            && self.clip_y0 == 0
+            && self.clip_x1 == SCREEN_W as i32 - 1
+            && self.clip_y1 == SCREEN_H as i32 - 1
+    }
+
+    /// `pal(c0, c1)`: draw-palette remap, applied when pixels are written.
+    pub fn set_draw_pal(&mut self, from: u8, to: u8) {
+        self.draw_pal[(from & 0xf) as usize] = to & 0xf;
+    }
+
+    /// `pal(c0, c1, 1)`: display-palette remap, applied at scanout only.
+    pub fn set_display_pal(&mut self, from: u8, to: u8) {
+        self.display_pal[(from & 0xf) as usize] = to & 0xf;
+    }
+
+    /// `pal()`: reset both palette maps **and** `palt`.
+    pub fn reset_pal(&mut self) {
+        self.draw_pal = IDENTITY_PAL;
+        self.display_pal = IDENTITY_PAL;
+        self.palt = DEFAULT_PALT;
+    }
+
+    /// The draw palette: index -> index, applied at draw time.
+    pub fn draw_palette(&self) -> &[u8; 16] {
+        &self.draw_pal
+    }
+
+    /// The display palette: index -> index, applied by the host when the
+    /// framebuffer is converted to RGB. The framebuffer itself is untouched.
+    pub fn display_palette(&self) -> &[u8; 16] {
+        &self.display_pal
+    }
+
+    /// `palt(c, flag)`: mark colour `c` transparent (or not) in [`spr`].
+    pub fn set_palt(&mut self, c: u8, transparent: bool) {
+        let bit = 1u16 << (c & 0xf);
+        if transparent {
+            self.palt |= bit;
+        } else {
+            self.palt &= !bit;
+        }
+    }
+
+    /// `palt()`: back to "only colour 0 is transparent".
+    pub fn reset_palt(&mut self) {
+        self.palt = DEFAULT_PALT;
+    }
+
+    /// Transparency bitmask; bit `c` set = colour `c` is transparent.
+    pub fn palt_mask(&self) -> u16 {
+        self.palt
+    }
+
+    /// Is this screen-space pixel inside the clip rectangle? The clip is always
+    /// clamped to the screen, so this doubles as the bounds check.
+    #[inline]
+    pub fn visible(&self, x: i32, y: i32) -> bool {
+        x >= self.clip_x0 && x <= self.clip_x1 && y >= self.clip_y0 && y <= self.clip_y1
+    }
+
+    #[inline]
+    fn remap(&self, c: u8) -> u8 {
+        self.draw_pal[(c & 0xf) as usize]
+    }
+
+    #[inline]
+    fn transparent(&self, c: u8) -> bool {
+        self.palt & (1u16 << (c & 0xf)) != 0
+    }
+
+    /// World -> screen for a horizontal coordinate.
+    #[inline]
+    fn sx(&self, x: i32) -> i32 {
+        x.saturating_sub(self.cam_x)
+    }
+
+    /// World -> screen for a vertical coordinate.
+    #[inline]
+    fn sy(&self, y: i32) -> i32 {
+        y.saturating_sub(self.cam_y)
+    }
+}
+
+/// Write one already-remapped colour at an already-camera-adjusted position.
+#[inline]
+fn put(fb: &mut Framebuffer, ds: &DrawState, x: i32, y: i32, c: u8) {
+    if ds.visible(x, y) {
+        fb[y as usize * SCREEN_W + x as usize] = c;
+    }
+}
+
+/// Clear the screen to `c`.
+///
+/// `cls` ignores the camera and the draw palette (it writes `c` literally) but
+/// **respects the clip rectangle**, so it doubles as "clear this window".
+pub fn cls(fb: &mut Framebuffer, ds: &DrawState, c: u8) {
+    let c = c & 0xf;
+    if ds.clip_is_full() {
+        fb.fill(c);
+        return;
+    }
+    if ds.clip_is_empty() {
+        return;
+    }
+    let (x0, x1) = (ds.clip_x0 as usize, ds.clip_x1 as usize);
+    for y in ds.clip_y0..=ds.clip_y1 {
+        let row = y as usize * SCREEN_W;
+        fb[row + x0..=row + x1].fill(c);
+    }
+}
+
+/// Set one pixel; outside the screen or the clip rectangle is a no-op.
+pub fn pset(fb: &mut Framebuffer, ds: &DrawState, x: i32, y: i32, c: u8) {
+    put(fb, ds, ds.sx(x), ds.sy(y), ds.remap(c));
 }
 
 /// Read one pixel; out of bounds reads as 0.
@@ -86,14 +296,15 @@ pub fn pget(fb: &Framebuffer, x: i32, y: i32) -> u8 {
     }
 }
 
-/// Horizontal span, inclusive of both ends, clipped to the screen.
-fn hline(fb: &mut Framebuffer, x0: i32, x1: i32, y: i32, c: u8) {
-    if y < 0 || y as usize >= SCREEN_H {
+/// Horizontal span, inclusive of both ends, in screen space, clipped to the
+/// clip rectangle. `c` must already be draw-palette remapped.
+fn hline(fb: &mut Framebuffer, ds: &DrawState, x0: i32, x1: i32, y: i32, c: u8) {
+    if y < ds.clip_y0 || y > ds.clip_y1 {
         return;
     }
     let (lo, hi) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
-    let lo = lo.max(0);
-    let hi = hi.min(SCREEN_W as i32 - 1);
+    let lo = lo.max(ds.clip_x0);
+    let hi = hi.min(ds.clip_x1);
     if lo > hi {
         return;
     }
@@ -101,19 +312,28 @@ fn hline(fb: &mut Framebuffer, x0: i32, x1: i32, y: i32, c: u8) {
     fb[row + lo as usize..=row + hi as usize].fill(c & 0xf);
 }
 
-/// Vertical span, inclusive of both ends, clipped to the screen.
-fn vline(fb: &mut Framebuffer, x: i32, y0: i32, y1: i32, c: u8) {
-    if x < 0 || x as usize >= SCREEN_W {
+/// Vertical span, inclusive of both ends, in screen space, clipped to the clip
+/// rectangle. `c` must already be draw-palette remapped.
+fn vline(fb: &mut Framebuffer, ds: &DrawState, x: i32, y0: i32, y1: i32, c: u8) {
+    if x < ds.clip_x0 || x > ds.clip_x1 {
         return;
     }
     let (lo, hi) = if y0 <= y1 { (y0, y1) } else { (y1, y0) };
-    for y in lo.max(0)..=hi.min(SCREEN_H as i32 - 1) {
+    let lo = lo.max(ds.clip_y0);
+    let hi = hi.min(ds.clip_y1);
+    if lo > hi {
+        return;
+    }
+    for y in lo..=hi {
         fb[y as usize * SCREEN_W + x as usize] = c & 0xf;
     }
 }
 
 /// Bresenham line, endpoints inclusive.
-pub fn line(fb: &mut Framebuffer, x0: i32, y0: i32, x1: i32, y1: i32, c: u8) {
+pub fn line(fb: &mut Framebuffer, ds: &DrawState, x0: i32, y0: i32, x1: i32, y1: i32, c: u8) {
+    let c = ds.remap(c);
+    let (x0, y0) = (ds.sx(x0), ds.sy(y0));
+    let (x1, y1) = (ds.sx(x1), ds.sy(y1));
     let dx = (x1 - x0).abs();
     let dy = -(y1 - y0).abs();
     let sx = if x0 < x1 { 1 } else { -1 };
@@ -121,7 +341,7 @@ pub fn line(fb: &mut Framebuffer, x0: i32, y0: i32, x1: i32, y1: i32, c: u8) {
     let mut err = dx + dy;
     let (mut x, mut y) = (x0, y0);
     loop {
-        pset(fb, x, y, c);
+        put(fb, ds, x, y, c);
         if x == x1 && y == y1 {
             break;
         }
@@ -138,40 +358,52 @@ pub fn line(fb: &mut Framebuffer, x0: i32, y0: i32, x1: i32, y1: i32, c: u8) {
 }
 
 /// Rectangle outline, coordinates inclusive.
-pub fn rect(fb: &mut Framebuffer, x0: i32, y0: i32, x1: i32, y1: i32, c: u8) {
+pub fn rect(fb: &mut Framebuffer, ds: &DrawState, x0: i32, y0: i32, x1: i32, y1: i32, c: u8) {
+    let c = ds.remap(c);
+    let (x0, y0) = (ds.sx(x0), ds.sy(y0));
+    let (x1, y1) = (ds.sx(x1), ds.sy(y1));
     let (lx, rx) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
     let (ty, by) = if y0 <= y1 { (y0, y1) } else { (y1, y0) };
-    hline(fb, lx, rx, ty, c);
-    hline(fb, lx, rx, by, c);
-    vline(fb, lx, ty, by, c);
-    vline(fb, rx, ty, by, c);
+    hline(fb, ds, lx, rx, ty, c);
+    hline(fb, ds, lx, rx, by, c);
+    vline(fb, ds, lx, ty, by, c);
+    vline(fb, ds, rx, ty, by, c);
 }
 
 /// Filled rectangle, coordinates inclusive.
-pub fn rectfill(fb: &mut Framebuffer, x0: i32, y0: i32, x1: i32, y1: i32, c: u8) {
+pub fn rectfill(fb: &mut Framebuffer, ds: &DrawState, x0: i32, y0: i32, x1: i32, y1: i32, c: u8) {
+    let c = ds.remap(c);
+    let (x0, y0) = (ds.sx(x0), ds.sy(y0));
+    let (x1, y1) = (ds.sx(x1), ds.sy(y1));
     let (lx, rx) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
     let (ty, by) = if y0 <= y1 { (y0, y1) } else { (y1, y0) };
-    for y in ty.max(0)..=by.min(SCREEN_H as i32 - 1) {
-        hline(fb, lx, rx, y, c);
+    let (top, bot) = (ty.max(ds.clip_y0), by.min(ds.clip_y1));
+    if top > bot {
+        return;
+    }
+    for y in top..=bot {
+        hline(fb, ds, lx, rx, y, c);
     }
 }
 
 /// Midpoint circle outline.
-pub fn circ(fb: &mut Framebuffer, cx: i32, cy: i32, r: i32, c: u8) {
+pub fn circ(fb: &mut Framebuffer, ds: &DrawState, cx: i32, cy: i32, r: i32, c: u8) {
     if r < 0 {
         return;
     }
+    let c = ds.remap(c);
+    let (cx, cy) = (ds.sx(cx), ds.sy(cy));
     let (mut x, mut y) = (r, 0);
     let mut err = 1 - r;
     while x >= y {
-        pset(fb, cx + x, cy + y, c);
-        pset(fb, cx + y, cy + x, c);
-        pset(fb, cx - y, cy + x, c);
-        pset(fb, cx - x, cy + y, c);
-        pset(fb, cx - x, cy - y, c);
-        pset(fb, cx - y, cy - x, c);
-        pset(fb, cx + y, cy - x, c);
-        pset(fb, cx + x, cy - y, c);
+        put(fb, ds, cx + x, cy + y, c);
+        put(fb, ds, cx + y, cy + x, c);
+        put(fb, ds, cx - y, cy + x, c);
+        put(fb, ds, cx - x, cy + y, c);
+        put(fb, ds, cx - x, cy - y, c);
+        put(fb, ds, cx - y, cy - x, c);
+        put(fb, ds, cx + y, cy - x, c);
+        put(fb, ds, cx + x, cy - y, c);
         y += 1;
         if err < 0 {
             err += 2 * y + 1;
@@ -183,17 +415,19 @@ pub fn circ(fb: &mut Framebuffer, cx: i32, cy: i32, r: i32, c: u8) {
 }
 
 /// Filled circle, same rasterisation as [`circ`] with the spans filled in.
-pub fn circfill(fb: &mut Framebuffer, cx: i32, cy: i32, r: i32, c: u8) {
+pub fn circfill(fb: &mut Framebuffer, ds: &DrawState, cx: i32, cy: i32, r: i32, c: u8) {
     if r < 0 {
         return;
     }
+    let c = ds.remap(c);
+    let (cx, cy) = (ds.sx(cx), ds.sy(cy));
     let (mut x, mut y) = (r, 0);
     let mut err = 1 - r;
     while x >= y {
-        hline(fb, cx - x, cx + x, cy + y, c);
-        hline(fb, cx - x, cx + x, cy - y, c);
-        hline(fb, cx - y, cx + y, cy + x, c);
-        hline(fb, cx - y, cx + y, cy - x, c);
+        hline(fb, ds, cx - x, cx + x, cy + y, c);
+        hline(fb, ds, cx - x, cx + x, cy - y, c);
+        hline(fb, ds, cx - y, cx + y, cy + x, c);
+        hline(fb, ds, cx - y, cx + y, cy - x, c);
         y += 1;
         if err < 0 {
             err += 2 * y + 1;
@@ -206,10 +440,15 @@ pub fn circfill(fb: &mut Framebuffer, cx: i32, cy: i32, r: i32, c: u8) {
 
 /// Draw sprite `n` (a `w`x`h` block of 8x8 sprites) at `(x, y)`.
 ///
-/// Colour 0 is transparent. `flip` mirrors the whole block. Sprites whose
-/// source pixels fall outside the sheet read as 0 (transparent).
+/// Transparency is decided by `palt` on the sprite's **source** colour, before
+/// the draw palette remaps it (PICO-8 semantics). By default only colour 0 is
+/// transparent. `flip` mirrors the whole block. Sprites whose source pixels
+/// fall outside the sheet read as 0.
+// Positional by design: this mirrors Lua's `spr(n, x, y, w, h, fx, fy)`.
+#[allow(clippy::too_many_arguments)]
 pub fn spr(
     fb: &mut Framebuffer,
+    ds: &DrawState,
     sheet: &SpriteSheet,
     n: i32,
     x: i32,
@@ -221,6 +460,7 @@ pub fn spr(
     if w <= 0 || h <= 0 || n < 0 {
         return;
     }
+    let (x, y) = (ds.sx(x), ds.sy(y));
     let (flip_x, flip_y) = flip;
     let base_x = (n % SPRITES_PER_ROW) * SPRITE_SIZE;
     let base_y = (n / SPRITES_PER_ROW) * SPRITE_SIZE;
@@ -229,7 +469,7 @@ pub fn spr(
 
     for dy in 0..px_h {
         let dest_y = y + dy;
-        if dest_y < 0 || dest_y as usize >= SCREEN_H {
+        if dest_y < ds.clip_y0 || dest_y > ds.clip_y1 {
             continue;
         }
         let src_y = base_y + if flip_y { px_h - 1 - dy } else { dy };
@@ -238,7 +478,7 @@ pub fn spr(
         }
         for dx in 0..px_w {
             let dest_x = x + dx;
-            if dest_x < 0 || dest_x as usize >= SCREEN_W {
+            if dest_x < ds.clip_x0 || dest_x > ds.clip_x1 {
                 continue;
             }
             let src_x = base_x + if flip_x { px_w - 1 - dx } else { dx };
@@ -246,15 +486,17 @@ pub fn spr(
                 continue;
             }
             let c = sheet[src_y as usize * SHEET_W + src_x as usize];
-            if c != 0 {
-                fb[dest_y as usize * SCREEN_W + dest_x as usize] = c & 0xf;
+            if !ds.transparent(c) {
+                fb[dest_y as usize * SCREEN_W + dest_x as usize] = ds.remap(c);
             }
         }
     }
 }
 
 /// Draw `text` with the built-in 4x6 font. `\n` starts a new line at `x`.
-pub fn print(fb: &mut Framebuffer, text: &str, x: i32, y: i32, c: u8) {
+pub fn print(fb: &mut Framebuffer, ds: &DrawState, text: &str, x: i32, y: i32, c: u8) {
+    let c = ds.remap(c);
+    let (x, y) = (ds.sx(x), ds.sy(y));
     let mut cx = x;
     let mut cy = y;
     for ch in text.bytes() {
@@ -267,7 +509,7 @@ pub fn print(fb: &mut Framebuffer, text: &str, x: i32, y: i32, c: u8) {
             for row in 0..font::GLYPH_H - 1 {
                 for colx in 0..font::GLYPH_W - 1 {
                     if font::pixel(bits, colx, row) {
-                        pset(fb, cx + colx, cy + row, c);
+                        put(fb, ds, cx + colx, cy + row, c);
                     }
                 }
             }
@@ -284,6 +526,10 @@ mod tests {
         Box::new([0u8; FB_LEN])
     }
 
+    fn ds() -> DrawState {
+        DrawState::new()
+    }
+
     #[test]
     fn floor_and_mask() {
         assert_eq!(fl(3.9), 3);
@@ -296,13 +542,14 @@ mod tests {
 
     #[test]
     fn pset_pget_and_clipping() {
+        let d = ds();
         let mut fb = blank();
-        pset(&mut fb, 5, 7, 9);
+        pset(&mut fb, &d, 5, 7, 9);
         assert_eq!(pget(&fb, 5, 7), 9);
-        pset(&mut fb, -1, 0, 3);
-        pset(&mut fb, 0, -1, 3);
-        pset(&mut fb, SCREEN_W as i32, 0, 3);
-        pset(&mut fb, 0, SCREEN_H as i32, 3);
+        pset(&mut fb, &d, -1, 0, 3);
+        pset(&mut fb, &d, 0, -1, 3);
+        pset(&mut fb, &d, SCREEN_W as i32, 0, 3);
+        pset(&mut fb, &d, 0, SCREEN_H as i32, 3);
         assert_eq!(pget(&fb, -1, 0), 0);
         assert_eq!(pget(&fb, 1000, 1000), 0);
         assert_eq!(fb.iter().filter(|&&p| p != 0).count(), 1);
@@ -310,30 +557,86 @@ mod tests {
 
     #[test]
     fn rectfill_inclusive_and_clipped() {
+        let d = ds();
         let mut fb = blank();
-        rectfill(&mut fb, 2, 3, 4, 5, 7);
+        rectfill(&mut fb, &d, 2, 3, 4, 5, 7);
         assert_eq!(fb.iter().filter(|&&p| p == 7).count(), 9);
-        cls(&mut fb, 0);
-        rectfill(&mut fb, -10, -10, 1, 1, 5);
+        cls(&mut fb, &d, 0);
+        rectfill(&mut fb, &d, -10, -10, 1, 1, 5);
         assert_eq!(fb.iter().filter(|&&p| p == 5).count(), 4);
     }
 
     #[test]
     fn circ_and_circfill_stay_in_bounds() {
+        let d = ds();
         let mut fb = blank();
-        circ(&mut fb, 0, 0, 30, 4);
-        circfill(&mut fb, (SCREEN_W as i32) - 1, (SCREEN_H as i32) - 1, 40, 6);
+        circ(&mut fb, &d, 0, 0, 30, 4);
+        circfill(
+            &mut fb,
+            &d,
+            (SCREEN_W as i32) - 1,
+            (SCREEN_H as i32) - 1,
+            40,
+            6,
+        );
         assert!(fb.contains(&4));
         assert!(fb.contains(&6));
     }
 
     #[test]
     fn line_endpoints_inclusive() {
+        let d = ds();
         let mut fb = blank();
-        line(&mut fb, 1, 1, 1, 1, 3);
+        line(&mut fb, &d, 1, 1, 1, 1, 3);
         assert_eq!(pget(&fb, 1, 1), 3);
-        line(&mut fb, 0, 0, 10, 5, 2);
+        line(&mut fb, &d, 0, 0, 10, 5, 2);
         assert_eq!(pget(&fb, 0, 0), 2);
         assert_eq!(pget(&fb, 10, 5), 2);
+    }
+
+    #[test]
+    fn draw_state_defaults_are_no_ops() {
+        let d = ds();
+        assert_eq!(d.camera(), (0, 0));
+        assert_eq!(d.clip(), (0, 0, SCREEN_W as i32 - 1, SCREEN_H as i32 - 1));
+        assert_eq!(d.draw_palette(), &IDENTITY_PAL);
+        assert_eq!(d.display_palette(), &IDENTITY_PAL);
+        assert!(d.transparent(0));
+        assert!(!d.transparent(1));
+    }
+
+    #[test]
+    fn clip_clamps_and_can_be_empty() {
+        let mut d = ds();
+        d.set_clip(-10, -10, 20, 20);
+        assert_eq!(d.clip(), (0, 0, 9, 9));
+        d.set_clip(140, 250, 1000, 1000);
+        assert_eq!(d.clip(), (140, 250, 143, 255));
+        d.set_clip(5, 5, 0, 10);
+        assert!(d.clip_is_empty());
+        d.set_clip(5, 5, -4, -4);
+        assert!(d.clip_is_empty());
+        // A rect entirely off-screen clamps to an empty region, not a wrap.
+        d.set_clip(200, 300, 10, 10);
+        assert!(d.clip_is_empty());
+        d.reset_clip();
+        assert!(d.clip_is_full());
+    }
+
+    #[test]
+    fn cls_respects_the_clip_rect() {
+        let mut d = ds();
+        let mut fb = blank();
+        d.set_clip(10, 20, 4, 3);
+        cls(&mut fb, &d, 7);
+        assert_eq!(fb.iter().filter(|&&p| p == 7).count(), 12);
+        assert_eq!(pget(&fb, 10, 20), 7);
+        assert_eq!(pget(&fb, 13, 22), 7);
+        assert_eq!(pget(&fb, 14, 22), 0);
+        // An empty clip clears nothing at all.
+        let mut fb = blank();
+        d.set_clip(0, 0, 0, 0);
+        cls(&mut fb, &d, 7);
+        assert!(fb.iter().all(|&p| p == 0));
     }
 }
