@@ -11,6 +11,7 @@ pub struct RunArgs {
     pub frames: Option<u64>,
     pub input_spec: String,
     pub screenshot: Option<String>,
+    pub screenshot_zoom: u32,
     pub screen_text: bool,
     pub eval: Option<String>,
     pub seed: u64,
@@ -26,6 +27,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
     let mut frames: Option<u64> = None;
     let mut input_spec = String::new();
     let mut screenshot: Option<String> = None;
+    let mut screenshot_zoom: u32 = 1;
     let mut screen_text = false;
     let mut eval: Option<String> = None;
     let mut seed: u64 = 0;
@@ -51,6 +53,16 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--screenshot" => {
                 let v = iter.next().ok_or("--screenshot requires a value")?;
                 screenshot = Some(v.clone());
+            }
+            "--screenshot-zoom" => {
+                let v = iter.next().ok_or("--screenshot-zoom requires a value")?;
+                let z: u32 = v
+                    .parse()
+                    .map_err(|_| format!("invalid --screenshot-zoom value {v:?}"))?;
+                if z < 1 {
+                    return Err(format!("--screenshot-zoom must be >= 1, got {v:?}"));
+                }
+                screenshot_zoom = z;
             }
             "--screen-text" => screen_text = true,
             "--eval" => {
@@ -88,6 +100,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
         frames,
         input_spec,
         screenshot,
+        screenshot_zoom,
         screen_text,
         eval,
         seed,
@@ -165,7 +178,7 @@ pub fn run(args: &RunArgs) -> i32 {
     // / --audio-stats all reflect the final frame (after --eval, in case the
     // evaluated code itself drew or played something).
     if let Some(path) = &args.screenshot {
-        match session.screenshot_png() {
+        match session.screenshot_png_zoomed(args.screenshot_zoom) {
             Ok(bytes) => {
                 if let Err(e) = std::fs::write(path, &bytes) {
                     eprintln!("error: cannot write {path:?}: {e}");
@@ -289,6 +302,8 @@ mod tests {
             "30:,10:R".into(),
             "--screenshot".into(),
             "out.png".into(),
+            "--screenshot-zoom".into(),
+            "4".into(),
             "--screen-text".into(),
             "--eval".into(),
             "1+1".into(),
@@ -310,6 +325,7 @@ mod tests {
                 frames: Some(10),
                 input_spec: "30:,10:R".into(),
                 screenshot: Some("out.png".into()),
+                screenshot_zoom: 4,
                 screen_text: true,
                 eval: Some("1+1".into()),
                 seed: 7,
@@ -329,5 +345,29 @@ mod tests {
     #[test]
     fn unknown_flag_is_an_error() {
         assert!(parse_run_args(&["cart.cart".into(), "--bogus".into()]).is_err());
+    }
+
+    #[test]
+    fn screenshot_zoom_defaults_to_one() {
+        let args = parse_run_args(&[
+            "cart.cart".into(),
+            "--screenshot".into(),
+            "out.png".into(),
+        ])
+        .unwrap();
+        assert_eq!(args.screenshot_zoom, 1);
+    }
+
+    #[test]
+    fn screenshot_zoom_zero_is_rejected() {
+        let err = parse_run_args(&[
+            "cart.cart".into(),
+            "--screenshot".into(),
+            "out.png".into(),
+            "--screenshot-zoom".into(),
+            "0".into(),
+        ])
+        .unwrap_err();
+        assert!(err.contains("--screenshot-zoom"), "{err}");
     }
 }

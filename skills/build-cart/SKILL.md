@@ -30,7 +30,7 @@ a sandbox. `_update()` then `_draw()` every frame.
 ```bash
 console-agent run game.cart \
   --frames 120 --input "30:,20:R,10:RA,60:" \
-  --screenshot f120.png [--screen-text] [--eval "player.x"] [--wav out.wav] [--seed N]
+  --screenshot f120.png [--screenshot-zoom N] [--screen-text] [--eval "player.x"] [--wav out.wav] [--seed N]
 
 # input spec: COUNT:BUTTONS segments; letters L R U D A B M; empty = idle
 # printh() output arrives on stderr as [log] lines; nonzero exit = cart error

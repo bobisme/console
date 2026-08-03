@@ -113,7 +113,7 @@ as regression tests: `(cart, input log) → expected framebuffer hash`.
 ## Agent harness (`console-agent`)
 
 Oneshot: `console-agent run <cart> [--frames N] [--input SPEC] [--screenshot out.png]
-[--screen-text] [--eval CODE] [--seed N]`
+[--screenshot-zoom N] [--screen-text] [--eval CODE] [--seed N]`
 where SPEC is comma-separated `COUNT:BUTTONS`, e.g. `30:,10:R,5:RA,60:` (empty
 buttons = no input).
 
@@ -123,7 +123,8 @@ one response per line on stdout. Methods:
 - `load_cart {path}` or `{text}` — load + `_init`
 - `reset {seed?}` — reload cart state, reseed, clear input log
 - `step {frames=1, input=""}` — advance; input as letter string or int mask
-- `screenshot {path}` — write PNG (RGBA, 1:1 scale)
+- `screenshot {path, zoom=1}` — write PNG (RGBA), nearest-neighbor
+  integer-upscaled by `zoom`
 - `screen_text {}` — framebuffer as 256 lines of 144 hex chars
 - `eval {code}` — run Lua, return result serialized to JSON (tables best-effort, depth-limited)
 - `get_global {name}` — shorthand for eval returning that global

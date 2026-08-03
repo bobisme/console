@@ -230,14 +230,22 @@ fn m_step(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
 fn m_screenshot(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
     let path = string_param(params, "path")
         .ok_or_else(|| RpcErr::bad_params("screenshot requires a \"path\" string param"))?;
-    let png_bytes = session.screenshot_png()?;
+    let zoom = match params.get("zoom") {
+        None | Some(Value::Null) => 1,
+        Some(v) => v
+            .as_u64()
+            .filter(|&z| z >= 1)
+            .ok_or_else(|| RpcErr::bad_params("screenshot \"zoom\" must be an integer >= 1"))?
+            as u32,
+    };
+    let png_bytes = session.screenshot_png_zoomed(zoom)?;
     std::fs::write(path, &png_bytes)
         .map_err(|e| RpcErr::bad_params(format!("cannot write {path:?}: {e}")))?;
     Ok(json!({
         "ok": true,
         "path": path,
-        "width": console_core::SCREEN_W,
-        "height": console_core::SCREEN_H,
+        "width": console_core::SCREEN_W as u32 * zoom,
+        "height": console_core::SCREEN_H as u32 * zoom,
     }))
 }
 

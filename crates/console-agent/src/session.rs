@@ -221,6 +221,15 @@ impl Session {
         Ok(encode_png(console.framebuffer()))
     }
 
+    /// Like [`Session::screenshot_png`] but nearest-neighbor upscaled by an
+    /// integer `zoom` factor (1 = unchanged, matches `screenshot_png`
+    /// exactly). SPEC.md's 144x256 logical framebuffer is unreadably small
+    /// at 1:1 for human/agent review, so callers can ask for it blown up.
+    pub fn screenshot_png_zoomed(&self, zoom: u32) -> Result<Vec<u8>, SessionError> {
+        let console = self.console()?;
+        Ok(encode_png_zoomed(console.framebuffer(), zoom))
+    }
+
     pub fn screen_text(&self) -> Result<Vec<String>, SessionError> {
         let console = self.console()?;
         let fb = console.framebuffer();
@@ -441,15 +450,30 @@ pub struct Info {
 /// Encode a framebuffer as an RGBA PNG at 1:1 scale using the fixed
 /// Sweetie-16 palette.
 pub fn encode_png(fb: &[u8; FB_LEN]) -> Vec<u8> {
+    encode_png_zoomed(fb, 1)
+}
+
+/// Encode a framebuffer as an RGBA PNG, nearest-neighbor upscaled by an
+/// integer `zoom` factor (each logical pixel becomes a `zoom`x`zoom` block).
+/// `zoom <= 1` behaves exactly like [`encode_png`].
+pub fn encode_png_zoomed(fb: &[u8; FB_LEN], zoom: u32) -> Vec<u8> {
+    let zoom = zoom.max(1);
     let mut rgba = Vec::with_capacity(FB_LEN * 4);
     for &idx in fb.iter() {
         let [r, g, b] = PALETTE[(idx & 0x0f) as usize];
         rgba.extend_from_slice(&[r, g, b, 255]);
     }
 
+    let (rgba, width, height) = if zoom == 1 {
+        (rgba, SCREEN_W as u32, SCREEN_H as u32)
+    } else {
+        let scaled = nearest_neighbor_scale(&rgba, SCREEN_W as u32, SCREEN_H as u32, zoom);
+        (scaled, SCREEN_W as u32 * zoom, SCREEN_H as u32 * zoom)
+    };
+
     let mut bytes = Vec::new();
     {
-        let mut encoder = png::Encoder::new(&mut bytes, SCREEN_W as u32, SCREEN_H as u32);
+        let mut encoder = png::Encoder::new(&mut bytes, width, height);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder
@@ -460,4 +484,31 @@ pub fn encode_png(fb: &[u8; FB_LEN]) -> Vec<u8> {
             .expect("PNG data write cannot fail on an in-memory buffer");
     }
     bytes
+}
+
+/// Nearest-neighbor integer upscale of an RGBA buffer: each source pixel
+/// becomes a `zoom`x`zoom` block of identical pixels. `sprite/view.rs` has
+/// its own zoomed-canvas renderer, but it's built around sprite-specific
+/// concerns (checkerboard transparency, palette-index glyphs, RGB triples)
+/// that don't apply to a screen framebuffer, so this is a small
+/// general-purpose helper instead of a shared one.
+fn nearest_neighbor_scale(rgba: &[u8], src_w: u32, src_h: u32, zoom: u32) -> Vec<u8> {
+    let dst_w = src_w * zoom;
+    let dst_h = src_h * zoom;
+    let mut out = vec![0u8; (dst_w as usize) * (dst_h as usize) * 4];
+    for sy in 0..src_h {
+        for sx in 0..src_w {
+            let si = ((sy * src_w + sx) * 4) as usize;
+            let px = &rgba[si..si + 4];
+            for dy in 0..zoom {
+                let oy = sy * zoom + dy;
+                for dx in 0..zoom {
+                    let ox = sx * zoom + dx;
+                    let di = ((oy * dst_w + ox) * 4) as usize;
+                    out[di..di + 4].copy_from_slice(px);
+                }
+            }
+        }
+    }
+    out
 }
