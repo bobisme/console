@@ -797,8 +797,10 @@ One self-contained HTML file: works from `file://`, phone-ready (the shell
 provides the handheld chassis, touch d-pad/A/B/menu, pause menu with
 RESUME/RESET/pixel-scaling/volume), and the cart source remains readable,
 editable text inside the HTML. In-browser debugging:
-`window.__console.audioState()` reports audio pipeline health; a hidden tab
-pauses the game (rAF suspension — not a bug).
+`window.__console.status()`, `screenState()`, and `audioState()` return frozen
+read-only lifecycle/input, framebuffer/palette, and audio-pipeline snapshots.
+The handle exists during boot but exposes no engine mutation methods; a hidden
+tab pauses the game (rAF suspension — not a bug).
 
 ## Checklist before calling a cart done
 

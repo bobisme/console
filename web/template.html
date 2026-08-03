@@ -253,6 +253,61 @@
 
 <script>
 "use strict";
+(function () {
+var diagnostic = {
+  phase: "booting",
+  error: null,
+  successfulFrames: 0,
+  readStatus: null,
+  readScreen: null,
+  readAudio: null
+};
+
+function freezeSnapshot(value) {
+  if (Array.isArray(value.displayPalette)) Object.freeze(value.displayPalette);
+  return Object.freeze(value);
+}
+
+// Installed before the async engine boot so browser-driving agents can always
+// tell "still loading" from a shell failure. The handle exposes snapshots
+// only: no Module, heap, reset, step, eval, or mutable engine references.
+window.__console = Object.freeze({
+  status: function () {
+    var live = diagnostic.readStatus
+      ? diagnostic.readStatus()
+      : { inputMask: 0, paused: false, dead: false };
+    return freezeSnapshot({
+      phase: diagnostic.phase,
+      error: diagnostic.error,
+      successfulFrames: diagnostic.successfulFrames,
+      inputMask: live.inputMask,
+      paused: live.paused,
+      dead: live.dead
+    });
+  },
+  screenState: function () {
+    return freezeSnapshot(diagnostic.readScreen
+      ? diagnostic.readScreen()
+      : { ready: false });
+  },
+  audioState: function () {
+    return freezeSnapshot(diagnostic.readAudio
+      ? diagnostic.readAudio()
+      : {
+          supported: null,
+          ctx: null,
+          ready: false,
+          sampleRate: null,
+          framesPushed: 0,
+          lastFrameNonzero: false,
+          everNonzero: false,
+          mode: null,
+          workletError: null,
+          volume: null
+        });
+  }
+});
+
 (async function () {
   var W = 144, H = 256, FPS = 60;
   var BTN = { L: 1, R: 2, U: 4, D: 8, A: 16, B: 32, M: 64 };
@@ -264,8 +319,10 @@
   var deck = document.getElementById("deck");
   var menuEl = document.getElementById("menu");
 
-  function fatal(msg) {
-    errbox.textContent = String(msg);
+  function fatal(msg, phase) {
+    diagnostic.phase = phase || "failed";
+    diagnostic.error = String(msg);
+    errbox.textContent = diagnostic.error;
     errbox.style.display = "block";
   }
 
@@ -480,24 +537,34 @@
 
   var dead = false;
   var rafPending = false;
+  diagnostic.readStatus = function () {
+    return { inputMask: inputMask(), paused: menuOpen, dead: dead };
+  };
   function initConsole() {
     var ptr = con_alloc(cartBytes.length); // con_init takes ownership and frees
     Module.HEAPU8.set(cartBytes, ptr);
     return con_init(ptr, cartBytes.length) === 0;
   }
   function resetConsole() {
-    if (initConsole()) {
-      dead = false;
-      errbox.style.display = "none";
-      blit();
-      if (!rafPending) {
-        last = performance.now();
-        acc = 0;
-        rafPending = true;
-        requestAnimationFrame(frame);
+    try {
+      if (initConsole()) {
+        dead = false;
+        diagnostic.phase = "ready";
+        diagnostic.error = null;
+        diagnostic.successfulFrames = 0;
+        errbox.style.display = "none";
+        blit();
+        if (!rafPending) {
+          last = performance.now();
+          acc = 0;
+          rafPending = true;
+          requestAnimationFrame(frame);
+        }
+      } else {
+        fatal("Cart failed to load:\n" + (currentError() || "unknown error"));
       }
-    } else {
-      fatal("Cart failed to load:\n" + (currentError() || "unknown error"));
+    } catch (e) {
+      shellFailure(e);
     }
   }
 
@@ -509,6 +576,48 @@
   var COLOR_COUNT = con_color_count();
   var COLOR_MASK = COLOR_COUNT - 1;
   var pal = Module.HEAPU8.slice(palPtr, palPtr + COLOR_COUNT * 3);
+
+  diagnostic.readScreen = function () {
+    var fbPtr = con_fb();
+    var fb = Module.HEAPU8.subarray(fbPtr, fbPtr + W * H);
+    var seen = new Uint8Array(COLOR_COUNT);
+    var distinct = 0, invalid = 0, hash = 0x811c9dc5;
+    for (var i = 0; i < fb.length; i++) {
+      var value = fb[i];
+      hash ^= value;
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+      if (value >= COLOR_COUNT) {
+        invalid++;
+      } else if (!seen[value]) {
+        seen[value] = 1;
+        distinct++;
+      }
+    }
+    var displayPalette = [];
+    if (con_dpal) {
+      var dp = con_dpal();
+      for (var k = 0; k < COLOR_COUNT; k++) {
+        displayPalette.push(Module.HEAPU8[dp + k]);
+      }
+    } else {
+      for (var k = 0; k < COLOR_COUNT; k++) displayPalette.push(k);
+    }
+    var bounds = canvas.getBoundingClientRect();
+    return {
+      ready: true,
+      logicalWidth: W,
+      logicalHeight: H,
+      backingWidth: canvas.width,
+      backingHeight: canvas.height,
+      cssWidth: bounds.width,
+      cssHeight: bounds.height,
+      colorCount: COLOR_COUNT,
+      framebufferHash: "0x" + hash.toString(16).padStart(8, "0"),
+      distinctColors: distinct,
+      invalidIndices: invalid,
+      displayPalette: displayPalette
+    };
+  };
 
   // ---- audio: AudioWorklet fed one 735-sample frame per con_step ----
   // Single-file safe: the worklet module loads from a Blob URL. The context
@@ -623,7 +732,7 @@
     initAudio();
     if (audioCtx && audioCtx.state === "suspended" && !menuOpen) audioCtx.resume();
   }
-  var audioFramesPushed = 0, audioLastNonzero = false;
+  var audioFramesPushed = 0, audioLastNonzero = false, audioEverNonzero = false;
   function pushAudio() {
     if (!audioReady) return;
     var p = con_audio();
@@ -632,28 +741,29 @@
     audioFramesPushed++;
     audioLastNonzero = false;
     for (var i = 0; i < AUDIO_FRAME; i++) {
-      if (samples[i] !== 0) { audioLastNonzero = true; break; }
+      if (samples[i] !== 0) {
+        audioLastNonzero = true;
+        audioEverNonzero = true;
+        break;
+      }
     }
     audioNode.port.postMessage(samples, [samples.buffer]);
   }
   window.addEventListener("pointerdown", unlockAudio);
   window.addEventListener("keydown", unlockAudio);
-  // Read-only debug handle so headless/browser-driving agents can verify the
-  // audio plumbing without ears.
-  window.__console = {
-    audioState: function () {
-      return {
-        supported: !!con_audio,
-        ctx: audioCtx ? audioCtx.state : null,
-        ready: audioReady,
-        sampleRate: audioCtx ? audioCtx.sampleRate : null,
-        framesPushed: audioFramesPushed,
-        lastFrameNonzero: audioLastNonzero,
-        mode: audioMode,
-        workletError: workletError,
-        volume: Math.round(volume * 100)
-      };
-    }
+  diagnostic.readAudio = function () {
+    return {
+      supported: !!con_audio,
+      ctx: audioCtx ? audioCtx.state : null,
+      ready: audioReady,
+      sampleRate: audioCtx ? audioCtx.sampleRate : null,
+      framesPushed: audioFramesPushed,
+      lastFrameNonzero: audioLastNonzero,
+      everNonzero: audioEverNonzero,
+      mode: audioMode,
+      workletError: workletError,
+      volume: Math.round(volume * 100)
+    };
   };
 
   // ---- render ----
@@ -705,6 +815,21 @@
   var acc = 0;
 
   function frame(now) {
+    try {
+      runFrame(now);
+    } catch (e) {
+      shellFailure(e);
+    }
+  }
+
+  function shellFailure(error) {
+    dead = true;
+    rafPending = false;
+    var detail = error && error.stack ? error.stack : String(error);
+    fatal("Shell error:\n" + detail, "failed");
+  }
+
+  function runFrame(now) {
     if (dead) { rafPending = false; return; }
     acc += Math.min(now - last, 100); // clamp huge tab-switch gaps
     last = now;
@@ -725,19 +850,24 @@
         dead = true;
         rafPending = false;
         blit();
-        return fatal("Cart crashed:\n" + err);
+        return fatal("Cart crashed:\n" + err, "halted");
       }
+      diagnostic.successfulFrames += steps;
       if (steps > 0) blit();
     }
     requestAnimationFrame(frame);
   }
   blit();
+  diagnostic.phase = "ready";
   rafPending = true;
   requestAnimationFrame(frame);
 })().catch(function (e) {
-  document.getElementById("errbox").textContent = "Shell error:\n" + e;
+  diagnostic.phase = "failed";
+  diagnostic.error = "Shell error:\n" + e;
+  document.getElementById("errbox").textContent = diagnostic.error;
   document.getElementById("errbox").style.display = "block";
 });
+})();
 </script>
 </body>
 </html>

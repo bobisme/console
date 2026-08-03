@@ -360,4 +360,34 @@ mod tests {
         assert_eq!(template.matches("{{CART_TEXT}}").count(), 1);
         assert_eq!(template.matches("{{TITLE}}").count(), 1);
     }
+
+    #[test]
+    fn diagnostic_handle_is_immutable_installed_before_boot_and_read_only() {
+        let Ok(path) = super::locate_default("web/template.html") else {
+            return;
+        };
+        let template = fs::read_to_string(path).unwrap();
+        let install = template
+            .find("window.__console = Object.freeze")
+            .expect("diagnostic handle is installed");
+        let boot = template
+            .find("await ConsoleEngine()")
+            .expect("template boots the engine");
+        assert!(
+            install < boot,
+            "diagnostics must exist while the engine boots"
+        );
+        for method in ["status", "screenState", "audioState"] {
+            assert!(
+                template[install..boot].contains(&format!("{method}: function")),
+                "missing read-only diagnostic method {method}"
+            );
+        }
+        for unsafe_name in ["reset", "step", "eval", "module", "heap"] {
+            assert!(
+                !template[install..boot].contains(&format!("{unsafe_name}: function")),
+                "diagnostic handle must not expose {unsafe_name}"
+            );
+        }
+    }
 }

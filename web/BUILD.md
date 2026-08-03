@@ -110,3 +110,26 @@ Then pack and eyeball the result:
 ```bash
 cargo run -p console-pack -- carts/demo.cart -o dist/demo.html
 ```
+
+Packed pages expose a frozen read-only diagnostic handle immediately, even
+while the engine is still booting:
+
+```js
+window.__console.status()      // lifecycle, error, frames, input/pause/dead
+window.__console.screenState() // dimensions, framebuffer hash/colors, dpal
+window.__console.audioState()  // context, pipeline, frames, nonzero evidence
+```
+
+Each call returns a frozen snapshot. The handle deliberately has no reset,
+step, eval, Module, or heap access; browser checks must drive real keyboard,
+pointer, and menu UI paths.
+
+Fault containment has a real-browser regression (not part of the portable
+`just check` gate because Chromium is an explicit prerequisite):
+
+```bash
+CONSOLE_BROWSER=/path/to/chromium just browser-diagnostics
+```
+
+The command packs Lantern Leap, injects a throwing canvas render dependency,
+and requires diagnostics to transition to a latched `failed` state.

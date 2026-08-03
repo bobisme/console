@@ -458,8 +458,19 @@ CLI/schema/setup input. JSON output is an object envelope with `scenario`,
   chain: AudioWorklet loaded from a `data:` module URL first on `file://`
   pages (null origin — some browsers refuse `blob:null` module loads) and a
   Blob URL otherwise, falling back to a ScriptProcessorNode; ~50ms silent
-  prebuffer; `window.__console.audioState()` exposes
-  mode/errors/framesPushed/volume for headless verification.
+  prebuffer. A frozen, read-only `window.__console` handle exists before async
+  engine boot for headless verification. `status()` reports lifecycle
+  (`booting`, `ready`, `halted`, or `failed`), fatal text, successful frame
+  count, input mask, pause, and dead state. `screenState()` reports logical,
+  backing, and CSS dimensions, color count, FNV-1a framebuffer hash, distinct
+  and invalid index counts, plus a copied display-palette array.
+  `audioState()` reports mode/errors/frames pushed, last/ever-nonzero audio,
+  context state, sample rate, and volume. Returned objects/arrays are frozen.
+  The handle intentionally exposes no engine module, heap, reset, step, eval,
+  or other mutation surface.
+  Exceptions from post-boot animation-frame and reset callbacks are contained:
+  they latch `failed`, publish the exception text, mark the shell dead, and
+  clear its loop-active flag instead of leaving a false `ready` snapshot.
 - C ABI (console-web): `con_init(cart_ptr, cart_len) -> i32` (0 ok),
   `con_step(input_mask)`, `con_fb() -> *const u8` (144*256 palette indices),
   `con_color_count() -> usize` (64),
