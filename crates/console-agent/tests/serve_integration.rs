@@ -81,8 +81,12 @@ fn serve_mode_handles_a_few_requests_in_order() {
 
 #[test]
 fn oneshot_run_with_input_spec_and_screenshot() {
-    let out_path =
-        std::env::temp_dir().join(format!("console-agent-oneshot-{}.png", std::process::id()));
+    let out_root = std::env::temp_dir().join(format!(
+        "console-agent-oneshot-nested-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&out_root);
+    let out_path = out_root.join("screenshots").join("frame.png");
 
     let output = Command::new(env!("CARGO_BIN_EXE_console-agent"))
         .arg("run")
@@ -103,7 +107,7 @@ fn oneshot_run_with_input_spec_and_screenshot() {
     let data = std::fs::read(&out_path).expect("screenshot file was written");
     assert_eq!(&data[1..4], b"PNG", "output file should be a PNG");
     assert_eq!(png_dimensions(&data), (144, 256), "1:1 scale by default");
-    let _ = std::fs::remove_file(&out_path);
+    let _ = std::fs::remove_dir_all(out_root);
 }
 
 #[test]

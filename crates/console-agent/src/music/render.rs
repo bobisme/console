@@ -257,7 +257,7 @@ pub fn cli_render(args: &[String]) -> Result<i32, String> {
         seed: flags.seed.unwrap_or(0),
     };
     let (samples, report) = render_song(&text, &opts)?;
-    std::fs::write(out, encode_wav(&samples)).map_err(|e| format!("cannot write {out:?}: {e}"))?;
+    crate::artifact::write(out, &encode_wav(&samples))?;
 
     println!(
         "wrote {out} ({} frames, {:.2}s, intro {} + {} x loop {})",

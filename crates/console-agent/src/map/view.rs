@@ -369,7 +369,7 @@ fn run_view(args: &[String]) -> Result<(), String> {
             ids: flags.ids,
         };
         let image = render(&cart, region, &opts)?;
-        std::fs::write(out, &image.png).map_err(|e| format!("cannot write {out:?}: {e}"))?;
+        crate::artifact::write(out, &image.png)?;
         println!(
             "wrote {out} ({}x{} px, region {},{},{}x{} cells, zoom {})",
             image.width, image.height, region.0, region.1, region.2, region.3, flags.zoom

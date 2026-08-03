@@ -247,8 +247,7 @@ fn m_screenshot(session: &mut Session, params: &Value) -> Result<Value, RpcErr> 
             as u32,
     };
     let png_bytes = session.screenshot_png_zoomed(zoom)?;
-    std::fs::write(path, &png_bytes)
-        .map_err(|e| RpcErr::bad_params(format!("cannot write {path:?}: {e}")))?;
+    crate::artifact::write(path, &png_bytes).map_err(RpcErr::bad_params)?;
     Ok(json!({
         "ok": true,
         "path": path,
@@ -325,8 +324,7 @@ fn m_wav(session: &Session, params: &Value) -> Result<Value, RpcErr> {
     let from_frame = u64_param(params, "from_frame");
     let to_frame = u64_param(params, "to_frame");
     let (bytes, frames, samples) = session.wav_bytes(from_frame, to_frame)?;
-    std::fs::write(path, &bytes)
-        .map_err(|e| RpcErr::bad_params(format!("cannot write {path:?}: {e}")))?;
+    crate::artifact::write(path, &bytes).map_err(RpcErr::bad_params)?;
     Ok(json!({
         "path": path,
         "frames": frames,
@@ -366,8 +364,7 @@ fn m_spectrogram(session: &Session, params: &Value) -> Result<Value, RpcErr> {
         .map(|c| c as u32)
         .unwrap_or(4);
     let spec = session.spectrogram_png(from_frame, to_frame, cell)?;
-    std::fs::write(path, &spec.png)
-        .map_err(|e| RpcErr::bad_params(format!("cannot write {path:?}: {e}")))?;
+    crate::artifact::write(path, &spec.png).map_err(RpcErr::bad_params)?;
     Ok(json!({
         "path": path,
         "windows": spec.windows,
@@ -409,8 +406,7 @@ fn required_u32(params: &Value, method: &str, name: &str) -> Result<u32, RpcErr>
 /// Shared tail of every image verb: write the PNG where the caller asked and
 /// report back what was drawn.
 fn write_image(path: &str, image: &Image) -> Result<Value, RpcErr> {
-    std::fs::write(path, &image.png)
-        .map_err(|e| RpcErr::bad_params(format!("cannot write {path:?}: {e}")))?;
+    crate::artifact::write(path, &image.png).map_err(RpcErr::bad_params)?;
     Ok(json!({
         "ok": true,
         "path": path,

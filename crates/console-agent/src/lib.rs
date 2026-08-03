@@ -19,6 +19,7 @@
 //!   (JSON diagnostics), piano-roll (score-level PNG) and render (a WAV of a
 //!   whole song, loop detection included).
 
+pub mod artifact;
 pub mod audio;
 pub mod input_spec;
 pub mod map;

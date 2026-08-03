@@ -180,8 +180,8 @@ pub fn run(args: &RunArgs) -> i32 {
     if let Some(path) = &args.screenshot {
         match session.screenshot_png_zoomed(args.screenshot_zoom) {
             Ok(bytes) => {
-                if let Err(e) = std::fs::write(path, &bytes) {
-                    eprintln!("error: cannot write {path:?}: {e}");
+                if let Err(e) = crate::artifact::write(path, &bytes) {
+                    eprintln!("error: {e}");
                     return 1;
                 }
             }
@@ -195,8 +195,8 @@ pub fn run(args: &RunArgs) -> i32 {
     if let Some(path) = &args.wav {
         match session.wav_bytes(None, None) {
             Ok((bytes, _frames, _samples)) => {
-                if let Err(e) = std::fs::write(path, &bytes) {
-                    eprintln!("error: cannot write {path:?}: {e}");
+                if let Err(e) = crate::artifact::write(path, &bytes) {
+                    eprintln!("error: {e}");
                     return 1;
                 }
             }
@@ -210,8 +210,8 @@ pub fn run(args: &RunArgs) -> i32 {
     if let Some(path) = &args.spectrogram {
         match session.spectrogram_png(None, None, 4) {
             Ok(spec) => {
-                if let Err(e) = std::fs::write(path, &spec.png) {
-                    eprintln!("error: cannot write {path:?}: {e}");
+                if let Err(e) = crate::artifact::write(path, &spec.png) {
+                    eprintln!("error: {e}");
                     return 1;
                 }
             }

@@ -311,7 +311,7 @@ pub fn cli_piano_roll(args: &[String]) -> Result<i32, String> {
         row_h: flags.row_h.unwrap_or(DEFAULT_ROW_H),
     };
     let image = piano_roll(&cart, &order, loop_at, &opts)?;
-    std::fs::write(out, &image.png).map_err(|e| format!("cannot write {out:?}: {e}"))?;
+    crate::artifact::write(out, &image.png)?;
     println!(
         "wrote {out} ({}x{} px, pattern(s) {}{})",
         image.width,

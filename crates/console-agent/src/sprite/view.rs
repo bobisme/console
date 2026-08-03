@@ -1078,7 +1078,7 @@ fn run_view(args: &[String]) -> Result<i32, String> {
             anchor: flags.anchor,
         };
         let result = gif(&cart, anim, &opts)?;
-        std::fs::write(out, &result.bytes).map_err(|e| format!("cannot write {out:?}: {e}"))?;
+        crate::artifact::write(out, &result.bytes)?;
         println!(
             "wrote {out} ({}x{}, {} frame(s), zoom {})",
             result.width, result.height, result.frames, flags.zoom
@@ -1166,7 +1166,7 @@ fn run_view(args: &[String]) -> Result<i32, String> {
         other => return Err(format!("unknown sprite command {other:?}")),
     };
 
-    std::fs::write(out, &image.png).map_err(|e| format!("cannot write {out:?}: {e}"))?;
+    crate::artifact::write(out, &image.png)?;
     println!(
         "wrote {out} ({}x{}, {} frame(s), zoom {})",
         image.width, image.height, image.frames, flags.zoom
