@@ -52,7 +52,7 @@ pub use crate::gfx::{
     DrawState, FB_LEN, FILLP_SIZE, Framebuffer, IDENTITY_PAL, MAP_H, MAP_LEN, MAP_W, MAX_MOSAIC,
     PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN, SHEET_W, SPRITE_SIZE, ShiftTable, SpriteSheet, TileMap,
 };
-pub use crate::gfx_meta::{AnimDef, GfxMeta, SpriteDef};
+pub use crate::gfx_meta::{AnimDef, FrameSpec, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
 /// Re-exported so hosts (`console-agent`, `console-web`) can talk to the VM
 /// without pinning their own, possibly different, mlua version.

@@ -27,7 +27,7 @@
 
 use std::collections::BTreeMap;
 
-use console_core::{AnimDef, Cart, PALETTE, SHEET_W, SpriteDef};
+use console_core::{AnimDef, Cart, FrameSpec, PALETTE, SHEET_W, SpriteDef};
 use serde_json::{Value, json};
 
 use super::{Target, frame_pixel_rect, parse_target, resolve_rect, target_sprite};
@@ -557,6 +557,16 @@ pub fn lint(cart: &Cart, names: &[String]) -> Result<Value, String> {
     Ok(json!({ "anims": out }))
 }
 
+/// JSON for one `frames=` entry: a plain number for the classic `frames=i`
+/// form (back-compat: unchanged shape for carts using no new syntax), or a
+/// `"tx:ty"` string for an explicit tile-coordinate frame.
+fn frame_spec_json(spec: FrameSpec) -> Value {
+    match spec {
+        FrameSpec::Index(i) => json!(i),
+        FrameSpec::Rect(tx, ty) => json!(format!("{tx}:{ty}")),
+    }
+}
+
 fn lint_anim(cart: &Cart, name: &str) -> Result<Value, String> {
     let (def, sprite, frames) = anim_frames(cart, name)?;
     let anchor = sprite.anchor;
@@ -567,10 +577,10 @@ fn lint_anim(cart: &Cart, name: &str) -> Result<Value, String> {
         .iter()
         .zip(&stats)
         .enumerate()
-        .map(|(i, (sheet_frame, s))| {
+        .map(|(i, (&sheet_frame, s))| {
             json!({
                 "index": i,
-                "sprite_frame": sheet_frame,
+                "sprite_frame": frame_spec_json(sheet_frame),
                 "silhouette_area": s.area,
                 "bbox": bbox_json(s.bbox),
                 "centroid": s.centroid.map(|(x, y)| json!([round2(x), round2(y)])),
@@ -879,18 +889,25 @@ fn check_pos(pos: u32, len: usize, anim: &str, what: &str) -> Result<usize, Stri
 }
 
 /// Pixel rect for `render`: an anim target's `--frame` indexes the anim's
-/// own frame list, anything else uses the raw sprite frame index.
+/// own frame list (going through [`AnimDef::resolve_frame`], the single
+/// source of truth that also honors `frames_rect` relocation and explicit
+/// `tx:ty` frames), anything else uses the raw sprite frame index.
 fn render_rect(cart: &Cart, target: &Target, frame: u32) -> Result<(u32, u32, u32, u32), String> {
     if let Target::Sprite {
         anim: Some(name), ..
     } = target
     {
-        let def = cart
-            .gfx_meta()
+        let meta = cart.gfx_meta();
+        let def = meta
             .anim(name)
             .ok_or_else(|| format!("anim {name:?} vanished from __gfx_meta__"))?;
+        let sprite = meta
+            .sprite(&def.sprite)
+            .ok_or_else(|| format!("anim {name:?} names unknown sprite {:?}", def.sprite))?;
         let pos = check_pos(frame, def.frames.len(), name, "--frame")?;
-        return frame_pixel_rect(cart, target, def.frames[pos]);
+        return def
+            .resolve_frame(sprite, pos)
+            .ok_or_else(|| format!("frame {pos} of anim {name:?} falls off the sheet"));
     }
     let frame = u8::try_from(frame).map_err(|_| format!("--frame {frame} out of range 0-255"))?;
     frame_pixel_rect(cart, target, frame)
@@ -920,16 +937,15 @@ fn anim_frames<'c>(
     let sprite = meta
         .sprite(&def.sprite)
         .ok_or_else(|| format!("anim {name:?} names unknown sprite {:?}", def.sprite))?;
-    let frames = def
-        .frames
-        .iter()
-        .map(|&i| {
-            sprite
-                .frame_rect(i)
+    // Goes through `AnimDef::resolve_frame` (the single source of truth for
+    // anim frame resolution), not `SpriteDef::frame_rect` directly, so
+    // `frames_rect` relocation and explicit `tx:ty` frames are honored here
+    // exactly like everywhere else (`render`, the parse-time validator).
+    let frames = (0..def.frames.len())
+        .map(|pos| {
+            def.resolve_frame(sprite, pos)
                 .map(|rect| read_rect(cart, rect))
-                .ok_or_else(|| {
-                    format!("frame {i} of sprite {:?} falls off the sheet", sprite.name)
-                })
+                .ok_or_else(|| format!("frame {pos} of anim {name:?} falls off the sheet"))
         })
         .collect::<Result<Vec<Frame>, String>>()?;
     Ok((def, sprite, frames))

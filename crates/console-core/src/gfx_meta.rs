@@ -40,35 +40,116 @@ impl SpriteDef {
     ///
     /// Returns `None` when the resolved rect does not fit the 16x16 tile
     /// sheet (either edge would spill past it).
+    ///
+    /// This is the sprite's OWN rect used as the frame-run origin — the
+    /// classic addressing scheme, and still what raw (non-anim) frame
+    /// addressing (`sprite dump`/`poke`/`edit`) always uses. An anim can
+    /// override the origin per-anim with `frames_rect=`; see
+    /// [`AnimDef::resolve_frame`], which is the one place that composes this
+    /// wrap math with an anim's `frames_rect` and explicit `tx:ty` frames.
     pub fn frame_rect(&self, i: u8) -> Option<(u32, u32, u32, u32)> {
-        let (tx, ty) = (u32::from(self.rect.0), u32::from(self.rect.1));
-        let (w, h) = (u32::from(self.size.0), u32::from(self.size.1));
-        let grid = u32::from(TILE_GRID);
-
-        let shift = tx + u32::from(i) * w;
-        let tx2 = shift % grid;
-        let ty2 = ty + (shift / grid) * h;
-        if tx2 + w > grid || ty2 + h > grid {
-            return None;
-        }
-        Some((tx2 * 8, ty2 * 8, w * 8, h * 8))
+        wrap_frame_rect(self.rect, self.size, i)
     }
 }
 
-/// One `anim <sprite>.<label> frames=<i0,i1,...> fps=<1-60> [loop]` entry.
+/// The wrap-displacement math shared by [`SpriteDef::frame_rect`] and anim
+/// frame resolution: frame `i` is the `size` rect displaced `i` widths to
+/// the right of `origin`, wrapping down a row band. `None` when the
+/// resolved rect does not fit the 16x16 tile sheet.
+fn wrap_frame_rect(origin: (u8, u8), size: (u8, u8), i: u8) -> Option<(u32, u32, u32, u32)> {
+    let (tx, ty) = (u32::from(origin.0), u32::from(origin.1));
+    let (w, h) = (u32::from(size.0), u32::from(size.1));
+    let grid = u32::from(TILE_GRID);
+
+    let shift = tx + u32::from(i) * w;
+    let tx2 = shift % grid;
+    let ty2 = ty + (shift / grid) * h;
+    if tx2 + w > grid || ty2 + h > grid {
+        return None;
+    }
+    Some((tx2 * 8, ty2 * 8, w * 8, h * 8))
+}
+
+/// An explicit `tx:ty` frame: the sprite's `size` rect anchored directly at
+/// tile `(tx, ty)`, no wrap math, no relation to the sprite's own rect or
+/// any `frames_rect`. `None` when it does not fit the 16x16 tile sheet.
+fn explicit_frame_rect(tile: (u8, u8), size: (u8, u8)) -> Option<(u32, u32, u32, u32)> {
+    let (tx, ty) = (u32::from(tile.0), u32::from(tile.1));
+    let (w, h) = (u32::from(size.0), u32::from(size.1));
+    let grid = u32::from(TILE_GRID);
+    if tx + w > grid || ty + h > grid {
+        return None;
+    }
+    Some((tx * 8, ty * 8, w * 8, h * 8))
+}
+
+/// One entry in an anim's `frames=` list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameSpec {
+    /// `frames=i` — the sprite's (or `frames_rect`'s) rect displaced `i`
+    /// widths right, wrapping down a row band; the classic addressing.
+    Index(u8),
+    /// `frames=tx:ty` — explicit tile coordinates for this one frame, same
+    /// `WxH` as the sprite. Ignores `frames_rect`.
+    Rect(u8, u8),
+}
+
+/// Resolve one [`FrameSpec`] against `sprite` (and an optional per-anim
+/// `frames_rect` override) to a pixel-space rect. The single place that
+/// composes the wrap-displacement rule with `frames_rect` relocation and
+/// explicit tile coords — [`AnimDef::resolve_frame`] and the parse-time
+/// validator both go through this.
+fn resolve_frame_spec(
+    spec: FrameSpec,
+    sprite: &SpriteDef,
+    frames_rect: Option<(u8, u8)>,
+) -> Option<(u32, u32, u32, u32)> {
+    match spec {
+        FrameSpec::Index(i) => wrap_frame_rect(frames_rect.unwrap_or(sprite.rect), sprite.size, i),
+        FrameSpec::Rect(tx, ty) => explicit_frame_rect((tx, ty), sprite.size),
+    }
+}
+
+/// One `anim <sprite>.<label> frames=<i0,i1,...> fps=<1-60> [loop]
+/// [frames_rect=<tx>,<ty>]` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnimDef {
     /// Full namespaced name, `<sprite>.<label>`, unique within the cart.
     pub name: String,
     /// The sprite this anim's frames are relative to (validated to exist).
     pub sprite: String,
-    /// Frame indices, at least one, each already validated to resolve to an
-    /// in-sheet rect via [`SpriteDef::frame_rect`].
-    pub frames: Vec<u8>,
+    /// Frame entries, at least one, each already validated to resolve to an
+    /// in-sheet rect via [`AnimDef::resolve_frame`].
+    pub frames: Vec<FrameSpec>,
+    /// Optional override for the frame-0 origin used by [`FrameSpec::Index`]
+    /// entries in this anim: frame `i` counts from `(tx, ty)` instead of the
+    /// sprite's own `rect`, same displacement/wrap rule, same `WxH` as the
+    /// sprite. Lets two anims of one sprite live in different sheet regions.
+    /// `None` means "use the sprite's own rect", today's behavior.
+    pub frames_rect: Option<(u8, u8)>,
     /// Playback rate, `1..=60`.
     pub fps: u8,
     /// Whether playback should wrap back to frame 0 at the end.
     pub looped: bool,
+}
+
+impl AnimDef {
+    /// Resolve frame-list position `pos` (an index into `self.frames`, NOT a
+    /// raw sheet frame index) to a pixel-space rect on `sprite`'s sheet.
+    ///
+    /// This is the single source of truth for anim frame resolution: every
+    /// sprite tool (render/strip/onion/ghost/diff/gif/lint) and the
+    /// parse-time validator go through this (or the identical logic in
+    /// [`resolve_frame_spec`], which this delegates to), so relocation via
+    /// `frames_rect` and explicit `tx:ty` frames behave identically
+    /// everywhere. `sprite` must be the anim's own sprite
+    /// (`GfxMeta::sprite(&self.sprite)`); passing a different one produces
+    /// nonsense. Returns `None` for an out-of-range `pos` or a frame that
+    /// does not fit the 16x16 tile sheet.
+    pub fn resolve_frame(&self, sprite: &SpriteDef, pos: usize) -> Option<(u32, u32, u32, u32)> {
+        let spec = *self.frames.get(pos)?;
+        resolve_frame_spec(spec, sprite, self.frames_rect)
+    }
 }
 
 /// Everything a cart's `__gfx_meta__` section describes.
@@ -156,12 +237,16 @@ impl GfxMeta {
                     ),
                 ));
             };
-            for &frame in &raw_anim.frames {
-                if sprite_def.frame_rect(frame).is_none() {
+            for (pos, &spec) in raw_anim.frames.iter().enumerate() {
+                if resolve_frame_spec(spec, sprite_def, raw_anim.frames_rect).is_none() {
+                    let desc = match spec {
+                        FrameSpec::Index(i) => format!("index {i}"),
+                        FrameSpec::Rect(tx, ty) => format!("tile {tx}:{ty}"),
+                    };
                     return Err(cart_err(
                         raw_anim.line,
                         format!(
-                            "anim {:?} frame index {frame} falls outside the 16x16 tile sheet",
+                            "anim {:?} frame {pos} ({desc}) falls outside the 16x16 tile sheet",
                             raw_anim.name
                         ),
                     ));
@@ -173,6 +258,7 @@ impl GfxMeta {
                     name: raw_anim.name,
                     sprite: raw_anim.sprite,
                     frames: raw_anim.frames,
+                    frames_rect: raw_anim.frames_rect,
                     fps: raw_anim.fps,
                     looped: raw_anim.looped,
                 },
@@ -314,17 +400,30 @@ fn parse_sprite_line(line: usize, tokens: &[&str]) -> Result<SpriteDef, Error> {
 struct RawAnim {
     name: String,
     sprite: String,
-    frames: Vec<u8>,
+    frames: Vec<FrameSpec>,
+    frames_rect: Option<(u8, u8)>,
     fps: u8,
     looped: bool,
     line: usize,
+}
+
+/// One `frames=` list entry: `i` (a frame index) or `tx:ty` (explicit tile
+/// coords for that single frame).
+fn parse_frame_spec(line: usize, part: &str) -> Result<FrameSpec, Error> {
+    if let Some((a, b)) = part.split_once(':') {
+        let tx = parse_u8(line, "frame tile tx", a, 0, TILE_GRID - 1)?;
+        let ty = parse_u8(line, "frame tile ty", b, 0, TILE_GRID - 1)?;
+        Ok(FrameSpec::Rect(tx, ty))
+    } else {
+        Ok(FrameSpec::Index(parse_u8(line, "frame index", part, 0, u8::MAX)?))
+    }
 }
 
 fn parse_anim_line(line: usize, tokens: &[&str]) -> Result<RawAnim, Error> {
     if tokens.len() < 2 {
         return Err(cart_err(
             line,
-            "expected `anim <sprite>.<label> frames=<i0,i1,...> fps=<1-60> [loop]`",
+            "expected `anim <sprite>.<label> frames=<i0,i1,...> fps=<1-60> [loop] [frames_rect=<tx>,<ty>]`",
         ));
     }
     let full = tokens[1];
@@ -347,9 +446,10 @@ fn parse_anim_line(line: usize, tokens: &[&str]) -> Result<RawAnim, Error> {
         ));
     }
 
-    let mut frames: Option<Vec<u8>> = None;
+    let mut frames: Option<Vec<FrameSpec>> = None;
     let mut fps: Option<u8> = None;
     let mut looped = false;
+    let mut frames_rect: Option<(u8, u8)> = None;
 
     for tok in &tokens[2..] {
         if tok.eq_ignore_ascii_case("loop") {
@@ -359,7 +459,9 @@ fn parse_anim_line(line: usize, tokens: &[&str]) -> Result<RawAnim, Error> {
         let Some((key, value)) = tok.split_once('=') else {
             return Err(cart_err(
                 line,
-                format!("unexpected {tok:?} in anim line (want `frames=`, `fps=` or `loop`)"),
+                format!(
+                    "unexpected {tok:?} in anim line (want `frames=`, `fps=`, `frames_rect=` or `loop`)"
+                ),
             ));
         };
         match key.to_ascii_lowercase().as_str() {
@@ -369,17 +471,28 @@ fn parse_anim_line(line: usize, tokens: &[&str]) -> Result<RawAnim, Error> {
                 }
                 let mut v = Vec::new();
                 for part in value.split(',') {
-                    v.push(parse_u8(line, "frame index", part, 0, u8::MAX)?);
+                    v.push(parse_frame_spec(line, part)?);
                 }
                 frames = Some(v);
             }
             "fps" => {
                 fps = Some(parse_u8(line, "fps", value, 1, 60)?);
             }
+            "frames_rect" => {
+                let Some((a, b)) = value.split_once(',') else {
+                    return Err(cart_err(
+                        line,
+                        format!("frames_rect must be `frames_rect=<tx>,<ty>`, found {value:?}"),
+                    ));
+                };
+                let tx = parse_u8(line, "frames_rect tx", a, 0, TILE_GRID - 1)?;
+                let ty = parse_u8(line, "frames_rect ty", b, 0, TILE_GRID - 1)?;
+                frames_rect = Some((tx, ty));
+            }
             other => {
                 return Err(cart_err(
                     line,
-                    format!("unknown anim key {other:?} (want `frames`, `fps` or `loop`)"),
+                    format!("unknown anim key {other:?} (want `frames`, `fps`, `frames_rect` or `loop`)"),
                 ));
             }
         }
@@ -396,6 +509,7 @@ fn parse_anim_line(line: usize, tokens: &[&str]) -> Result<RawAnim, Error> {
         name: full.to_string(),
         sprite: sprite.to_string(),
         frames,
+        frames_rect,
         fps,
         looped,
         line,
@@ -429,5 +543,140 @@ mod tests {
         assert_eq!(p.frame_rect(15), Some((0, 8, 8, 8)));
         // Off the bottom of the sheet.
         assert_eq!(p.frame_rect(255), None);
+    }
+
+    // -----------------------------------------------------------------
+    // frames_rect / explicit tx:ty frames (bn-2op)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn classic_frames_parse_and_resolve_unchanged() {
+        // Back-compat: no frames_rect, all-index frames behave exactly like
+        // before this bone.
+        let meta =
+            GfxMeta::parse(Some("sprite p rect=1,0 size=1x1\nanim p.a frames=0,1,15 fps=4 loop\n"))
+                .unwrap();
+        let a = meta.anim("p.a").unwrap();
+        let p = meta.sprite("p").unwrap();
+        assert_eq!(a.frames, vec![FrameSpec::Index(0), FrameSpec::Index(1), FrameSpec::Index(15)]);
+        assert_eq!(a.frames_rect, None);
+        assert_eq!(a.resolve_frame(p, 0), Some((8, 0, 8, 8)));
+        assert_eq!(a.resolve_frame(p, 1), Some((16, 0, 8, 8)));
+        assert_eq!(a.resolve_frame(p, 2), Some((0, 8, 8, 8)));
+        assert_eq!(a.resolve_frame(p, 3), None); // out of range pos
+    }
+
+    #[test]
+    fn frames_rect_relocates_frame_zero_origin() {
+        // Sprite's own rect is (1,0); the anim's frames_rect moves frame 0's
+        // origin to (4,4), same wrap rule, same size, from there.
+        let meta = GfxMeta::parse(Some(
+            "sprite p rect=1,0 size=1x1\nanim p.a frames=0,1,2 fps=4 frames_rect=4,4\n",
+        ))
+        .unwrap();
+        let a = meta.anim("p.a").unwrap();
+        let p = meta.sprite("p").unwrap();
+        assert_eq!(a.frames_rect, Some((4, 4)));
+        assert_eq!(a.resolve_frame(p, 0), Some((32, 32, 8, 8)));
+        assert_eq!(a.resolve_frame(p, 1), Some((40, 32, 8, 8)));
+        assert_eq!(a.resolve_frame(p, 2), Some((48, 32, 8, 8)));
+    }
+
+    #[test]
+    fn frames_rect_wraps_down_a_row_band() {
+        // Origin near the right edge: frame 1 should wrap to the next row
+        // band, exactly like the sprite's-own-rect case does.
+        let meta = GfxMeta::parse(Some(
+            "sprite p rect=0,0 size=1x1\nanim p.a frames=0,1 fps=4 frames_rect=15,2\n",
+        ))
+        .unwrap();
+        let a = meta.anim("p.a").unwrap();
+        let p = meta.sprite("p").unwrap();
+        assert_eq!(a.resolve_frame(p, 0), Some((15 * 8, 2 * 8, 8, 8)));
+        assert_eq!(a.resolve_frame(p, 1), Some((0, 3 * 8, 8, 8)));
+    }
+
+    #[test]
+    fn explicit_tile_frame_ignores_frames_rect() {
+        let meta = GfxMeta::parse(Some(
+            "sprite p rect=0,0 size=1x1\nanim p.a frames=0,12:4,3 fps=4 frames_rect=8,8\n",
+        ))
+        .unwrap();
+        let a = meta.anim("p.a").unwrap();
+        let p = meta.sprite("p").unwrap();
+        // frames=0 (index) resolves via frames_rect=8,8.
+        assert_eq!(a.resolve_frame(p, 0), Some((64, 64, 8, 8)));
+        // frames=12:4 (explicit tile) ignores frames_rect entirely.
+        assert_eq!(a.resolve_frame(p, 1), Some((12 * 8, 4 * 8, 8, 8)));
+        // frames=3 (index again) still goes through frames_rect.
+        assert_eq!(a.resolve_frame(p, 2), Some((8 * 8 + 3 * 8, 8 * 8, 8, 8)));
+        assert_eq!(a.frames, vec![
+            FrameSpec::Index(0),
+            FrameSpec::Rect(12, 4),
+            FrameSpec::Index(3),
+        ]);
+    }
+
+    #[test]
+    fn frames_rect_off_sheet_is_a_parse_error() {
+        let err = GfxMeta::parse(Some(
+            "sprite p rect=0,0 size=2x2\nanim p.a frames=0 fps=4 frames_rect=15,15\n",
+        ))
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("p.a"), "{msg}");
+        assert!(msg.contains("frame 0"), "{msg}");
+    }
+
+    #[test]
+    fn explicit_tile_frame_off_sheet_is_a_parse_error() {
+        // Sprite is 2x2 tiles; explicit tile (15,15) is a valid in-range
+        // coordinate on its own but the 2x2 rect anchored there spills past
+        // the sheet edge.
+        let err = GfxMeta::parse(Some("sprite p rect=0,0 size=2x2\nanim p.a frames=0,15:15 fps=4\n"))
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("p.a"), "{msg}");
+        // Position 1 (0-based) is the offending 15:15 entry.
+        assert!(msg.contains("frame 1"), "{msg}");
+    }
+
+    #[test]
+    fn explicit_tile_frame_bad_syntax_is_a_parse_error() {
+        // Missing the `:` separator entirely falls through to the plain
+        // index parser and fails as "not a number".
+        let err =
+            GfxMeta::parse(Some("sprite p rect=0,0 size=1x1\nanim p.a frames=1x2 fps=4\n"))
+                .unwrap_err();
+        assert!(err.to_string().contains("frame index"), "{err}");
+    }
+
+    #[test]
+    fn frames_rect_bad_syntax_is_a_parse_error() {
+        let err = GfxMeta::parse(Some(
+            "sprite p rect=0,0 size=1x1\nanim p.a frames=0 fps=4 frames_rect=oops\n",
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("frames_rect"), "{err}");
+    }
+
+    #[test]
+    fn two_anims_of_one_sprite_can_live_in_different_regions() {
+        // The friction bn-2op fixes: two anims of the same sprite, entirely
+        // disjoint sheet regions, neither one contiguous with the sprite's
+        // own rect.
+        let meta = GfxMeta::parse(Some(
+            "sprite p rect=0,0 size=1x1\n\
+             anim p.a frames=0,1 fps=4 frames_rect=5,0\n\
+             anim p.b frames=0,1 fps=4 frames_rect=9,9\n",
+        ))
+        .unwrap();
+        let p = meta.sprite("p").unwrap();
+        let a = meta.anim("p.a").unwrap();
+        let b = meta.anim("p.b").unwrap();
+        assert_eq!(a.resolve_frame(p, 0), Some((5 * 8, 0, 8, 8)));
+        assert_eq!(a.resolve_frame(p, 1), Some((6 * 8, 0, 8, 8)));
+        assert_eq!(b.resolve_frame(p, 0), Some((9 * 8, 9 * 8, 8, 8)));
+        assert_eq!(b.resolve_frame(p, 1), Some((10 * 8, 9 * 8, 8, 8)));
     }
 }

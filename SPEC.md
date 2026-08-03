@@ -446,22 +446,45 @@ vision renders — plus mechanical transforms so agents never hand-shift hex.
 
 ```
 sprite <name> rect=<tx>,<ty> size=<w>x<h> [anchor=<px>,<py>]
-anim <sprite>.<label> frames=<i0,i1,...> fps=<1-60> [loop]
+anim <sprite>.<label> frames=<f0,f1,...> fps=<1-60> [loop] [frames_rect=<tx>,<ty>]
 ```
 
 - `name`: `[a-z0-9_]+`, unique. `rect` in tile coords (0–15), `size` in
   tiles (1×1 up to 16×16). `anchor` in pixels relative to the sprite's
   top-left; default = bottom-center `(w*8/2, h*8-1)` (ground contact).
-- Anim names are namespaced by sprite (`player.walk`). Frame index `i`
-  addresses the rect displaced `i` sprite-widths to the right, wrapping to
-  the next row band: `tx' = (tx + i*w) % 16`, `ty' = ty + ((tx + i*w) / 16) * h`.
-  Every resolved rect must fit the 16×16 tile sheet.
+- Anim names are namespaced by sprite (`player.walk`). Each entry `f` in
+  `frames=` is one of:
+  - an index `i` — addresses the rect displaced `i` sprite-widths to the
+    right of the frame-0 origin, wrapping to the next row band:
+    `tx' = (tx + i*w) % 16`, `ty' = ty + ((tx + i*w) / 16) * h`. The origin
+    `(tx, ty)` is the sprite's own `rect` by default.
+  - an explicit tile coordinate `tx:ty` — the sprite's `WxH` rect anchored
+    directly at tile `(tx, ty)` on the sheet, no wrap math, no relation to
+    the sprite's `rect` or the anim's `frames_rect`. Lets a frame reuse any
+    tile region, skip damaged/reserved tiles, or avoid the huge contiguous
+    runs a megatile sprite's index addressing would otherwise demand.
+  - a list may mix both forms freely, e.g. `frames=0,1,12:4,3`.
+  - `frames_rect=<tx>,<ty>` (optional, anim-level) relocates the frame-0
+    origin that INDEX entries in this anim count from: frame `i` resolves
+    from `(tx, ty)` instead of the sprite's own `rect`, same
+    displacement/wrap rule, same `WxH` as the sprite. Explicit `tx:ty`
+    entries ignore it. This is what lets two anims of one sprite live in
+    different, non-contiguous sheet regions.
+  - Every resolved rect must fit the 16×16 tile sheet; back-compat: an anim
+    using neither `frames_rect` nor any `tx:ty` entry parses and resolves
+    exactly as before this grammar existed.
 - Validation after the whole section parses (forward references fine);
-  errors are `Error::Cart` with section-relative line numbers. Section is
-  optional; carts without it behave identically.
+  errors are `Error::Cart` with section-relative line numbers, naming the
+  anim and the offending frame's position in its list. Section is optional;
+  carts without it behave identically.
 - Core API: `Cart::gfx_meta()` exposing sprite/anim defs plus
-  `resolve_frame(sprite, i) -> pixel rect` — pixel data itself comes from the
-  existing sprite sheet accessors.
+  `AnimDef::resolve_frame(sprite, pos) -> pixel rect`, the single place that
+  composes the wrap-displacement rule with `frames_rect` relocation and
+  explicit `tx:ty` frames — pixel data itself comes from the existing sprite
+  sheet accessors. `pos` indexes the anim's own `frames` list (not a raw
+  sheet frame index); `SpriteDef::frame_rect(i)` remains the classic
+  sprite-rect-relative resolver used by non-anim frame addressing
+  (`sprite dump`/`poke`/`edit`).
 
 ### Inspection tools (console-agent `sprite` subcommands + RPC verbs)
 

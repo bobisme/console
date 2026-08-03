@@ -1,6 +1,13 @@
 //! `__gfx_meta__`: sprite/anim authoring metadata parsing.
 
-use console_core::{Cart, Console, Error};
+use console_core::{Cart, Console, Error, FrameSpec};
+
+/// Build the classic all-index frame list `Vec<FrameSpec>` from plain
+/// indices, for asserting against `AnimDef::frames` without new-syntax noise
+/// at every call site.
+fn indices(ints: &[u8]) -> Vec<FrameSpec> {
+    ints.iter().map(|&i| FrameSpec::Index(i)).collect()
+}
 
 const DEMO: &str = include_str!("../../../carts/demo.cart");
 
@@ -53,12 +60,12 @@ fn sprites_and_anims_round_trip() {
 
     let walk = meta.anim("player.walk").unwrap();
     assert_eq!(walk.sprite, "player");
-    assert_eq!(walk.frames, vec![0, 1, 2, 3]);
+    assert_eq!(walk.frames, indices(&[0, 1, 2, 3]));
     assert_eq!(walk.fps, 12);
     assert!(walk.looped);
 
     let idle = meta.anim("player.idle").unwrap();
-    assert_eq!(idle.frames, vec![0]);
+    assert_eq!(idle.frames, indices(&[0]));
     assert_eq!(idle.fps, 1);
     assert!(!idle.looped); // `loop` omitted
 
@@ -326,29 +333,29 @@ fn demo_cart_gfx_meta_has_the_declared_anims() {
     // 4-frame walk: contact / passing / contact' / passing'.
     let walk = meta.anim("player.walk").expect("player.walk anim");
     assert_eq!(walk.sprite, "player");
-    assert_eq!(walk.frames, vec![0, 1, 2, 3]);
+    assert_eq!(walk.frames, indices(&[0, 1, 2, 3]));
     assert_eq!(walk.fps, 8);
     assert!(walk.looped);
 
     // 2-frame breathing idle, deliberately much slower than the walk.
     let idle = meta.anim("player.idle").expect("player.idle anim");
-    assert_eq!(idle.frames, vec![4, 5]);
+    assert_eq!(idle.frames, indices(&[4, 5]));
     assert_eq!(idle.fps, 2);
     assert!(idle.looped);
     assert!(idle.fps < walk.fps);
 
     let twinkle = meta.anim("star.twinkle").expect("star.twinkle anim");
-    assert_eq!(twinkle.frames, vec![0, 1, 2, 3]);
+    assert_eq!(twinkle.frames, indices(&[0, 1, 2, 3]));
     assert_eq!(twinkle.fps, 8);
     assert!(twinkle.looped);
 
     let sparkle = meta.anim("gem.sparkle").expect("gem.sparkle anim");
-    assert_eq!(sparkle.frames, vec![0, 1]);
+    assert_eq!(sparkle.frames, indices(&[0, 1]));
     assert_eq!(sparkle.fps, 4);
     assert!(sparkle.looped);
 
     let flap = meta.anim("moth.flap").expect("moth.flap anim");
-    assert_eq!(flap.frames, vec![0, 1, 2, 3]);
+    assert_eq!(flap.frames, indices(&[0, 1, 2, 3]));
     assert_eq!(flap.fps, 6);
     assert!(flap.looped);
 }
@@ -392,24 +399,27 @@ fn demo_cart_anim_frames_have_pixels_at_the_expected_sprite_ids() {
         let sprite = meta.sprite(&anim.sprite).unwrap();
         assert_eq!(anim.frames.len(), ids.len(), "{name} frame count");
 
-        for (&frame, &id) in anim.frames.iter().zip(ids) {
-            let (x, y, w, h) = sprite
-                .frame_rect(frame)
-                .unwrap_or_else(|| panic!("{name} frame {frame} off-sheet"));
+        for (pos, &id) in ids.iter().enumerate() {
+            // Goes through `AnimDef::resolve_frame` (the single source of
+            // truth for anim frame resolution), not `SpriteDef::frame_rect`
+            // directly, since `anim.frames` is no longer bare `u8` indices.
+            let (x, y, w, h) = anim
+                .resolve_frame(sprite, pos)
+                .unwrap_or_else(|| panic!("{name} frame {pos} off-sheet"));
 
             // Sprite id n lives at (n % 16 * 8, n / 16 * 8) -- the address the
             // Lua passes to spr().
             assert_eq!(
                 (x, y),
                 (u32::from(id) % 16 * 8, u32::from(id) / 16 * 8),
-                "{name} frame {frame} should be sprite id {id}"
+                "{name} frame {pos} should be sprite id {id}"
             );
 
             let opaque = (0..h)
                 .flat_map(|dy| (0..w).map(move |dx| (dx, dy)))
                 .filter(|&(dx, dy)| sheet[((y + dy) * 128 + (x + dx)) as usize] != 0)
                 .count();
-            assert!(opaque > 0, "{name} frame {frame} is blank");
+            assert!(opaque > 0, "{name} frame {pos} is blank");
         }
     }
 }

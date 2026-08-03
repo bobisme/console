@@ -59,7 +59,7 @@ __lua__           the game (Lua 5.4, sandboxed)
 __sprites__       128 lines x 128 hex chars; 1 char = 1 pixel; sprite n at (n%16*8, n//16*8)
 __map__           up to 64 lines x up to 128 cells; 2 hex chars = 1 tile id (00-ff); tile 00 = empty
 __gfx_meta__      sprite <name> rect=tx,ty size=WxH [anchor=px,py]
-                  anim <sprite>.<label> frames=i0,i1,... fps=N [loop]
+                  anim <sprite>.<label> frames=f0,f1,... fps=N [loop] [frames_rect=tx,ty]
 __instruments__   inst <name> wave=<0-6|w0-w7> [fm=ratio,index[,decay]] [env=a,d,s] [vib=cents,rate,delay] [sweep=semis,frames] [duck=depth,release] [echo=0-8]
                   wavetable <slot 0-7> <32 hex nibbles>   # custom single-cycle wave
                   master drive=0-8 [tone=0-8] [hiss=0-4]
@@ -218,6 +218,18 @@ steady within ~15%, no colors unique to a single frame (usually a typo'd
 hex digit), small `changed_pixels` between adjacent frames. At runtime,
 drive frames from your own Lua table + `t()` (the runtime does not read
 `__gfx_meta__`; keep the two in sync).
+
+An anim's frames don't have to be a contiguous run starting at its sprite's
+own `rect` — that's just the default. `frames_rect=tx,ty` relocates where
+INDEX frame `0` starts for that one anim (same `WxH`, same wrap rule), so a
+second anim of the same sprite can live in its own sheet region instead of
+fighting the first for contiguous tiles; a `frames=` entry can also be an
+explicit `tx:ty` instead of an index, pinning that one frame to any tile on
+the sheet regardless of `frames_rect`, which is how you skip a
+damaged/reserved tile or give a megatile sprite frames that aren't one huge
+contiguous block. The two compose: `anim boss.slam frames=0,1,7:2,3
+frames_rect=4,9 fps=10` — frames 0, 1 and 3 count from `(4,9)`; frame `7:2`
+is pinned at tile `(7,2)` regardless.
 
 ## Tile map authoring
 
