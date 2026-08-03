@@ -105,7 +105,7 @@ every stepped frame (for example, `16` is A), which is useful for starting a
 title-screen game before asserting audio. Use `--engine PATH` to exercise a
 different engine build, or `node web/smoke.cjs --help` for the full syntax.
 
-Then pack and eyeball the result:
+Then pack the result:
 
 ```bash
 cargo run -p console-pack -- carts/demo.cart -o dist/demo.html
@@ -133,3 +133,31 @@ CONSOLE_BROWSER=/path/to/chromium just browser-diagnostics
 
 The command packs Lantern Leap, injects a throwing canvas render dependency,
 and requires diagnostics to transition to a latched `failed` state.
+
+The complete packed-page acceptance gate also needs `agent-browser` and an
+explicit Chromium executable. Provision both first (for example,
+`agent-browser install`, or a system Chromium), then run:
+
+```bash
+CONSOLE_BROWSER=/path/to/chromium just browser-check
+```
+
+This packs Lantern Leap to a temporary HTML file and opens that exact file over
+`file://`. It requires a healthy boot and advancing 144x256 framebuffer, the
+64-color/display-palette invariants, changing raw framebuffer and rendered
+canvas pixels, trusted held pointer input, audio unlock with nonzero samples,
+pause/resume and RESET through the visible controls, and a network log limited
+to the exact `file://` document plus in-memory worklet URLs. It also requires no
+browser page errors. Missing browser infrastructure is an error, never a
+skipped check. This gate is intentionally separate from portable `just check`.
+
+On failure it retains the packed page, screenshot, diagnostic snapshots,
+network requests, page errors, and console messages in a timestamped directory
+under `out/browser-check/`. Set `CONSOLE_BROWSER_ARTIFACTS=/other/directory` to
+change the artifact root. Successful runs leave no artifacts. To exercise an
+already-packed compatible cart directly:
+
+```bash
+CONSOLE_BROWSER=/path/to/chromium \
+  node web/browser-smoke.cjs game.html --artifacts out/browser-check
+```

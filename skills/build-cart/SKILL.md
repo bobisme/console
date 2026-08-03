@@ -802,6 +802,19 @@ read-only lifecycle/input, framebuffer/palette, and audio-pipeline snapshots.
 The handle exists during boot but exposes no engine mutation methods; a hidden
 tab pauses the game (rAF suspension — not a bug).
 
+Inside the console repository, exercise the complete reference pack in an
+actual browser with:
+
+```bash
+CONSOLE_BROWSER=/path/to/chromium just browser-check
+```
+
+This is an explicit opt-in gate because it requires `agent-browser` plus a
+Chromium executable. It opens the exact packed file over `file://`, drives
+trusted device controls, unlocks audio, checks pause/resume/RESET and network
+isolation, and leaves a screenshot, packed HTML, and JSON browser evidence under
+`out/browser-check/` only when it fails.
+
 ## Checklist before calling a cart done
 
 - [ ] `console-agent run` a full scripted playthrough: exits clean, no halt
@@ -815,4 +828,6 @@ tab pauses the game (rAF suspension — not a bug).
       shows no clipping; spectrogram eyeballed
 - [ ] Determinism: same seed + input script run twice ⇒ identical
       `screen_text` output
-- [ ] Packed HTML loads, plays, and its cart section is still readable text
+- [ ] `CONSOLE_BROWSER=/path/to/chromium just browser-check` passes for the
+      reference packed page; any failure artifacts have been inspected
+- [ ] Packed HTML's cart section is still readable text

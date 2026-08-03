@@ -88,6 +88,17 @@ server needed). `console-pack` uses the engine build already committed at
 `web/engine.js`; rebuilding that wasm engine from `crates/console-web`
 requires emsdk — see [web/BUILD.md](web/BUILD.md) for the recipe.
 
+With `agent-browser` and Chromium provisioned, the repository's real-browser
+acceptance gate packs and drives Lantern Leap end to end:
+
+```bash
+CONSOLE_BROWSER=/path/to/chromium just browser-check
+```
+
+It treats missing browser infrastructure as a failure and retains the exact
+packed HTML, screenshot, and browser diagnostics under `out/browser-check/`
+when an assertion fails.
+
 ## For AI agents
 
 Hand an agent [skills/build-cart/SKILL.md](skills/build-cart/SKILL.md) — it

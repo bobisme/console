@@ -471,6 +471,13 @@ CLI/schema/setup input. JSON output is an object envelope with `scenario`,
   Exceptions from post-boot animation-frame and reset callbacks are contained:
   they latch `failed`, publish the exception text, mark the shell dead, and
   clear its loop-active flag instead of leaving a false `ready` snapshot.
+- Repository acceptance uses `CONSOLE_BROWSER=/path/to/chromium just
+  browser-check`. The opt-in gate packs Lantern Leap, opens the exact output
+  from `file://`, drives trusted pointer/menu input, and checks boot/framebuffer,
+  palette, audio, pause/resume/reset, network isolation, and browser errors.
+  Missing browser prerequisites fail rather than skip. Failures retain the
+  packed HTML, screenshot, diagnostic snapshots, and browser logs under
+  `out/browser-check/` (overridable with `CONSOLE_BROWSER_ARTIFACTS`).
 - C ABI (console-web): `con_init(cart_ptr, cart_len) -> i32` (0 ok),
   `con_step(input_mask)`, `con_fb() -> *const u8` (144*256 palette indices),
   `con_color_count() -> usize` (64),
