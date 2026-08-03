@@ -110,7 +110,7 @@ pub fn resolve_rect(cart: &Cart, target_str: &str, frame: u8) -> Result<(u32, u3
 pub fn cli_sprite(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("render") | Some("strip") | Some("onion") | Some("diff") | Some("ghost")
-        | Some("lint") | Some("dump") => view::cli_view(args),
+        | Some("lint") | Some("dump") | Some("gif") => view::cli_view(args),
         Some("edit") => transform::cli_edit(&args[1..]),
         Some("poke") => transform::cli_poke(&args[1..]),
         _ => {
@@ -128,6 +128,7 @@ usage:
   console-agent sprite onion  <cart> <anim> --all [--zoom Z] [--grid] [--anchor] -o out.png
   console-agent sprite diff   <cart> <anim> <frameA> <frameB> [--zoom Z] -o out.png
   console-agent sprite ghost  <cart> <anim> [--zoom Z] [--grid] [--anchor] -o out.png
+  console-agent sprite gif    <cart> <anim> [--zoom Z] [--grid] [--anchor] -o out.gif
   console-agent sprite lint   <cart> [anim ...]
   console-agent sprite edit   <cart> <shift|flip|rotate|copy|clear> ... [--dry-run]
   console-agent sprite dump   <cart> <target> [--frame N]

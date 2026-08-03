@@ -6,6 +6,8 @@
 //! same entry points back both the CLI (`console-agent sprite ...`, via
 //! [`cli_view`]) and the RPC verbs in `rpc.rs`, so the two surfaces can never
 //! drift: [`render`], [`strip`], [`onion`], [`diff`], [`ghost`], [`lint`].
+//! [`gif`] is CLI-only (an animated preview has no single-frame RPC shape to
+//! mirror) but otherwise follows the same conventions.
 //!
 //! Render conventions, shared by every image command:
 //!
@@ -431,6 +433,106 @@ pub fn ghost(cart: &Cart, anim: &str, opts: &OverlayOpts) -> Result<Image, Strin
     Ok(canvas.finish(frames.len()))
 }
 
+/// A finished GIF: the encoded bytes plus the dimensions/frame count it
+/// depicts (mirrors [`Image`] for the PNG-producing commands, minus the raw
+/// RGBA buffer — a GIF's frames don't share one).
+pub struct GifOutput {
+    pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub frames: usize,
+}
+
+/// Debug by shape, not by content — same rationale as [`Image`]'s impl.
+impl std::fmt::Debug for GifOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GifOutput")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("frames", &self.frames)
+            .field("gif_bytes", &self.bytes.len())
+            .finish()
+    }
+}
+
+/// Flags for `sprite gif` — the animated counterpart of the PNG view
+/// commands. `--zoom` defaults to [`DEFAULT_ZOOM`]; `grid`/`anchor` overlay
+/// the same tile-boundary grid and anchor crosshair the other views draw.
+#[derive(Debug, Clone, Copy)]
+pub struct GifOpts {
+    pub zoom: u32,
+    pub grid: bool,
+    pub anchor: bool,
+}
+
+impl Default for GifOpts {
+    fn default() -> GifOpts {
+        GifOpts { zoom: DEFAULT_ZOOM, grid: false, anchor: false }
+    }
+}
+
+/// `sprite gif` — an animated preview of `anim`, played at its declared
+/// `fps`. GIF has no "play once" — every viewer loops a GIF regardless of
+/// its own loop count — so this always encodes `Repeat::Infinite`, even for
+/// an anim without `loop` in `__gfx_meta__` (that flag governs in-engine
+/// playback only; there is nothing in the GIF container that could honor
+/// it). Color 0 is baked into each frame as the same checkerboard the PNG
+/// views use — there is no GIF transparency involved, so `--grid`'s
+/// alpha-blended lines and any background tone survive the encode exactly
+/// as rendered.
+pub fn gif(cart: &Cart, anim: &str, opts: &GifOpts) -> Result<GifOutput, String> {
+    let zoom = check_zoom(opts.zoom)?;
+    let (def, sprite, frames) = anim_frames(cart, anim)?;
+    let layout = align(&frames, sprite.anchor);
+    let width = layout.cell_w * zoom;
+    let height = layout.cell_h * zoom;
+    let width16 =
+        u16::try_from(width).map_err(|_| format!("gif: {width}px frame is too wide to encode"))?;
+    let height16 = u16::try_from(height)
+        .map_err(|_| format!("gif: {height}px frame is too tall to encode"))?;
+    let delay = gif_delay_from_fps(def.fps);
+    let cell = Rect { x: 0, y: 0, w: width, h: height };
+
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = gif::Encoder::new(&mut bytes, width16, height16, &[])
+            .map_err(|e| format!("gif: {e}"))?;
+        encoder.set_repeat(gif::Repeat::Infinite).map_err(|e| format!("gif: {e}"))?;
+
+        for (i, frame) in frames.iter().enumerate() {
+            let (ox, oy) = layout.offsets[i];
+            let mut canvas = Canvas::new(width, height, zoom);
+            draw_frame(&mut canvas, frame, (ox * zoom, oy * zoom), zoom);
+            if opts.grid {
+                draw_grid(&mut canvas, cell, zoom);
+            }
+            if opts.anchor {
+                draw_anchor(&mut canvas, cell, (layout.anchor.0 as i32, layout.anchor.1 as i32), zoom);
+            }
+            let mut rgba = canvas.into_rgba();
+            let mut gif_frame = gif::Frame::from_rgba_speed(width16, height16, &mut rgba, 10);
+            gif_frame.delay = delay;
+            encoder
+                .write_frame(&gif_frame)
+                .map_err(|e| format!("gif: writing frame {i}: {e}"))?;
+        }
+        // Consumes the encoder to write the trailer now, rather than relying
+        // on its Drop impl; the returned writer (our `&mut bytes` borrow) is
+        // of no further use once the borrow it represents ends here.
+        encoder.into_inner().map_err(|e| format!("gif: {e}"))?;
+    }
+    Ok(GifOutput { bytes, width, height, frames: frames.len() })
+}
+
+/// GIF frame delay is in units of 10ms. `fps` converts as `1000/fps`,
+/// rounded to the nearest 10ms step, with a floor of 2 (20ms) — GIF cannot
+/// express anything finer, and a delay of 0 or 1 is "as fast as possible" in
+/// most viewers rather than the intended frame rate.
+fn gif_delay_from_fps(fps: u8) -> u16 {
+    let hundredths = (1000.0 / f64::from(fps.max(1)) / 10.0).round();
+    (hundredths as u16).max(2)
+}
+
 /// `sprite lint` — pure numbers, no judgements: per-frame silhouette area,
 /// anchor-relative bbox and centroid, palette histogram; per consecutive
 /// (loop-aware) pair the changed-pixel count and the area/centroid/bbox
@@ -644,6 +746,22 @@ fn run_view(args: &[String]) -> Result<(), String> {
         println!(
             "{}",
             serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+
+    if cmd == "gif" {
+        let anim = one_positional(rest, cmd, "<anim>")?;
+        let out = flags
+            .out
+            .as_deref()
+            .ok_or_else(|| format!("sprite {cmd} requires -o <out.gif>"))?;
+        let opts = GifOpts { zoom: flags.zoom, grid: flags.grid, anchor: flags.anchor };
+        let result = gif(&cart, anim, &opts)?;
+        std::fs::write(out, &result.bytes).map_err(|e| format!("cannot write {out:?}: {e}"))?;
+        println!(
+            "wrote {out} ({}x{}, {} frame(s), zoom {})",
+            result.width, result.height, result.frames, flags.zoom
         );
         return Ok(());
     }
@@ -964,6 +1082,13 @@ impl Canvas {
                 self.blend(x, y, rgb, alpha);
             }
         }
+    }
+
+    /// Consume the canvas for its raw RGBA buffer, discarding the dimensions
+    /// (the caller already has them) — used by [`gif`], which needs a `&mut
+    /// [u8]` to hand `gif::Frame::from_rgba_speed` rather than an encoded PNG.
+    fn into_rgba(self) -> Vec<u8> {
+        self.rgba
     }
 
     fn finish(self, frames: usize) -> Image {

@@ -133,6 +133,7 @@ console-agent sprite onion  game.cart <anim> --frame N [--grid] [--anchor] -o ou
 console-agent sprite onion  game.cart <anim> --all [--grid] [--anchor] -o out.png      # contact sheet, every frame
 console-agent sprite diff   game.cart <anim> A B -o out.png                 # magenta = changed pixels
 console-agent sprite ghost  game.cart <anim> [--grid] [--anchor] -o out.png # motion accumulation
+console-agent sprite gif    game.cart <anim> [--zoom 8] [--grid] [--anchor] -o out.gif  # animated preview at declared fps
 console-agent sprite lint   game.cart [anim ...]                            # JSON quality numbers
 console-agent sprite edit   game.cart copy|shift|flip|rotate|clear ... [--dry-run]
 console-agent sprite dump   game.cart <sprite|anim|tx,ty,w,h> [--frame N]    # print pixels as hex rows
