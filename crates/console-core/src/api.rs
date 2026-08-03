@@ -646,8 +646,8 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
 
     // `rshift([y], [dx=0])`: per-scanline horizontal shift of the FINISHED
     // frame, applied after `mosaic`. Positive dx moves the line right and the
-    // line WRAPS (dx is reduced mod SCREEN_W, so -1 == 143). Write-only and
-    // deliberately allocation-free: carts sweep it with 256 calls a frame.
+    // line WRAPS (dx is reduced mod SCREEN_W, so -1 == 191). Write-only and
+    // deliberately allocation-free: carts sweep it with 320 calls a frame.
     // No arguments clears every line; `rshift(y)` clears just line y.
     let st = state.clone();
     g.set(

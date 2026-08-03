@@ -21,7 +21,7 @@ format; this skill is the working knowledge.
 
 ## Console facts
 
-144×256 portrait, fixed 64-color Apollo64 palette (indices 0–63), 60fps
+192×320 portrait, fixed 64-color Apollo64 palette (indices 0–63), 60fps
 fixed timestep, 7 buttons (d-pad, A, B, menu), 6 audio channels, Lua 5.4 in
 a sandbox. `_update()` then `_draw()` every frame.
 
@@ -47,7 +47,7 @@ audio_stats spectrogram{path} wav{path}` plus the `sprite_*`, `map_*`
 below.
 
 Iterate in small steps: change one thing → step → screenshot/eval →
-verify. `screen_text` returns the framebuffer as 256 rows of 144 palette
+verify. `screen_text` returns the framebuffer as 320 rows of 192 palette
 characters (`0-9a-zA-Z-_` maps to 0–63) —
 cheap for asserting "pixel (x,y) is color c" without vision. Save states
 are replays (`seed` + input log), so they reproduce everything, audio
@@ -143,9 +143,9 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
     frame becomes its top-left pixel (f 1-32, `mosaic()` = off). Unlike the
     display palette this really rewrites the framebuffer, so `screen_text` and
     screenshots show it.
-  - `rshift(y,dx)` — end-of-frame per-scanline shift: line `y` (0-255) slides
-    `dx` pixels, positive = RIGHT, WRAPPING around the 144-wide line (`dx` is
-    taken mod 144, so -1 == 143 and any value is legal). Write-only:
+  - `rshift(y,dx)` — end-of-frame per-scanline shift: line `y` (0-319) slides
+    `dx` pixels, positive = RIGHT, WRAPPING around the 192-wide line (`dx` is
+    taken mod 192, so -1 == 191 and any value is legal). Write-only:
     `rshift()` clears every line, `rshift(y)` clears one. Applied AFTER
     `mosaic`, and in the framebuffer like it.
 - Input: `btn(i)` held / `btnp(i)` pressed-this-frame. 0=L 1=R 2=U 3=D
@@ -171,14 +171,14 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
 
   ```lua
   -- water / heat haze: a sine wave rolling down the screen
-  for y = 0, 255 do rshift(y, 3 * sin(t() + y / 32)) end
-  -- (sin takes TURNS here, so y/32 is 8 full waves down the 256 lines)
+  for y = 0, 319 do rshift(y, 3 * sin(t() + y / 40)) end
+  -- (sin takes TURNS here, so y/40 is 8 full waves down the 320 lines)
 
   -- horizontal parallax: each band scrolls at its own speed
-  for y = 0, 255 do rshift(y, -t() * (10 + y / 8)) end
+  for y = 0, 319 do rshift(y, -t() * (10 + y / 8)) end
 
   -- reflection: only the bottom half wobbles
-  rshift() for y = 160, 255 do rshift(y, 2 * sin(t() * 2 + y / 16)) end
+  rshift() for y = 200, 319 do rshift(y, 2 * sin(t() * 2 + y / 16)) end
   ```
 
   Clear it with `rshift()` before rebuilding the sweep if you only shift part
@@ -359,15 +359,15 @@ is pinned at tile `(7,2)` regardless.
 The map remains hex text (**2 chars per cell**), unlike the sprite sheet's
 64-character palette alphabet. The
 number you write is a sprite index — `01` is sprite 1, `1f` is sprite 31. Count
-in pairs, not characters: the screen is 18 cells wide (144/8) and 32 tall, so a
-screenful is 36 characters per line. Rows can be short (they pad with tile 0)
+in pairs, not characters: the screen is 24 cells wide (192/8) and 40 tall, so a
+screenful is 48 characters per line. Rows can be short (they pad with tile 0)
 and you can leave rows off entirely, so a ground plane is a few lines, not 64.
 
 ```
 __map__
-# 18 cells = one screen wide
-000000000000000000000000000000000000
-010101010101010101010101010101010101
+# 24 cells = one screen wide
+000000000000000000000000000000000000000000000000
+010101010101010101010101010101010101010101010101
 ```
 
 Tile `00` is the empty cell — `map()` skips it, so it costs nothing and shows

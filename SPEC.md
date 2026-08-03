@@ -22,9 +22,9 @@ Cargo workspace:
 
 ## Display
 
-- **144×256 logical pixels** (9:16 portrait), fixed. Letterbox/integer-scale to fit.
+- **192×320 logical pixels** (3:5 portrait), fixed. Letterbox/integer-scale to fit.
 - **60 fps fixed timestep.** Each frame: `_update()` then `_draw()`.
-- Framebuffer: 144*256 bytes, one palette index (0–63) per pixel, row-major.
+- Framebuffer: 192*320 bytes, one palette index (0–63) per pixel, row-major.
 
 ## Palette (fixed 64 colors — Apollo64)
 
@@ -100,7 +100,7 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `palt([c], [flag])` | mark color c transparent in `spr()`; no args resets to "only color 0" |
 | `fillp([p=0], [secondary])` | 4×4 dither pattern for the **shape** primitives; 16-bit, bit 15 = top-left, row-major. Clear bits draw the shape color; set bits draw `secondary`, or punch transparent holes when it is omitted. No args (or 0) = solid |
 | `mosaic([f=1])` | end-of-frame pixelation: every f×f block of the finished frame becomes its top-left pixel. f clamped to 1–32; 1 (or no args) = off |
-| `rshift([y], [dx=0])` | end-of-frame per-scanline horizontal shift: scanline y (0–255) is displaced dx pixels, positive = right, **wrapping** around the 144-wide line. dx is reduced mod 144 (so −1 = 143); y off screen is a no-op. Write-only: `rshift()` clears every line, `rshift(y)` clears line y |
+| `rshift([y], [dx=0])` | end-of-frame per-scanline horizontal shift: scanline y (0–319) is displaced dx pixels, positive = right, **wrapping** around the 192-wide line. dx is reduced mod 192 (so −1 = 191); y off screen is a no-op. Write-only: `rshift()` clears every line, `rshift(y)` clears line y |
 | `btn(i)` / `btnp(i)` | button held / just-pressed this frame |
 | `rnd([n=1])` | deterministic float in [0, n) — PCG32 or xoshiro seeded PRNG in Rust |
 | `srand(seed)` | reseed PRNG (reset seeds it to 0 unless overridden) |
@@ -161,7 +161,7 @@ carts that ignore all of this render exactly as before.
     `spr`, `sspr`, `map` and `print` all ignore the pattern entirely.
 - **mosaic(f)** and **rshift(y, dx)** — see [Frame pipeline](#frame-pipeline)
   below. They are draw state in that they persist and live beside the rest, but
-  they are applied once per frame rather than per drawing op. The 256-entry
+  they are applied once per frame rather than per drawing op. The 320-entry
   shift table is console state like the tile map: it survives across frames and
   a replay of the same inputs reproduces it exactly.
 
@@ -241,7 +241,7 @@ palette:
   replaced by its **top-left** pixel (top-left, not an average: the framebuffer
   holds palette indices, and averaging indices is meaningless). Blocks are
   anchored at screen (0, 0) and ignore the camera and the clip rect; a factor
-  that does not divide 144 or 256 leaves a narrower block at the right/bottom
+  that does not divide 192 or 320 leaves a narrower block at the right/bottom
   edge. `f` is clamped to 1–32, and `mosaic()`/`mosaic(1)` turns it off.
   Because it is a framebuffer effect it **is** in `screen_text`, in PNG
   screenshots and in framebuffer goldens — that is the point: two lines of Lua
@@ -252,21 +252,21 @@ palette:
   pixels, so a mosaicked screen does not compound frame after frame.
 - **rshift(y, dx)** displaces one scanline of the finished frame horizontally —
   the HDMA raster trick, and the cheapest parallax/water/heat-haze/wobble on
-  the machine. Scanline `y` (0–255) moves `dx` pixels; **positive `dx` moves
+  the machine. Scanline `y` (0–319) moves `dx` pixels; **positive `dx` moves
   content right**, and the line **wraps**: the pixel at column `x` lands at
-  `(x + dx) mod 144`, so whatever leaves one edge arrives at the other. Wrap,
+  `(x + dx) mod 192`, so whatever leaves one edge arrives at the other. Wrap,
   not clip — that is what makes a sine sweep seamless instead of torn.
-  - **Exact `dx` rule**: `dx` is reduced with a Euclidean remainder mod 144 and
-    stored as `dx mod 144` in 0–143. Every argument is therefore legal and
-    `dx`, `dx ± 144`, `dx ± 288`… are the same shift; `-1` is stored as 143 (a
-    one-pixel left shift *is* a 143-pixel right shift on a wrapping line), and
-    `rshift(y, 144)` stores 0, i.e. the identity. Fractional `dx` is floored
-    like every other coordinate. `y` outside 0–255 is a no-op, like a `pset`
+  - **Exact `dx` rule**: `dx` is reduced with a Euclidean remainder mod 192 and
+    stored as `dx mod 192` in 0–191. Every argument is therefore legal and
+    `dx`, `dx ± 192`, `dx ± 384`… are the same shift; `-1` is stored as 191 (a
+    one-pixel left shift *is* a 191-pixel right shift on a wrapping line), and
+    `rshift(y, 192)` stores 0, i.e. the identity. Fractional `dx` is floored
+    like every other coordinate. `y` outside 0–319 is a no-op, like a `pset`
     off the screen.
   - **Write-only API.** `rshift()` with no arguments clears the whole table to
     0; `rshift(y)` is `rshift(y, 0)` and clears one line. There is no getter —
     carts recompute the sweep each frame
-    (`for y=0,255 do rshift(y, 3*sin(t()+y/32)) end`), and that loop of 256
+    (`for y=0,319 do rshift(y, 3*sin(t()+y/40)) end`), and that loop of 320
     calls allocates nothing and touches no tables.
   - Like mosaic it is a **framebuffer** effect, so it is in `screen_text`, in
     PNG screenshots and in framebuffer goldens; it is computed from the
@@ -373,7 +373,7 @@ one response per line on stdout. Methods:
 - `step {frames=1, input=""}` — advance; input as letter string or int mask
 - `screenshot {path, zoom=1}` — write PNG (RGBA), nearest-neighbor
   integer-upscaled by `zoom`
-- `screen_text {}` — framebuffer as 256 lines of 144 palette characters, using
+- `screen_text {}` — framebuffer as 320 lines of 192 palette characters, using
   the same 64-character alphabet as `__sprites__`
 - `eval {code}` — run Lua, return result serialized to JSON (tables best-effort, depth-limited)
 - `get_global {name}` — shorthand for eval returning that global
@@ -479,7 +479,9 @@ CLI/schema/setup input. JSON output is an object envelope with `scenario`,
   packed HTML, screenshot, diagnostic snapshots, and browser logs under
   `out/browser-check/` (overridable with `CONSOLE_BROWSER_ARTIFACTS`).
 - C ABI (console-web): `con_init(cart_ptr, cart_len) -> i32` (0 ok),
-  `con_step(input_mask)`, `con_fb() -> *const u8` (144*256 palette indices),
+  `con_step(input_mask)`, `con_width() -> usize` (192),
+  `con_height() -> usize` (320),
+  `con_fb() -> *const u8` (`con_width()`×`con_height()` palette indices),
   `con_color_count() -> usize` (64),
   `con_palette() -> *const u8` (`con_color_count()`×3 RGB),
   `con_dpal() -> *const u8` (`con_color_count()` bytes: the display palette, index → index;

@@ -16,6 +16,7 @@ local bursts = 0        -- how many times A has been pressed
 
 local PW = 8            -- player sprite size
 local SPEED = 2
+local SW, SH = 192, 320 -- display geometry
 
 -- ANIMATIONS ---------------------------------------------------------------
 -- Every frame list, fps and loop flag lives in __gfx_meta__; aspr() plays it
@@ -43,7 +44,7 @@ local function walk_frame(f)
 end
 
 function _init()
-  px, py = 68, 176
+  px, py = 92, 232
   face_left = false
   burst_col = 10
   show_help = true
@@ -51,10 +52,10 @@ function _init()
   -- first drawn frame is already one frame into the cycle.
   walking = false
   walk_t0, idle_t0 = -1, -1
-  for i = 1, 28 do
+  for i = 1, 42 do
     stars[i] = {
-      x = flr(rnd(144)),
-      y = flr(rnd(196)),
+      x = flr(rnd(SW)),
+      y = flr(rnd(246)),
       c = 5 + flr(rnd(3)) * 4,   -- 5, 9 or 13
       p = flr(rnd(60)),          -- twinkle phase
     }
@@ -89,8 +90,8 @@ function _update()
   if btn(3) then dy = dy + SPEED end
   if dx < 0 then face_left = true elseif dx > 0 then face_left = false end
 
-  px = mid(0, px + dx, 144 - PW)
-  py = mid(0, py + dy, 256 - PW)
+  px = mid(0, px + dx, SW - PW)
+  py = mid(0, py + dy, SH - PW)
 
   -- Walk vs idle. Each cycle gets its own origin, captured the frame the
   -- state changes, so neither one teleports to whatever phase the global
@@ -111,7 +112,7 @@ function _update()
   end
 
   if btnp(5) then
-    px, py = 68, 176
+    px, py = 92, 232
     parts = {}
     -- Restart the walk cycle here: t0 = this frame means aspr shows frame 0.
     walking, walk_t0 = true, f
@@ -130,7 +131,7 @@ function _update()
     p.y = p.y + p.dy
     p.dy = p.dy + 0.05
     p.life = p.life - 1
-    if p.life <= 0 or p.y > 256 then
+    if p.life <= 0 or p.y > SH then
       table.remove(parts, i)
     end
   end
@@ -139,14 +140,27 @@ end
 function _draw()
   cls(0)
 
-  -- sky
-  rectfill(0, 0, 143, 63, 15)
-  rectfill(0, 64, 143, 127, 8)
+  -- four-band dusk, plus distant skyline and layered hills. The extra canvas
+  -- is real composition space rather than a stretched version of the old one.
+  rectfill(0, 0, SW - 1, 63, 15)
+  rectfill(0, 64, SW - 1, 127, 8)
+  rectfill(0, 128, SW - 1, 191, 7)
+  rectfill(0, 192, SW - 1, 249, 6)
+
+  for x = 0, SW - 1, 16 do
+    local peak = 176 + flr(sin(x / 128 + 0.13) * 11)
+    line(x, 207, x + 8, peak, 2)
+    line(x + 8, peak, x + 16, 207, 2)
+  end
+  for x = 0, SW - 1, 8 do
+    local ridge = 218 + flr(sin(x / 96 + 0.41) * 7)
+    rectfill(x, ridge, x + 8, 249, 1)
+  end
 
   -- moon
-  circfill(110, 30, 13, 4)
-  circfill(104, 25, 11, 8)
-  circ(110, 30, 13, 12)
+  circfill(154, 38, 17, 4)
+  circfill(146, 31, 14, 8)
+  circ(154, 38, 17, 12)
 
   -- starfield (twinkles on a frame counter, not a clock)
   local f = flr(t() * 60)
@@ -163,27 +177,29 @@ function _draw()
   local mph = (f % 1800) / 1800
   local mx, mflip
   if mph < 0.5 then
-    mx, mflip = -20 + mph * 2 * 184, false
+    mx, mflip = -20 + mph * 2 * (SW + 40), false
   else
-    mx, mflip = 164 - (mph - 0.5) * 2 * 184, true
+    mx, mflip = SW + 20 - (mph - 0.5) * 2 * (SW + 40), true
   end
-  local my = 76 + sin(t() * 0.11) * 16   -- clear of the moon and the star
+  local my = 96 + sin(t() * 0.11) * 19   -- clear of the moon and the star
   -- No t0: the flap is ambient, so it phase-locks to the global frame count.
   -- (x, y) is the thorax anchor, so the 2x2 megatile centres itself.
   aspr("moth.flap", flr(mx), flr(my), 0, mflip, false)
 
   -- collectible star sprite, bobbing + spinning; anchored at its centre
-  aspr("star.twinkle", 24, 44 + flr(sin(t() * 0.5) * 4))
-  aspr("gem.sparkle", 122, 154 + flr(cos(t() * 0.35) * 5))
+  aspr("star.twinkle", 28, 54 + flr(sin(t() * 0.5) * 4))
+  aspr("gem.sparkle", 166, 170 + flr(cos(t() * 0.35) * 5))
 
   -- ground
-  rectfill(0, 200, 143, 255, 7)
-  for x = 0, 143, 4 do
-    local h = 200 + flr(sin(x / 96 + t() * 0.25) * 3)
-    line(x, h, x, 200, 6)
+  rectfill(0, 250, SW - 1, SH - 1, 7)
+  for x = 0, SW - 1, 4 do
+    local h = 250 + flr(sin(x / 96 + t() * 0.25) * 3)
+    line(x, h, x, 250, 6)
+    if x % 16 == 0 then pset(x + 2, h + 5, 10) end
   end
   if show_help then
-    rectfill(4, 232, 139, 251, 15)
+    rectfill(4, 292, SW - 5, 315, 15)
+    rect(5, 293, SW - 6, 314, 6)
   end
 
   -- particles
@@ -215,8 +231,8 @@ function _draw()
   print("T=" .. flr(t() * 10) / 10, 4, 12, 11)
   print("BURSTS=" .. bursts, 4, 20, 11)
   if show_help then
-    print("ARROWS MOVE  A BURST  B RESET", 6, 238, 13)
-    print("PARTS=" .. #parts, 6, 245, 14)
+    print("ARROWS MOVE  A BURST  B RESET", 8, 298, 13)
+    print("X HELP   PARTICLES=" .. #parts, 8, 307, 14)
   end
 end
 

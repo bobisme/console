@@ -6,7 +6,7 @@
 //!     picks, drawn from the sprite's declared anchor,
 //!   * an unknown anim name halts the cart instead of drawing nothing.
 
-use console_core::{Cart, Console, Error, GfxMeta};
+use console_core::{Cart, Console, Error, GfxMeta, SCREEN_W};
 
 /// A 128x128 sheet where every pixel's colour depends on both its tile and its
 /// position inside that tile, so a wrong frame, a wrong anchor offset or a
@@ -240,7 +240,7 @@ fn two_origins_in_one_frame_show_different_frames() {
     let block = |x0: usize| -> Vec<u8> {
         (33..41)
             .flat_map(|y| (x0..x0 + 8).map(move |x| (x, y)))
-            .map(|(x, y)| fb[y * 144 + x])
+            .map(|(x, y)| fb[y * SCREEN_W + x])
             .collect()
     };
     assert_ne!(block(16), block(56));

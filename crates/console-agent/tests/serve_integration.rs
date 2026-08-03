@@ -106,7 +106,7 @@ fn oneshot_run_with_input_spec_and_screenshot() {
 
     let data = std::fs::read(&out_path).expect("screenshot file was written");
     assert_eq!(&data[1..4], b"PNG", "output file should be a PNG");
-    assert_eq!(png_dimensions(&data), (144, 256), "1:1 scale by default");
+    assert_eq!(png_dimensions(&data), (192, 320), "1:1 scale by default");
     let _ = std::fs::remove_dir_all(out_root);
 }
 
@@ -139,8 +139,8 @@ fn oneshot_run_screenshot_zoom_scales_png_dimensions() {
     assert_eq!(&data[1..4], b"PNG", "output file should be a PNG");
     assert_eq!(
         png_dimensions(&data),
-        (576, 1024),
-        "144x256 nearest-neighbor scaled 4x"
+        (768, 1280),
+        "192x320 nearest-neighbor scaled 4x"
     );
     let _ = std::fs::remove_file(&out_path);
 }
@@ -185,11 +185,11 @@ fn serve_screenshot_zoom_param_scales_output() {
         "screenshot failed: {:?}",
         responses[1]
     );
-    assert_eq!(responses[1]["result"]["width"], 576);
-    assert_eq!(responses[1]["result"]["height"], 1024);
+    assert_eq!(responses[1]["result"]["width"], 768);
+    assert_eq!(responses[1]["result"]["height"], 1280);
 
     let data = std::fs::read(&out_path).expect("screenshot file was written");
-    assert_eq!(png_dimensions(&data), (576, 1024));
+    assert_eq!(png_dimensions(&data), (768, 1280));
     let _ = std::fs::remove_file(&out_path);
 }
 

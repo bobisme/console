@@ -94,7 +94,7 @@ fn fnv1a32(bytes: &[u8]) -> u32 {
 }
 
 /// The **native twin** of `web/smoke.cjs`'s `FB_GOLDEN`: demo cart, seed 0,
-/// 120 frames of input mask 0, FNV-1a-32 over the 144x256 palette indices.
+/// 120 frames of input mask 0, FNV-1a-32 over the 192x320 palette indices.
 ///
 /// smoke.cjs asserts the wasm build reproduces this exact number, but until
 /// now nothing pinned it on the native side, so a change to the demo cart
@@ -108,7 +108,7 @@ fn fnv1a32(bytes: &[u8]) -> u32 {
 ///   2. update `DEMO_FB_GOLDEN` here and `FB_GOLDEN` in `web/smoke.cjs`;
 ///   3. rebuild `web/engine.js` and run `node web/smoke.cjs` to re-prove the
 ///      wasm build still agrees.
-const DEMO_FB_GOLDEN: u32 = 0x5e74_3aea;
+const DEMO_FB_GOLDEN: u32 = 0xc1d9_b31d;
 
 #[test]
 fn demo_cart_framebuffer_matches_the_web_smoke_golden() {
@@ -175,7 +175,7 @@ __lua__
 vals = {}
 function _update()
   vals[#vals+1] = rnd(1)
-  pset(flr(rnd(144)), flr(rnd(256)), 1 + flr(rnd(15)))
+  pset(flr(rnd(192)), flr(rnd(320)), 1 + flr(rnd(15)))
 end
 function _draw() end
 ";

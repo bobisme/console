@@ -85,8 +85,8 @@ fn lantern_scenario_runs_in_order_and_captures_every_artifact() {
             .starts_with(b"RIFF")
     );
     let screen = fs::read_to_string(first.join("lower-tower.txt")).unwrap();
-    assert_eq!(screen.lines().count(), 256);
-    assert!(screen.lines().all(|line| line.len() == 144));
+    assert_eq!(screen.lines().count(), 320);
+    assert!(screen.lines().all(|line| line.len() == 192));
 }
 
 #[test]

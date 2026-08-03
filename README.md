@@ -32,7 +32,7 @@ orientation, not the spec.
 
 | | |
 |---|---|
-| Display | 144×256 logical pixels (9:16 portrait), 60 fps fixed timestep |
+| Display | 192×320 logical pixels (3:5 portrait), 60 fps fixed timestep |
 | Palette | fixed 64-color Apollo64 palette, one byte-sized index per pixel |
 | Input | 7 buttons: d-pad, A, B, menu |
 | Audio | 6 channels, waveforms: pulse 12.5%/25%, square, triangle, saw, noise, plus 8 cart-defined 32×4-bit wavetables |

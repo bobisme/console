@@ -200,7 +200,7 @@
 </head>
 <body>
 <div id="device">
-  <div id="screenframe"><canvas id="screen" width="144" height="256"></canvas></div>
+  <div id="screenframe"><canvas id="screen" width="192" height="320"></canvas></div>
   <div id="deck">
     <div id="dpad"></div>
     <div id="menuwrap">
@@ -309,7 +309,7 @@ window.__console = Object.freeze({
 });
 
 (async function () {
-  var W = 144, H = 256, FPS = 60;
+  var W = 192, H = 320, FPS = 60;
   var BTN = { L: 1, R: 2, U: 4, D: 8, A: 16, B: 32, M: 64 };
 
   var canvas = document.getElementById("screen");
@@ -511,6 +511,17 @@ window.__console = Object.freeze({
   var con_alloc = Module.cwrap("con_alloc", "number", ["number"]);
   var con_init = Module.cwrap("con_init", "number", ["number", "number"]);
   var con_step = Module.cwrap("con_step", null, ["number"]);
+  if (typeof Module["_con_width"] !== "function" ||
+      typeof Module["_con_height"] !== "function") {
+    return fatal("Engine geometry API missing; rebuild web/engine.js");
+  }
+  var con_width = Module.cwrap("con_width", "number", []);
+  var con_height = Module.cwrap("con_height", "number", []);
+  var engineW = con_width(), engineH = con_height();
+  if (engineW !== W || engineH !== H) {
+    return fatal("Engine/template geometry mismatch: engine " + engineW + "x" + engineH +
+      ", template " + W + "x" + H + "; rebuild web/engine.js");
+  }
   var con_fb = Module.cwrap("con_fb", "number", []);
   var con_color_count = Module.cwrap("con_color_count", "number", []);
   var con_palette = Module.cwrap("con_palette", "number", []);
@@ -771,7 +782,7 @@ window.__console = Object.freeze({
   var rgba = imageData.data;
 
   // RGBA lookup, rebuilt per frame from the display palette so fades do not
-  // add a palette lookup to every one of the 36864 framebuffer pixels.
+  // add a palette lookup to every one of the 61440 framebuffer pixels.
   var lut = new Uint8Array(COLOR_COUNT * 4);
   function identityLut() {
     for (var k = 0; k < COLOR_COUNT; k++) {

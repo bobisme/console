@@ -74,7 +74,7 @@ fn defaults_change_nothing() {
 #[test]
 fn explicit_defaults_are_identical_to_untouched_state() {
     let scene = "cls(1) rectfill(10, 10, 30, 30, 7) circfill(70, 70, 12, 4)
-                 print(\"HI\", 4, 4, 11) line(0, 0, 143, 255, 3)";
+                 print(\"HI\", 4, 4, 11) line(0, 0, 191, 319, 3)";
     let plain = draw_once(scene);
     let reset = draw_once(&format!("camera() clip() pal() palt()\n{scene}"));
     assert_eq!(plain.framebuffer(), reset.framebuffer());
@@ -157,7 +157,7 @@ fn camera_with_no_args_resets_and_cls_and_pget_ignore_it() {
 
 #[test]
 fn clip_bounds_every_primitive() {
-    let con = draw_once("clip(10, 10, 5, 5) rectfill(0, 0, 143, 255, 7)");
+    let con = draw_once("clip(10, 10, 5, 5) rectfill(0, 0, 191, 319, 7)");
     assert_eq!(count(&con, 7), 25);
     assert_eq!(px(&con, 10, 10), 7);
     assert_eq!(px(&con, 14, 14), 7);
@@ -167,7 +167,7 @@ fn clip_bounds_every_primitive() {
     let con = draw_once("clip(10, 10, 5, 5) circfill(12, 12, 40, 4)");
     assert_eq!(count(&con, 4), 25);
 
-    let con = draw_once("clip(10, 10, 5, 5) line(0, 0, 143, 255, 3)");
+    let con = draw_once("clip(10, 10, 5, 5) line(0, 0, 191, 319, 3)");
     for (i, &p) in con.framebuffer().iter().enumerate() {
         if p == 3 {
             let (x, y) = (i % SCREEN_W, i / SCREEN_W);
@@ -208,20 +208,20 @@ fn clip_clamps_negative_and_overflowing_rects() {
     assert_eq!(px(&con, 10, 10), 0);
 
     // Straddling the bottom-right corner.
-    let con = draw_once("clip(140, 250, 1000, 1000) cls(5)");
+    let con = draw_once("clip(188, 314, 1000, 1000) cls(5)");
     assert_eq!(count(&con, 5), 4 * 6);
-    assert_eq!(px(&con, 143, 255), 5);
+    assert_eq!(px(&con, 191, 319), 5);
 
     // Entirely off screen, and zero/negative sizes: nothing draws, no panic.
     for spec in [
-        "clip(200, 300, 10, 10)",
+        "clip(300, 400, 10, 10)",
         "clip(0, 0, 0, 10)",
         "clip(0, 0, 10, 0)",
         "clip(5, 5, -8, -8)",
         "clip(-100, -100, 50, 50)",
     ] {
         let con = draw_once(&format!(
-            "{spec} cls(7) rectfill(0, 0, 143, 255, 7) spr(0, 0, 0)"
+            "{spec} cls(7) rectfill(0, 0, 191, 319, 7) spr(0, 0, 0)"
         ));
         assert_eq!(count(&con, 7), 0, "{spec} should clip everything away");
     }

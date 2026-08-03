@@ -1,6 +1,6 @@
 //! Deterministic fantasy-console core.
 //!
-//! A [`Console`] owns a sandboxed Lua 5.4 VM, a 144x256 palette-indexed
+//! A [`Console`] owns a sandboxed Lua 5.4 VM, a 192x320 palette-indexed
 //! software framebuffer and a seeded PRNG. It has no windowing, audio,
 //! filesystem, threading or wall-clock dependency, so the same crate builds
 //! for native hosts and for `wasm32-unknown-emscripten`, and the same
@@ -227,7 +227,7 @@ impl Console {
     }
 
     /// The current frame's pixels: one palette index (0..=63) per pixel,
-    /// row-major, 144 wide by 256 tall.
+    /// row-major, 192 wide by 320 tall.
     pub fn framebuffer(&self) -> &Framebuffer {
         &self.fb
     }
@@ -366,7 +366,7 @@ impl Console {
         self.fb.copy_from_slice(&s.fb[..]);
         self.dpal = *s.draw.display_palette();
         let mosaic = s.draw.mosaic();
-        // Copied out (256 bytes) only when a cart actually uses the effect, so
+        // Copied out (320 bytes) only when a cart actually uses the effect, so
         // the default path stays the plain framebuffer memcpy above.
         let rshift = s.draw.rshift_active().then(|| *s.draw.rshift_table());
         drop(s);

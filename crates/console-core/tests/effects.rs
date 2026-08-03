@@ -13,7 +13,7 @@
 //! * `mosaic` and `rshift` are **framebuffer** effects: they are in the goldens
 //!   and in `screen_text`, unlike the scanout-only display palette;
 //! * the end-of-frame order is `mosaic` then `rshift`, and `rshift` wraps each
-//!   scanline around the 144-pixel line rather than clipping it.
+//!   scanline around the 192-pixel line rather than clipping it.
 
 use console_core::{Console, FB_LEN, MAX_MOSAIC, SCREEN_H, SCREEN_W, color_char};
 
@@ -73,14 +73,14 @@ fn the_new_effects_are_off_by_default() {
 #[test]
 fn explicit_defaults_are_identical_to_untouched_state() {
     let scene = "cls(1) rectfill(10, 10, 30, 30, 7) circfill(70, 70, 12, 4)
-                 print(\"HI\", 4, 4, 11) line(0, 0, 143, 255, 3) spr(0, 20, 90)";
+                 print(\"HI\", 4, 4, 11) line(0, 0, 191, 319, 3) spr(0, 20, 90)";
     let plain = run(scene);
     let reset = run(&format!("fillp() mosaic() rshift()\n{scene}"));
     assert_eq!(plain.framebuffer(), reset.framebuffer());
     let reset = run(&format!("fillp(0) mosaic(1) rshift(0, 0)\n{scene}"));
     assert_eq!(plain.framebuffer(), reset.framebuffer());
     let reset = run(&format!(
-        "fillp(0) mosaic(1) for y = 0, 255 do rshift(y, 0) end\n{scene}"
+        "fillp(0) mosaic(1) for y = 0, 319 do rshift(y, 0) end\n{scene}"
     ));
     assert_eq!(plain.framebuffer(), reset.framebuffer());
 }
@@ -260,7 +260,7 @@ fn the_pattern_grid_is_anchored_to_the_screen_not_the_shape() {
 
 #[test]
 fn the_clip_rect_bounds_a_dithered_shape() {
-    let con = run("cls(9) clip(0, 0, 4, 4) fillp(0x5a5a) rectfill(0, 0, 143, 255, 7)");
+    let con = run("cls(9) clip(0, 0, 4, 4) fillp(0x5a5a) rectfill(0, 0, 191, 319, 7)");
     assert_eq!(count(&con, 7), 8, "half of a 4x4 window");
     assert_eq!(px(&con, 0, 0), 7);
     assert_eq!(px(&con, 4, 0), 9);
@@ -531,7 +531,7 @@ fn mosaic_replaces_each_block_with_its_top_left_pixel() {
 
 #[test]
 fn mosaic_blocks_are_anchored_to_the_screen_origin() {
-    let con = run("cls(9) rectfill(0, 0, 143, 255, 9) pset(8, 8, 3) pset(9, 12, 4) mosaic(8)");
+    let con = run("cls(9) rectfill(0, 0, 191, 319, 9) pset(8, 8, 3) pset(9, 12, 4) mosaic(8)");
     // (8, 8) is a block origin: its 8x8 block is all colour 3.
     assert_eq!(count(&con, 3), 64);
     assert_eq!(px(&con, 15, 15), 3);
@@ -542,14 +542,18 @@ fn mosaic_blocks_are_anchored_to_the_screen_origin() {
 
 #[test]
 fn a_factor_that_does_not_divide_the_screen_leaves_narrow_edge_blocks() {
-    // 144 = 28 * 5 + 4 and 256 = 51 * 5 + 1, so the right edge is 4 wide and
-    // the bottom edge one row tall.
-    let con = run("cls(9) pset(140, 0, 3) pset(0, 255, 4) mosaic(5)");
-    assert_eq!(count(&con, 3), 4 * 5, "the edge block is 4 wide, 5 tall");
-    assert_eq!(px(&con, 143, 4), 3);
-    assert_eq!(px(&con, 139, 0), 9);
-    assert_eq!(count(&con, 4), 5, "the bottom edge block is one row tall");
-    assert_eq!(px(&con, 4, 255), 4);
+    // 192 = 27 * 7 + 3 and 320 = 45 * 7 + 5, so both trailing edges are
+    // deliberately narrower than a full block.
+    let con = run("cls(9) pset(189, 0, 3) pset(0, 315, 4) mosaic(7)");
+    assert_eq!(count(&con, 3), 3 * 7, "the right edge block is 3 wide");
+    assert_eq!(px(&con, 191, 6), 3);
+    assert_eq!(px(&con, 188, 0), 9);
+    assert_eq!(
+        count(&con, 4),
+        7 * 5,
+        "the bottom edge block is 5 rows tall"
+    );
+    assert_eq!(px(&con, 6, 319), 4);
 }
 
 #[test]
@@ -580,7 +584,7 @@ fn mosaic_one_and_bare_mosaic_are_no_ops() {
 fn the_mosaic_factor_is_clamped() {
     let con = run("cls(9) mosaic(1000)");
     assert_eq!(con.draw_state().mosaic(), MAX_MOSAIC);
-    // Still a sane screen: 144x256 in 32-pixel blocks.
+    // Still a sane screen: 192x320 in 32-pixel blocks.
     let con = run("cls(9) pset(0, 0, 7) mosaic(1000)");
     assert_eq!(count(&con, 7), (MAX_MOSAIC as usize).pow(2));
 }
@@ -661,31 +665,31 @@ fn a_positive_shift_moves_the_line_right_pixel_by_pixel() {
 #[test]
 fn shifts_wrap_around_the_line_in_both_directions() {
     // Right off the edge and back in at x = 0.
-    let con = run("cls(9) pset(0, 5, 7) pset(143, 5, 3) rshift(5, 1)");
+    let con = run("cls(9) pset(0, 5, 7) pset(191, 5, 3) rshift(5, 1)");
     assert_eq!(px(&con, 1, 5), 7);
     assert_eq!(px(&con, 0, 5), 3, "the right edge wrapped to the left one");
 
     // Negative dx moves left, and the left edge wraps to the right one.
     let con = run("cls(9) pset(0, 5, 7) pset(1, 5, 3) rshift(5, -1)");
-    assert_eq!(px(&con, 143, 5), 7);
+    assert_eq!(px(&con, 191, 5), 7);
     assert_eq!(px(&con, 0, 5), 3);
 }
 
 #[test]
 fn a_shift_is_reduced_modulo_the_screen_width() {
-    // dx, dx + 144 and dx - 144 are the same shift, so a sweep never has to
-    // clamp: -142 == 2 == 146 == 1010.
+    // dx, dx + 192 and dx - 192 are the same shift, so a sweep never has to
+    // clamp: -190 == 2 == 194 == 1346.
     let two = run("cls(9) pset(0, 5, 7) pset(1, 5, 3) rshift(5, 2)");
-    for dx in ["146", "-142", "2 + 144 * 7", "2 - 144 * 7"] {
+    for dx in ["194", "-190", "2 + 192 * 7", "2 - 192 * 7"] {
         let con = run(&format!(
             "cls(9) pset(0, 5, 7) pset(1, 5, 3) rshift(5, {dx})"
         ));
         assert_eq!(two.framebuffer(), con.framebuffer(), "rshift(5, {dx})");
-        assert_eq!(con.draw_state().rshift(5), 2, "stored as dx mod 144");
+        assert_eq!(con.draw_state().rshift(5), 2, "stored as dx mod 192");
     }
     // A whole-screen-width shift is the identity, not a no-op call: it is
     // stored as 0 and the pass is skipped.
-    let con = run("cls(9) pset(0, 5, 7) rshift(5, 144)");
+    let con = run("cls(9) pset(0, 5, 7) rshift(5, 192)");
     assert_eq!(px(&con, 0, 5), 7);
     assert_eq!(con.draw_state().rshift(5), 0);
     assert!(!con.draw_state().rshift_active());
@@ -696,11 +700,11 @@ fn a_bare_rshift_clears_every_line_and_one_argument_clears_one() {
     let plain = run("cls(9) rectfill(0, 0, 40, 40, 7) circfill(70, 70, 12, 3)");
     let scene = "cls(9) rectfill(0, 0, 40, 40, 7) circfill(70, 70, 12, 3)";
 
-    let swept = run(&format!("for y = 0, 255 do rshift(y, y % 17) end {scene}"));
+    let swept = run(&format!("for y = 0, 319 do rshift(y, y % 17) end {scene}"));
     assert_ne!(plain.framebuffer(), swept.framebuffer(), "the sweep shows");
 
     let cleared = run(&format!(
-        "for y = 0, 255 do rshift(y, y % 17) end rshift() {scene}"
+        "for y = 0, 319 do rshift(y, y % 17) end rshift() {scene}"
     ));
     assert_eq!(plain.framebuffer(), cleared.framebuffer());
     assert!(!cleared.draw_state().rshift_active());
@@ -715,11 +719,11 @@ fn a_bare_rshift_clears_every_line_and_one_argument_clears_one() {
 #[test]
 fn a_scanline_off_the_screen_is_a_no_op() {
     let plain = run("cls(9) rectfill(0, 0, 40, 40, 7)");
-    let con = run("cls(9) rectfill(0, 0, 40, 40, 7) rshift(-1, 5) rshift(256, 5) rshift(9999, 5)");
+    let con = run("cls(9) rectfill(0, 0, 40, 40, 7) rshift(-1, 5) rshift(320, 5) rshift(9999, 5)");
     assert_eq!(plain.framebuffer(), con.framebuffer());
     assert!(!con.draw_state().rshift_active());
     assert_eq!(con.draw_state().rshift(-1), 0);
-    assert_eq!(con.draw_state().rshift(256), 0);
+    assert_eq!(con.draw_state().rshift(320), 0);
 }
 
 #[test]
@@ -793,29 +797,29 @@ fn rshift_composes_with_the_rest_of_the_draw_state() {
     assert_eq!(con.display_palette()[7], 2);
 
     // The clip rect bounds the drawing, not the raster pass: a shifted line
-    // wraps across the whole 144-pixel screen regardless of the clip.
-    let con = run("cls(9) clip(0, 0, 8, 8) cls(3) clip() rshift(0, 140)");
-    // The 8 clipped columns 0..7 land on 140..143 and wrap onto 0..3.
-    assert_eq!(px(&con, 140, 0), 3, "the clipped clear moved to the right");
-    assert_eq!(px(&con, 143, 0), 3);
+    // wraps across the whole 192-pixel screen regardless of the clip.
+    let con = run("cls(9) clip(0, 0, 8, 8) cls(3) clip() rshift(0, 188)");
+    // The 8 clipped columns 0..7 land on 188..191 and wrap onto 0..3.
+    assert_eq!(px(&con, 188, 0), 3, "the clipped clear moved to the right");
+    assert_eq!(px(&con, 191, 0), 3);
     assert_eq!(
         px(&con, 3, 0),
         3,
         "and the overflow wrapped back to the left"
     );
     assert_eq!(px(&con, 4, 0), 9);
-    assert_eq!(px(&con, 139, 0), 9);
+    assert_eq!(px(&con, 187, 0), 9);
     assert_eq!(count(&con, 3), 8 * 8, "nothing gained or lost");
 }
 
 #[test]
 fn a_full_sine_sweep_is_a_seamless_wrap() {
-    // The idiom carts use: 256 cheap calls a frame. Every pixel that leaves one
+    // The idiom carts use: 320 cheap calls a frame. Every pixel that leaves one
     // edge arrives at the other, so no colour is ever created or destroyed.
-    let con = run("cls(9) rectfill(0, 0, 60, 255, 7)
-         for y = 0, 255 do rshift(y, 4 * sin(y / 32)) end");
-    assert_eq!(count(&con, 7), 61 * 256, "wrap, not clip: nothing is lost");
-    assert_eq!(count(&con, 9), FB_LEN - 61 * 256);
+    let con = run("cls(9) rectfill(0, 0, 60, 319, 7)
+         for y = 0, 319 do rshift(y, 4 * sin(y / 32)) end");
+    assert_eq!(count(&con, 7), 61 * 320, "wrap, not clip: nothing is lost");
+    assert_eq!(count(&con, 9), FB_LEN - 61 * 320);
 }
 
 // ---------------------------------------------------------------------------
@@ -836,7 +840,7 @@ fn the_effects_replay_identically() {
           circfill(70, 70, 20 + f % 9, 3)
           sspr(0, 0, 8, 8, f % 20, 40, 8 + f % 24, 8 + f % 13, f % 2 == 0, f % 3 == 0)
           mosaic(1 + f % 6)
-          for y = 0, 255 do rshift(y, (f % 5) * sin(y / 32 + t())) end
+          for y = 0, 319 do rshift(y, (f % 5) * sin(y / 32 + t())) end
         end";
     let text = cart("").replace("function _draw()\n\nend", body);
 

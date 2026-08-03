@@ -7,9 +7,9 @@
 use crate::font;
 
 /// Logical screen width in pixels.
-pub const SCREEN_W: usize = 144;
+pub const SCREEN_W: usize = 192;
 /// Logical screen height in pixels.
-pub const SCREEN_H: usize = 256;
+pub const SCREEN_H: usize = 320;
 /// Framebuffer length in bytes (one palette index per pixel, row-major).
 pub const FB_LEN: usize = SCREEN_W * SCREEN_H;
 
@@ -451,11 +451,11 @@ impl DrawState {
     }
 
     /// `rshift(y, dx)`: displace scanline `y` by `dx` pixels at end of frame,
-    /// positive = right, **wrapping** around the 144-pixel line.
+    /// positive = right, **wrapping** around the 192-pixel line.
     ///
     /// `dx` is reduced modulo [`SCREEN_W`] with a Euclidean remainder, so every
-    /// argument is legal and `dx`, `dx + 144` and `dx - 144` are the same
-    /// shift: `-1` is stored as 143 (a one-pixel left shift *is* a 143-pixel
+    /// argument is legal and `dx`, `dx + 192` and `dx - 192` are the same
+    /// shift: `-1` is stored as 191 (a one-pixel left shift *is* a 191-pixel
     /// right shift on a wrapping line). `y` outside `0..SCREEN_H` is a no-op,
     /// exactly like a `pset` off the bottom of the screen.
     pub fn set_rshift(&mut self, y: i32, dx: i32) {
@@ -1041,7 +1041,7 @@ pub fn print(fb: &mut Framebuffer, ds: &DrawState, text: &str, x: i32, y: i32, c
 /// frame — it is a **framebuffer** effect, not a scanout one, so `screen_text`,
 /// PNG screenshots and framebuffer goldens all show the blocks. Blocks are
 /// anchored at screen (0, 0), ignore the camera and the clip rectangle, and a
-/// factor that does not divide 144 or 256 leaves a narrower block at the right
+/// factor that does not divide 192 or 320 leaves a narrower block at the right
 /// and bottom edges.
 ///
 /// Top-left, not average: the framebuffer holds palette indices, and averaging
@@ -1073,7 +1073,7 @@ pub fn apply_mosaic(fb: &mut Framebuffer, f: u8) {
 }
 
 /// Displace each scanline of the framebuffer horizontally, in place, wrapping
-/// around the 144-pixel line. `shifts[y]` is the rightward shift for row `y`,
+/// around the 192-pixel line. `shifts[y]` is the rightward shift for row `y`,
 /// already reduced to `0..SCREEN_W`; an all-zero table is a no-op.
 ///
 /// This is `rshift(y, dx)` — the HDMA-style raster trick — run once at the end
@@ -1190,14 +1190,14 @@ mod tests {
         let mut d = ds();
         d.set_clip(-10, -10, 20, 20);
         assert_eq!(d.clip(), (0, 0, 9, 9));
-        d.set_clip(140, 250, 1000, 1000);
-        assert_eq!(d.clip(), (140, 250, 143, 255));
+        d.set_clip(188, 314, 1000, 1000);
+        assert_eq!(d.clip(), (188, 314, 191, 319));
         d.set_clip(5, 5, 0, 10);
         assert!(d.clip_is_empty());
         d.set_clip(5, 5, -4, -4);
         assert!(d.clip_is_empty());
         // A rect entirely off-screen clamps to an empty region, not a wrap.
-        d.set_clip(200, 300, 10, 10);
+        d.set_clip(300, 400, 10, 10);
         assert!(d.clip_is_empty());
         d.reset_clip();
         assert!(d.clip_is_full());

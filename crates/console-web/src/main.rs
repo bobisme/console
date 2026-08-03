@@ -40,7 +40,9 @@ use std::cell::RefCell;
 use std::ffi::CString;
 use std::ptr;
 
-use console_core::{COLOR_COUNT, Console, FB_LEN, IDENTITY_PAL, SAMPLES_PER_FRAME};
+use console_core::{
+    COLOR_COUNT, Console, FB_LEN, IDENTITY_PAL, SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W,
+};
 
 /// A real `static` copy of the palette: `console_core::PALETTE` is a `const`,
 /// so calling `.as_ptr()` on it directly would hand out a pointer to a
@@ -171,7 +173,19 @@ pub extern "C" fn con_step(input_mask: u32) {
     });
 }
 
-/// Pointer to 144*256 palette indices, row-major. Never null.
+/// Logical framebuffer width in pixels.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_width() -> usize {
+    SCREEN_W
+}
+
+/// Logical framebuffer height in pixels.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_height() -> usize {
+    SCREEN_H
+}
+
+/// Pointer to `con_width() * con_height()` palette indices, row-major. Never null.
 ///
 /// The pointer is stable across calls; the contents are refreshed per call.
 /// Before a successful [`con_init`] the buffer reads as all zeros.

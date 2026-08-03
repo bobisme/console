@@ -21,7 +21,7 @@ bash -c 'source ~/emsdk/emsdk_env.sh && \
 -C link-arg=-sMODULARIZE=1 \
 -C link-arg=-sEXPORT_NAME=ConsoleEngine \
 -C link-arg=-sALLOW_MEMORY_GROWTH=1 \
--C link-arg=-sEXPORTED_FUNCTIONS=_main,_con_alloc,_con_free,_con_init,_con_step,_con_fb,_con_audio,_con_color_count,_con_palette,_con_dpal,_con_error \
+-C link-arg=-sEXPORTED_FUNCTIONS=_main,_con_alloc,_con_free,_con_init,_con_step,_con_fb,_con_width,_con_height,_con_audio,_con_color_count,_con_palette,_con_dpal,_con_error \
 -C link-arg=-sEXPORTED_RUNTIME_METHODS=cwrap,UTF8ToString,HEAPU8" \
   cargo build -p console-web --target wasm32-unknown-emscripten --release'
 ```
@@ -143,7 +143,7 @@ CONSOLE_BROWSER=/path/to/chromium just browser-check
 ```
 
 This packs Lantern Leap to a temporary HTML file and opens that exact file over
-`file://`. It requires a healthy boot and advancing 144x256 framebuffer, the
+`file://`. It requires a healthy boot and advancing 192x320 framebuffer, the
 64-color/display-palette invariants, changing raw framebuffer and rendered
 canvas pixels, trusted held pointer input, audio unlock with nonzero samples,
 pause/resume and RESET through the visible controls, and a network log limited

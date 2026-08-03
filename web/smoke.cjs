@@ -108,7 +108,7 @@ try {
 
 const { enginePath, cartPath } = options;
 
-const W = 144, H = 256, FB_LEN = W * H;
+const W = 192, H = 320, FB_LEN = W * H;
 const BTN_RIGHT = 2;
 const AUDIO_LEN = 735; // console_core::SAMPLES_PER_FRAME (44100 / 60)
 
@@ -120,11 +120,11 @@ const AUDIO_LEN = 735; // console_core::SAMPLES_PER_FRAME (44100 / 60)
 //   AUDIO_GOLDEN: hash of the little-endian f32::to_bits stream of all
 //     120 * 735 = 88200 samples. Same constant as DEMO_AUDIO_GOLDEN in
 //     crates/console-core/tests/audio.rs — keep the two in sync.
-//   FB_GOLDEN: FNV-1a-32 over the 144*256 palette indices at frame 120.
+//   FB_GOLDEN: FNV-1a-32 over the 192*320 palette indices at frame 120.
 //     Audio must never perturb video; if the synth ever leaks into game logic
 //     (RNG draws, frame counters) this is what catches it.
 const AUDIO_GOLDEN = 0xbc2bd5e1f8c7f31en;
-const FB_GOLDEN = 0x5e743aea;
+const FB_GOLDEN = 0xc1d9b31d;
 
 // The 64-bit multiplier used by console-core's test hasher (tests/audio.rs,
 // tests/determinism.rs). This is the canonical FNV-1a-64 prime; the golden
@@ -215,6 +215,13 @@ function hex64(v) {
   const con_free = Module.cwrap("con_free", null, ["number", "number"]);
   const con_init = Module.cwrap("con_init", "number", ["number", "number"]);
   const con_step = Module.cwrap("con_step", null, ["number"]);
+  for (const symbol of ["_con_width", "_con_height"]) {
+    if (typeof Module[symbol] !== "function") {
+      fatal(`${symbol} is exported`, `add ${symbol} to -sEXPORTED_FUNCTIONS`);
+    }
+  }
+  const con_width = Module.cwrap("con_width", "number", []);
+  const con_height = Module.cwrap("con_height", "number", []);
   const con_fb = Module.cwrap("con_fb", "number", []);
   const con_color_count = Module.cwrap("con_color_count", "number", []);
   const con_palette = Module.cwrap("con_palette", "number", []);
@@ -238,6 +245,11 @@ function hex64(v) {
   }
   const con_dpal = Module.cwrap("con_dpal", "number", []);
   check(true, "all con_* symbols cwrap'd");
+  check(
+    con_width() === W && con_height() === H,
+    `engine geometry reports ${W}x${H}`,
+    `got ${con_width()}x${con_height()}`,
+  );
 
   const currentError = () => {
     const p = con_error();

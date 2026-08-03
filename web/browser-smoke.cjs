@@ -235,9 +235,9 @@ try {
   const screen = snapshot("screenState");
   assert(screen.ready === true, "framebuffer diagnostic is ready");
   assert(
-    screen.logicalWidth === 144 && screen.logicalHeight === 256 &&
-      screen.backingWidth === 144 && screen.backingHeight === 256,
-    "logical and backing canvas dimensions are 144x256",
+    screen.logicalWidth === 192 && screen.logicalHeight === 320 &&
+      screen.backingWidth === 192 && screen.backingHeight === 320,
+    "logical and backing canvas dimensions are 192x320",
   );
   assert(screen.cssWidth > 0 && screen.cssHeight > 0, "canvas has a visible CSS size");
   assert(screen.colorCount === 64, "packed engine reports the 64-color palette");
@@ -255,8 +255,8 @@ try {
   );
   const canvas = canvasState();
   assert(
-    canvas.width === 144 && canvas.height === 256 && canvas.distinctColors >= 2,
-    "rendered canvas contains a non-uniform 144x256 image",
+    canvas.width === 192 && canvas.height === 320 && canvas.distinctColors >= 2,
+    "rendered canvas contains a non-uniform 192x320 image",
   );
   assert(
     /^0x[0-9a-f]{8}$/.test(canvas.hash) && canvas.hash !== canvasBefore.hash,

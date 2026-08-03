@@ -6,7 +6,7 @@ preview_palette=48,41,36,38,31,14,11,4,1,2,5,7,63,59,55,52
 
 __lua__
 -- LANTERN LEAP
--- A two-screen vertical platformer built as a console authoring stress test.
+-- A compact vertical platformer built as a console authoring stress test.
 -- Same seed + same input remains deterministic: no wall clock, pairs(), or math.random.
 
 local STONE, MOSS, CRUMBLE = 64, 65, 66
@@ -17,6 +17,10 @@ local STONE_CHIP, STONE_RUNE = 75, 76
 local MOSS_TUFT, MOSS_BLOOM, LAVA_BUBBLE = 77, 78, 79
 local PW, PH = 7, 15
 local GRAVITY, MAX_FALL = 0.24, 4.8
+local SW, SH, HUD_H = 192, 320, 12
+local TOWER_X, TOWER_W, WORLD_H = 24, 144, 512
+local MAX_CAM, FOLLOW_Y = WORLD_H - (SH-HUD_H), 144
+local CX = SW / 2
 
 -- The sprite sheet keeps a compact 0-f ink vocabulary, but each ink has a
 -- stable visual job. Keep this map semantic rather than spreading arbitrary
@@ -31,7 +35,7 @@ local INK_MAP = {
 game_scene = "title"
 player_x, player_y = 104, 480
 embers, gate_open, deaths = 0, false, 0
-game_camera = 256
+game_camera = MAX_CAM
 player_mode = "normal"
 
 local vx, vy = 0, 0
@@ -157,6 +161,7 @@ local function start_game()
   player_mode, paused = "normal", false
   dash_ready, grounded = true, false
   transition, flash, shake = 12, 0, 0
+  game_camera = MAX_CAM
   particles = {}
   -- Reset every authored mutation so RESET and deterministic replays agree.
   for i = 1, #ember_cells do
@@ -391,16 +396,16 @@ local function update_play()
     end
   end
 
-  local target = mid(0, player_y - 112, 256)
+  local target = mid(0, player_y - FOLLOW_Y, MAX_CAM)
   game_camera = game_camera + (target-game_camera) * 0.12
 end
 
 function _init()
   srand(424242)
-  for i = 1, 42 do
-    stars[i] = {x=flr(rnd(144)), y=flr(rnd(512)), phase=flr(rnd(80)), c=10+flr(rnd(4))}
+  for i = 1, 58 do
+    stars[i] = {x=flr(rnd(SW)), y=flr(rnd(WORLD_H)), phase=flr(rnd(80)), c=10+flr(rnd(4))}
   end
-  game_camera = 256
+  game_camera = MAX_CAM
   printh("lantern leap init; player anims=" .. anim_len("player.run"))
 end
 
@@ -421,7 +426,7 @@ function _update()
     if btnp(4) or btnp(5) then
       music(-1)
       echo(0)
-      game_scene, game_camera = "title", 256
+      game_scene, game_camera = "title", MAX_CAM
     end
   end
 end
@@ -442,7 +447,7 @@ local function draw_stars(cam)
   for i = 1, #stars do
     local s = stars[i]
     local sy = s.y - cam + 12
-    if sy >= 13 and sy < 255 and (frame_now+s.phase)%70 < 53 then
+    if sy >= HUD_H+1 and sy < SH-1 and (frame_now+s.phase)%70 < 53 then
       pset(s.x, sy, s.c)
       -- pget is screen-space: copy the real rendered palette index into a tiny glint.
       local sampled = pget(s.x, sy)
@@ -458,29 +463,29 @@ end
 
 local function draw_distant_ruins(cam)
   local drift = flr(cam/11)
-  for i = 0, 5 do
-    local x = (i*37-drift) % 196 - 25
+  for i = 0, 6 do
+    local x = (i*37-drift) % (SW+52) - 25
     local h = 20 + (i*13)%31
-    local base = 244 - (i%2)*9
+    local base = SH-12 - (i%2)*9
     rectfill(x, base-h, x+17, base, 50)
     rect(x+2, base-h+3, x+14, base, 52)
     circfill(x+8, base-h+8, 4, 49)
     rectfill(x+5, base-h+8, x+11, base, 49)
     if (frame_now/30+i)%4 < 2 then pset(x+4, base-h+6, 31) end
   end
-  for i = 0, 3 do
-    local x = (i*53+21-flr(cam/7)) % 202 - 29
-    line(x, 230, x+18, 196, 54)
-    line(x+18, 196, x+36, 230, 54)
+  for i = 0, 4 do
+    local x = (i*53+21-flr(cam/7)) % (SW+58) - 29
+    line(x, SH-26, x+18, SH-60, 54)
+    line(x+18, SH-60, x+36, SH-26, 54)
   end
 end
 
 local function draw_cloud_banks(cam)
   if cam > 220 then return end
   fillp(0x8888, 49)
-  for i = 0, 4 do
-    local x = (i*47-flr(t()*3)-flr(cam/9)) % 196 - 26
-    local y = 27 + i*31 + flr(cam/18)
+  for i = 0, 5 do
+    local x = (i*47-flr(t()*3)-flr(cam/9)) % (SW+52) - 26
+    local y = 35 + i*39 + flr(cam/18)
     circfill(x, y, 8+(i%2)*3, 52)
     circfill(x+10, y-3, 6, 52)
     rectfill(x, y, x+23, y+5, 52)
@@ -490,28 +495,41 @@ end
 
 local function draw_backdrop()
   cls(49)
-  rectfill(0, 12, 143, 98, 51)
+  rectfill(0, HUD_H, SW-1, 116, 51)
   fillp(0x5a5a, 51)
-  rectfill(0, 76, 143, 196, 8)
+  rectfill(0, 94, SW-1, 236, 8)
   fillp(0x8888, 49)
-  rectfill(0, 176, 143, 255, 1)
+  rectfill(0, 218, SW-1, SH-1, 1)
   fillp()
   draw_distant_ruins(game_camera)
   draw_cloud_banks(game_camera)
   draw_stars(game_camera)
   fillp(0xeeee)
-  circfill(112, 42 + flr(game_camera/20), 22, 30)
+  circfill(151, 49 + flr(game_camera/20), 24, 30)
   fillp()
-  circfill(112, 42 + flr(game_camera/20), 18, 4)
-  circfill(105, 36 + flr(game_camera/20), 14, 15)
-  circ(112, 42 + flr(game_camera/20), 18, 12)
-  circfill(124, 42 + flr(game_camera/20), 2, 29)
-  pset(119, 51 + flr(game_camera/20), 29)
-  pset(128, 35 + flr(game_camera/20), 31)
-  for i = 0, 5 do
-    local x = (i*31 - flr(game_camera/7)) % 174 - 15
-    line(x, 116+i*13, x+22, 112+i*13, 13)
-    if i%2 == 0 then line(x+7, 114+i*13, x+17, 110+i*13, 14) end
+  circfill(151, 49 + flr(game_camera/20), 20, 4)
+  circfill(143, 42 + flr(game_camera/20), 15, 15)
+  circ(151, 49 + flr(game_camera/20), 20, 12)
+  circfill(165, 49 + flr(game_camera/20), 2, 29)
+  pset(158, 59 + flr(game_camera/20), 29)
+  pset(169, 41 + flr(game_camera/20), 31)
+  for i = 0, 7 do
+    local x = (i*31 - flr(game_camera/7)) % (SW+30) - 15
+    line(x, 138+i*16, x+22, 134+i*16, 13)
+    if i%2 == 0 then line(x+7, 136+i*16, x+17, 132+i*16, 14) end
+  end
+
+  -- The 24px gutters frame the authored 18-tile tower instead of widening
+  -- its collision map. Broken buttresses sell the extra space as scenery.
+  for side = 0, 1 do
+    local edge = side == 0 and TOWER_X-1 or TOWER_X+TOWER_W
+    line(edge, HUD_H, edge, SH-1, 52)
+    line(edge+(side == 0 and -2 or 2), HUD_H+18, edge+(side == 0 and -2 or 2), SH-1, 50)
+    for y = 35, SH-1, 47 do
+      local tip = edge + (side == 0 and -10 or 10)
+      line(edge, y, tip, y+13, 52)
+      pset(tip, y+13, 55)
+    end
   end
 end
 
@@ -519,16 +537,17 @@ local function draw_particles()
   for i = 1, #particles do
     local p = particles[i]
     local sy = p.y - game_camera + 12
-    if sy >= 12 and sy < 256 then
-      if p.life > 8 then circfill(p.x, sy, 1, p.color)
-      else pset(p.x, sy, p.color) end
+    if sy >= HUD_H and sy < SH then
+      local sx = TOWER_X + p.x
+      if p.life > 8 then circfill(sx, sy, 1, p.color)
+      else pset(sx, sy, p.color) end
     end
   end
 end
 
 local function draw_world_details()
   local cy0 = max(0, flr((game_camera-20)/8))
-  local cy1 = min(63, cy0+35)
+  local cy1 = min(63, cy0+43)
   for cy = cy0, cy1 do
     for cx = 0, 17 do
       local tile = mget(cx, cy)
@@ -578,7 +597,7 @@ local function draw_world_details()
   for i = 0, 11 do
     local wy = (i*47-flr(frame_now/(3+i%3))) % 512
     local wx = (i*31+flr(sin(t()*0.1+i/9)*9)) % 140 + 2
-    if wy > game_camera-16 and wy < game_camera+244 then
+    if wy > game_camera-16 and wy < game_camera+(SH-HUD_H) then
       pset(wx, wy, i%4 == 0 and 4 or 10)
     end
   end
@@ -587,8 +606,8 @@ end
 local function draw_world()
   local shake_x = shake > 0 and flr(rnd(3))-1 or 0
   local shake_y = shake > 0 and flr(rnd(3))-1 or 0
-  clip(0, 12, 144, 244)
-  camera(-shake_x, game_camera-12-shake_y)
+  clip(0, HUD_H, SW, SH-HUD_H)
+  camera(-TOWER_X-shake_x, game_camera-HUD_H-shake_y)
   map()
   draw_world_details()
 
@@ -678,118 +697,118 @@ local function draw_world()
 end
 
 local function draw_hud()
-  clip(0, 0, 144, 12)
+  clip(0, 0, SW, HUD_H)
   cls(48)
   clip()
-  line(1, 10, 142, 10, 52)
+  line(1, 10, SW-2, 10, 52)
   spr(EMBER, 3, 2)
   print("X" .. embers, 12, 3, 4)
   for i = 1, #ember_cells do
     circfill(27+(i-1)*5, 5, 1, i <= embers and 4 or 15)
     if i <= embers then pset(27+(i-1)*5, 4, 12) end
   end
-  print("DASH", 47, 3, dash_ready and 5 or 14)
-  rect(68, 3, 96, 7, 15)
-  if dash_ready then rectfill(70, 5, 94, 5, 5)
-  else rectfill(70, 5, 76, 5, 14) end
-  print("F" .. deaths, 109, 3, 13)
-  rect(1, 1, 142, 10, 15)
+  print("DASH", 66, 3, dash_ready and 5 or 14)
+  rect(87, 3, 121, 7, 15)
+  if dash_ready then rectfill(89, 5, 119, 5, 5)
+  else rectfill(89, 5, 97, 5, 14) end
+  print("FALLS " .. deaths, 151, 3, 13)
+  rect(1, 1, SW-2, 10, 15)
 end
 
 local function draw_pause()
-  clip(18, 78, 108, 96)
+  clip(30, 94, 132, 132)
   cls(40)
   fillp(0x8888, 41)
-  rectfill(18, 78, 125, 173, 48)
+  rectfill(30, 94, 161, 225, 48)
   fillp()
   clip()
-  rect(18, 78, 125, 173, 4)
-  rect(20, 80, 123, 171, 15)
+  rect(30, 94, 161, 225, 4)
+  rect(32, 96, 159, 223, 15)
   for i = 0, 3 do
-    pset(24+i*31, 85, i%2 == 0 and 4 or 11)
-    pset(24+i*31, 166, i%2 == 0 and 11 or 4)
+    pset(38+i*38, 102, i%2 == 0 and 4 or 11)
+    pset(38+i*38, 216, i%2 == 0 and 11 or 4)
   end
-  print("LANTERN PAUSED", 36, 90, 4)
-  line(29, 100, 114, 100, 52)
-  print("A  JUMP / HOLD HIGH", 27, 108, 12)
-  print("B  AIR DASH", 27, 119, 12)
-  print("DOWN  STOMP", 27, 130, 12)
-  print("UP/DOWN  CLIMB VINES", 27, 141, 12)
-  print("MENU  RESUME", 27, 158, 5)
+  print("LANTERN PAUSED", 68, 108, 4)
+  line(42, 120, 149, 120, 52)
+  print("A  JUMP / HOLD HIGH", 49, 132, 12)
+  print("B  AIR DASH", 49, 146, 12)
+  print("DOWN  STOMP", 49, 160, 12)
+  print("UP/DOWN  CLIMB VINES", 49, 174, 12)
+  print("MENU  RESUME", 69, 202, 5)
 end
 
 local function draw_title()
   cls(40)
   fillp(0x5a5a, 8)
-  rectfill(0, 0, 143, 255, 1)
+  rectfill(0, 0, SW-1, SH-1, 1)
   fillp()
-  for i = 0, 11 do
-    local x = (i*19 + flr(t()*7)) % 160 - 8
-    line(x, 0, x-28, 255, i%2 == 0 and 8 or 15)
+  for i = 0, 14 do
+    local x = (i*19 + flr(t()*7)) % (SW+16) - 8
+    line(x, 0, x-35, SH-1, i%2 == 0 and 8 or 15)
   end
   local pulse = flr((sin(t()*0.55)+1)*2)
   fillp(0xeeee)
-  circfill(72, 65, 46+pulse, 30)
+  circfill(CX, 78, 50+pulse, 30)
   fillp()
-  circfill(72, 65, 40, 8)
-  circ(72, 65, 40, 10)
-  line(68, 0, 68, 29, 52)
-  line(76, 0, 76, 29, 52)
-  for y = 4, 28, 8 do
-    line(68, y, 76, y+4, 55)
-    line(76, y+4, 68, y+8, 55)
+  circfill(CX, 78, 44, 8)
+  circ(CX, 78, 44, 10)
+  line(CX-4, 0, CX-4, 34, 52)
+  line(CX+4, 0, CX+4, 34, 52)
+  for y = 4, 32, 8 do
+    line(CX-4, y, CX+4, y+4, 55)
+    line(CX+4, y+4, CX-4, y+8, 55)
   end
   palt(12, true)
-  local logo = 46+pulse
-  sspr(32, 16, 8, 8, 72-logo/2, 61-logo/2, logo, logo)
+  local logo = 50+pulse
+  sspr(32, 16, 8, 8, CX-logo/2, 74-logo/2, logo, logo)
   palt()
   for i = 0, 7 do
     local a = t()*0.12+i/8
-    aspr("spark.twinkle", 72+cos(a)*46, 65+sin(a)*38, -i*5)
+    aspr("spark.twinkle", CX+cos(a)*52, 78+sin(a)*43, -i*5)
   end
-  print("LANTERN", 45, 92, 4)
-  print("L E A P", 52, 103, 11)
-  rect(24, 116, 119, 119, 10)
-  print(frame_now%80 < 58 and "A/B  LIGHT THE TOWER" or "    PRESS TO BEGIN", 26, 137, 12)
-  print("MENU  TOGGLE GUIDE", 29, 149, 13)
+  print("LANTERN", 82, 112, 4)
+  print("L E A P", 82, 123, 11)
+  rect(43, 139, 148, 142, 10)
+  print(frame_now%80 < 58 and "A/B  LIGHT THE TOWER" or "    PRESS TO BEGIN", 58, 161, 12)
+  print("MENU  TOGGLE GUIDE", 62, 174, 13)
   if show_help then
     fillp(0x8888, 51)
-    rectfill(13, 170, 130, 223, 0)
+    rectfill(24, 194, 167, 276, 0)
     fillp()
-    rect(13, 170, 130, 223, 15)
-    print("3 EMBERS OPEN THE GATE", 20, 180, 5)
-    print("D-PAD MOVE + VINE CLIMB", 20, 192, 11)
-    print("A JUMP  B AIR DASH", 27, 204, 3)
-    print("DOWN STOMP CRACKED STONE", 18, 214, 4)
-    aspr("flame.flicker", 20, 221, 0)
-    aspr("flame.flicker", 124, 221, -7, true, false)
+    rect(24, 194, 167, 276, 15)
+    print("3 EMBERS OPEN THE GATE", 51, 207, 5)
+    print("D-PAD MOVE + VINE CLIMB", 48, 222, 11)
+    print("A JUMP  B AIR DASH", 58, 237, 3)
+    print("DOWN STOMP CRACKED STONE", 44, 252, 4)
+    aspr("flame.flicker", 32, 268, 0)
+    aspr("flame.flicker", 160, 268, -7, true, false)
   end
-  print("AGENT-AUTHORED CART 01", 25, 242, 14)
+  print("AGENT-AUTHORED CART 01", 52, 305, 14)
 end
 
 local function draw_win()
   draw_backdrop()
   draw_world()
   fillp(0x5a5a, 1)
-  rectfill(10, 67, 133, 181, 0)
+  rectfill(24, 88, 167, 239, 0)
   fillp()
-  rect(10, 67, 133, 181, 4)
-  rect(12, 69, 131, 179, 12)
+  rect(24, 88, 167, 239, 4)
+  rect(26, 90, 165, 237, 12)
   for i = 0, 15 do
     local a = i/16
-    line(72, 112, 72+cos(a)*(37+i%4), 112+sin(a)*(37+i%4), i%2 == 0 and 30 or 11)
+    line(CX, 146, CX+cos(a)*(43+i%4), 146+sin(a)*(43+i%4), i%2 == 0 and 30 or 11)
   end
-  print("TOWER LIT!", 47, 82, 4)
-  circfill(72, 111, 24 + flr(sin(t())*2), 8)
-  sspr(48, 32, 8, 8, 48, 87, 48, 48)
-  for i = 0, 9 do
-    local sx = 24+(i*19+frame_now)%96
-    local sy = 75+(i*23+frame_now*(1+i%2))%98
+  print("TOWER LIT!", 76, 104, 4)
+  circfill(CX, 145, 27 + flr(sin(t())*2), 8)
+  sspr(48, 32, 8, 8, CX-28, 117, 56, 56)
+  for i = 0, 11 do
+    local sx = 36+(i*19+frame_now)%120
+    local sy = 96+(i*23+frame_now*(1+i%2))%126
     aspr("spark.twinkle", sx, sy, -i*4)
   end
-  print("FRAMES " .. frame_now, 43, 145, 11)
-  print("FALLS  " .. deaths, 43, 156, 13)
-  print("A/B  AGAIN", 48, 170, 5)
+  print("FRAMES " .. frame_now, 67, 194, 11)
+  print("FALLS  " .. deaths, 67, 207, 13)
+  print("A/B  AGAIN", 76, 224, 5)
 end
 
 function _draw()
@@ -805,11 +824,11 @@ function _draw()
     if paused then draw_pause() end
 
     -- Wobbling lava below and high-altitude wind above are framebuffer effects.
-    if game_camera > 220 then
-      local lava_line = max(12, flr(500-game_camera+12))
-      for sy = lava_line, 255 do rshift(sy, 2*sin(t()*1.7+sy/19)) end
-    elseif game_camera < 80 then
-      for sy = 12, 88 do rshift(sy, 2*sin(t()*0.7+sy/31)) end
+    if game_camera > 170 then
+      local lava_line = max(HUD_H, flr(500-game_camera+HUD_H))
+      for sy = lava_line, SH-1 do rshift(sy, 2*sin(t()*1.7+sy/19)) end
+    elseif game_camera < 60 then
+      for sy = HUD_H, 108 do rshift(sy, 2*sin(t()*0.7+sy/31)) end
     end
   end
 
@@ -834,7 +853,7 @@ function dev_warp(x, y)
   player_x, player_y, vx, vy = x, y, 0, 0
   grounded, on_vine = false, false
   player_mode, paused = "normal", false
-  game_camera = mid(0, y-112, 256)
+  game_camera = mid(0, y-FOLLOW_Y, MAX_CAM)
   transition, flash, shake = 0, 0, 0
 end
 

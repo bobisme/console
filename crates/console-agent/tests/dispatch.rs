@@ -53,8 +53,8 @@ fn full_session_flow_against_demo_cart() {
     let mut reader = decoder.read_info().expect("valid png header");
     let mut buf = vec![0u8; reader.output_buffer_size().expect("known buffer size")];
     let info = reader.next_frame(&mut buf).expect("decode png frame");
-    assert_eq!(info.width, 144);
-    assert_eq!(info.height, 256);
+    assert_eq!(info.width, 192);
+    assert_eq!(info.height, 320);
     let pixels = &buf[..info.buffer_size()];
     let channels = info.color_type.samples();
     let mut colors: HashSet<&[u8]> = HashSet::new();
@@ -68,16 +68,16 @@ fn full_session_flow_against_demo_cart() {
     );
     let _ = fs::remove_file(&path);
 
-    // screen_text: 256 lines of 144 palette characters.
+    // screen_text: 320 lines of 192 palette characters.
     let resp = handle(
         &mut session,
         json!({"jsonrpc": "2.0", "id": 4, "method": "screen_text", "params": {}}),
     );
     let lines = resp["result"]["lines"].as_array().expect("lines array");
-    assert_eq!(lines.len(), 256);
+    assert_eq!(lines.len(), 320);
     for line in lines {
         let s = line.as_str().unwrap();
-        assert_eq!(s.len(), 144);
+        assert_eq!(s.len(), 192);
         assert!(
             s.chars()
                 .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())

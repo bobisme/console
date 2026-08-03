@@ -226,7 +226,7 @@ impl Session {
 
     /// Like [`Session::screenshot_png`] but nearest-neighbor upscaled by an
     /// integer `zoom` factor (1 = unchanged, matches `screenshot_png`
-    /// exactly). SPEC.md's 144x256 logical framebuffer is unreadably small
+    /// exactly). SPEC.md's 192x320 logical framebuffer is unreadably small
     /// at 1:1 for human/agent review, so callers can ask for it blown up.
     pub fn screenshot_png_zoomed(&self, zoom: u32) -> Result<Vec<u8>, SessionError> {
         let console = self.console()?;

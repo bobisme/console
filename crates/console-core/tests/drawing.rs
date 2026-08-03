@@ -25,7 +25,7 @@ fn framebuffer_is_the_documented_shape() {
     let con = lua_console("");
     assert_eq!(con.framebuffer().len(), FB_LEN);
     assert_eq!(FB_LEN, SCREEN_W * SCREEN_H);
-    assert_eq!((SCREEN_W, SCREEN_H), (144, 256));
+    assert_eq!((SCREEN_W, SCREEN_H), (192, 320));
     assert!(con.framebuffer().iter().all(|&p| p == 0));
 }
 
@@ -49,7 +49,7 @@ fn pset_pget_roundtrip_including_out_of_bounds() {
     let con = draw_once(
         "cls(0)
          pset(10, 20, 9)
-         pset(-5, 5, 3) pset(5, -5, 3) pset(144, 5, 3) pset(5, 256, 3)
+         pset(-5, 5, 3) pset(5, -5, 3) pset(192, 5, 3) pset(5, 320, 3)
          got = pget(10, 20)
          oob = pget(-1, -1)
          oob2 = pget(1000, 1000)",
@@ -82,7 +82,7 @@ fn rectfill_is_inclusive_and_clips() {
     assert_eq!(count(&con, 4), 0);
     let con = draw_once("rectfill(-10, -10, 1, 1, 4)");
     assert_eq!(count(&con, 4), 4);
-    let con = draw_once("rectfill(142, 254, 400, 400, 4)");
+    let con = draw_once("rectfill(190, 318, 400, 400, 4)");
     assert_eq!(count(&con, 4), 4);
     // Reversed coordinates still fill the same region.
     let con = draw_once("rectfill(4, 5, 2, 3, 7)");
@@ -108,7 +108,7 @@ fn circ_and_circfill() {
     assert!(count(&con, 11) > 0);
 
     // Clipped at every edge without panicking.
-    let con = draw_once("circfill(0, 0, 40, 2) circfill(143, 255, 40, 2)");
+    let con = draw_once("circfill(0, 0, 40, 2) circfill(191, 319, 40, 2)");
     assert!(count(&con, 2) > 0);
 
     // r = 0 draws a single pixel; r < 0 draws nothing.

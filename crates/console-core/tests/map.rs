@@ -299,10 +299,10 @@ fn cels_outside_the_map_are_skipped_without_wrapping() {
 
 #[test]
 fn a_full_screen_map_covers_every_pixel() {
-    // 18x32 tiles is the whole 144x256 portrait screen.
+    // 24x40 tiles is the whole 192x320 portrait screen.
     let mut body = String::new();
-    for _ in 0..32 {
-        body.push_str(&"01".repeat(18));
+    for _ in 0..40 {
+        body.push_str(&"01".repeat(24));
         body.push('\n');
     }
     let con = run(&body, "cls(9) map()");

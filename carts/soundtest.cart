@@ -75,6 +75,7 @@ local ECHO_LEVEL = 6
 -- change exactly on the pattern's own loop point.
 local BAR_FRAMES = 128
 local AB_BARS = 2
+local SW, SH = 192, 320
 
 local sel = 1
 local playing = 0     -- 0 = stopped, else the entry index
@@ -137,15 +138,12 @@ end
 -- entry, the first `sel` of them lit, the lit tip blinking while something is
 -- playing.
 --
--- Relaid out for the 18th entry, which broke the old geometry twice over: an
--- 18th bar at the old 8px pitch ended at x=148 (off a 144px screen), and an
--- 18th menu row pushed the highlight band down to y=160, into the meter's old
--- home at y=155. So the bars are now 6px wide on a 7px pitch (x=9..133, still
--- centred) and half as tall (h = 1 + i/2, so 10px at the tip), which fits the
--- 11px the taller menu leaves above the banner. Entries stay APPEND-ONLY.
+-- The taller display gives every entry a 10px row and the wider display lets
+-- the meter breathe: 18 bars on a 9px pitch, centred with generous margins.
+-- Entries stay APPEND-ONLY because audio goldens navigate by menu position.
 local function meter(y)
   for i = 1, #entries do
-    local x = 9 + (i - 1) * 7
+    local x = 20 + (i - 1) * 9
     local h = 1 + flr(i / 2)
     local c = 15
     if i <= sel then
@@ -153,7 +151,7 @@ local function meter(y)
       if i > #entries - 3 then c = 8 elseif i > #entries - 6 then c = 10 end
       if i == sel and playing ~= 0 and frame % 30 < 15 then c = 12 end
     end
-    rectfill(x, y + 10 - h, x + 5, y + 10, c)
+    rectfill(x, y + 10 - h, x + 6, y + 10, c)
   end
 end
 
@@ -161,65 +159,67 @@ function _draw()
   cls(1)
 
   -- header
-  rectfill(0, 0, 143, 16, 15)
+  rectfill(0, 0, SW - 1, 22, 15)
+  line(0, 22, SW - 1, 22, 6)
   print("SOUND TEST", 4, 3, 12)
-  print("A PLAY  B STOP", 4, 10, 13)
+  print("18 VOICES + EFFECT LAB", 4, 11, 10)
+  print("A PLAY   B STOP", 116, 11, 13)
 
   -- menu
-  -- 18 entries at 8px a row run from y=18 to y=154 (the highlight band ends at
-  -- 160), which is why the meter starts at 161 rather than the old 155.
+  -- 18 entries at 10px a row run from y=28 to y=198.
   -- Entries are APPEND-ONLY: the audio goldens navigate here by counting DOWN
   -- presses, so inserting one in the middle would move every entry after it.
-  local top = 18
+  local top = 28
   for i = 1, #entries do
-    local y = top + (i - 1) * 8
+    local y = top + (i - 1) * 10
     local c = 13
     if i == sel then
-      rectfill(2, y - 1, 141, y + 6, 15)
+      rectfill(2, y - 1, SW - 3, y + 7, 15)
       c = 12
       print(">", 4, y, 10)
     end
     if i == playing then
-      print("*", 136, y, 11)
+      print("*", SW - 8, y, 11)
       c = 11
     end
     print(entries[i].n, 10, y, c)
   end
 
   -- meter
-  meter(161)
+  meter(208)
 
   -- description of the highlighted entry
   local e = entries[sel]
-  rectfill(2, 181, 141, 210, 15)
-  print(e.n, 5, 184, 10)
-  print(e.d1, 5, 193, 12)
-  print(e.d2, 5, 200, 12)
+  rectfill(2, 232, SW - 3, 271, 15)
+  rect(3, 233, SW - 4, 270, 6)
+  print(e.n, 6, 237, 10)
+  print(e.d1, 6, 247, 12)
+  print(e.d2, 6, 257, 12)
 
   -- status
   if playing ~= 0 then
-    print("PLAYING: " .. entries[playing].n, 4, 214, 11)
-    print("PATTERN " .. entries[playing].p .. "  LOOPING", 4, 222, 13)
+    print("PLAYING: " .. entries[playing].n, 4, 280, 11)
+    print("PATTERN " .. entries[playing].p .. "  LOOPING", 4, 289, 13)
   else
-    print("STOPPED", 4, 214, 8)
-    print("UP/DOWN BROWSE   A AUDITIONS", 4, 222, 13)
+    print("STOPPED", 4, 280, 8)
+    print("UP/DOWN BROWSE   A AUDITIONS", 4, 289, 13)
   end
-  print(#entries .. " ENTRIES  " .. sel .. "/" .. #entries, 4, 236, 6)
-  print("112 BPM  4 ROWS/BEAT  SPEED=AUTO", 4, 244, 6)
+  print(#entries .. " ENTRIES  " .. sel .. "/" .. #entries, 4, 304, 6)
+  print("112 BPM  4 ROWS/BEAT  SPEED=AUTO", 4, 312, 6)
 
   -- A/B banner: the label has to flip on the same frame the bus does, so it
   -- reads straight off `driven` rather than recomputing the clock.
   if playing == AB then
-    rectfill(2, 173, 141, 179, 15)
+    rectfill(2, 221, SW - 3, 228, 15)
     if driven then
-      print("DRIVEN  MASTER(4,2)", 5, 173, 8)
+      print("DRIVEN  MASTER(4,2)", 5, 222, 8)
     else
-      print("DRY     MASTER(0)", 5, 173, 11)
+      print("DRY     MASTER(0)", 5, 222, 11)
     end
   elseif playing == ECHO then
-    rectfill(2, 173, 141, 179, 15)
+    rectfill(2, 221, SW - 3, 228, 15)
     print("ECHO(" .. ECHO_DELAY .. "," .. ECHO_FEEDBACK .. "," .. ECHO_LEVEL
-          .. ")  SEND 7/8", 5, 173, 11)
+          .. ")  SEND 7/8", 5, 222, 11)
   end
 end
 
