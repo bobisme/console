@@ -38,7 +38,7 @@ fn cart() -> Cart {
     let row0 = sheet_row(49, &[(0, 9), (40, 3), (48, 4)]);
     let row24 = sheet_row(17, &[(16, 5)]);
     let mut sprite_rows = vec![row0];
-    sprite_rows.extend(std::iter::repeat("0".to_string()).take(23)); // rows 1..=23
+    sprite_rows.extend(std::iter::repeat_n("0".to_string(), 23)); // rows 1..=23
     sprite_rows.push(row24); // row 24
 
     let text = format!(

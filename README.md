@@ -103,12 +103,16 @@ and inspect audio without ears (`audio_state`, `audio_events`,
 ## Development
 
 This repo uses a bones/maw workflow for changes — see
-[AGENTS.md](AGENTS.md). Before sending a change, run:
+[AGENTS.md](AGENTS.md). Before sending a change, run the same gate configured
+for Edict:
 
 ```bash
-cargo test --workspace
-node web/smoke.cjs   # cross-checks the wasm engine build against native
+just check
 ```
+
+This checks formatting, runs warning-free clippy and the full Rust test suite,
+then cross-checks the committed wasm engine against native behavior. After a
+release, install the current local CLI binaries with `just install`.
 
 ## Status
 

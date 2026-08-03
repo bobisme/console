@@ -298,7 +298,9 @@ fn validate_voice(cart: &Cart, token: &str) -> Result<(), String> {
             ));
         }
         if digit > 5 && digit != WAVE_PERIODIC {
-            return Err(format!("bad wave digit {digit} (want 0-5 or {WAVE_PERIODIC})"));
+            return Err(format!(
+                "bad wave digit {digit} (want 0-5 or {WAVE_PERIODIC})"
+            ));
         }
         return Ok(());
     }
