@@ -13,9 +13,8 @@ fn init_runs_at_load_time() {
 
 #[test]
 fn top_level_code_runs_before_init() {
-    let con = cart(
-        "order = {} order[#order+1] = 'top' function _init() order[#order+1] = 'init' end",
-    );
+    let con =
+        cart("order = {} order[#order+1] = 'top' function _init() order[#order+1] = 'init' end");
     assert_eq!(read_strings(&con, "order"), vec!["top", "init"]);
 }
 
@@ -123,9 +122,8 @@ fn out_of_range_button_indices_are_false() {
 
 #[test]
 fn printh_is_collected_and_drained() {
-    let mut con = cart(
-        "function _update() printh('frame ' .. flr(t()*60)) printh(7) printh(true) end",
-    );
+    let mut con =
+        cart("function _update() printh('frame ' .. flr(t()*60)) printh(7) printh(true) end");
     con.step(0).unwrap();
     con.step(0).unwrap();
     let logs = con.take_logs();
@@ -208,7 +206,9 @@ fn os_and_io_are_gone() {
 #[test]
 fn removed_globals_read_as_nil() {
     let con = cart("");
-    for name in ["io", "os", "debug", "package", "require", "dofile", "loadfile", "load"] {
+    for name in [
+        "io", "os", "debug", "package", "require", "dofile", "loadfile", "load",
+    ] {
         assert!(
             con.get_global(name).unwrap().is_nil(),
             "{name} should be nil"
@@ -295,11 +295,7 @@ fn update_error_halts_the_console_with_a_traceback() {
 
 #[test]
 fn draw_error_also_halts() {
-    let mut con = Console::new(
-        "__lua__\nfunction _draw() nosuchfunction() end\n",
-        0,
-    )
-    .unwrap();
+    let mut con = Console::new("__lua__\nfunction _draw() nosuchfunction() end\n", 0).unwrap();
     let err = con.step(0).unwrap_err();
     assert!(err.to_string().contains("nil value"), "{err}");
     assert!(con.is_halted());
@@ -317,7 +313,9 @@ fn eval_reaches_the_cart_environment() {
 fn read_ints(con: &Console, name: &str) -> Vec<i64> {
     let v = con.get_global(name).unwrap();
     let t = v.as_table().expect("table").clone();
-    (1..=t.raw_len()).map(|i| t.get::<i64>(i).unwrap()).collect()
+    (1..=t.raw_len())
+        .map(|i| t.get::<i64>(i).unwrap())
+        .collect()
 }
 
 /// Read a numeric global, accepting either a Lua integer or a Lua float.

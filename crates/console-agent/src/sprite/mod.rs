@@ -38,10 +38,16 @@ pub fn parse_target(s: &str, meta: &GfxMeta) -> Result<Target, String> {
     }
     if meta.anim(s).is_some() {
         let sprite = s.split('.').next().unwrap_or_default().to_string();
-        return Ok(Target::Sprite { name: sprite, anim: Some(s.to_string()) });
+        return Ok(Target::Sprite {
+            name: sprite,
+            anim: Some(s.to_string()),
+        });
     }
     if meta.sprite(s).is_some() {
-        return Ok(Target::Sprite { name: s.to_string(), anim: None });
+        return Ok(Target::Sprite {
+            name: s.to_string(),
+            anim: None,
+        });
     }
     Err(format!(
         "unknown target {s:?}: not an anim, sprite, or tx,ty,w,h rect (cart has: {})",
@@ -55,7 +61,11 @@ fn known_targets(meta: &GfxMeta) -> String {
         .map(|s| s.name.clone())
         .chain(meta.anims().map(|a| a.name.clone()))
         .collect();
-    if names.is_empty() { "none — cart has no __gfx_meta__ section".into() } else { names.join(", ") }
+    if names.is_empty() {
+        "none — cart has no __gfx_meta__ section".into()
+    } else {
+        names.join(", ")
+    }
 }
 
 /// Pixel-space rect (x, y, w, h) on the 128x128 sheet for a target's frame
@@ -99,7 +109,11 @@ pub fn target_sprite<'c>(cart: &'c Cart, target: &Target) -> Option<&'c SpriteDe
 /// `view::render`'s anim-aware `--frame` (which indexes an anim's own frame
 /// list); here `frame` is always the raw sprite frame index, matching how
 /// `sprite edit`'s ops have always treated it.
-pub fn resolve_rect(cart: &Cart, target_str: &str, frame: u8) -> Result<(u32, u32, u32, u32), String> {
+pub fn resolve_rect(
+    cart: &Cart,
+    target_str: &str,
+    frame: u8,
+) -> Result<(u32, u32, u32, u32), String> {
     let target = parse_target(target_str, cart.gfx_meta())?;
     frame_pixel_rect(cart, &target, frame)
 }

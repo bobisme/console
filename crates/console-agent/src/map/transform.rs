@@ -57,7 +57,11 @@ pub fn cli_poke(args: &[String]) -> i32 {
         return 2;
     }
     let cart_path = args.remove(0);
-    let region_arg = if args.is_empty() { None } else { Some(args.remove(0)) };
+    let region_arg = if args.is_empty() {
+        None
+    } else {
+        Some(args.remove(0))
+    };
     if !args.is_empty() {
         eprintln!("error: map poke: unexpected extra arguments: {args:?}\n{POKE_USAGE}");
         return 2;
@@ -90,7 +94,11 @@ pub fn cli_poke(args: &[String]) -> i32 {
         }
     };
 
-    apply_edit_result(&cart_path, run_poke(&text, region_arg.as_deref(), &rows), dry_run)
+    apply_edit_result(
+        &cart_path,
+        run_poke(&text, region_arg.as_deref(), &rows),
+        dry_run,
+    )
 }
 
 /// Read poke rows from stdin: one row per line, skipping any line starting
@@ -132,7 +140,11 @@ fn run_poke(text: &str, region_arg: Option<&str>, rows: &[String]) -> Result<Edi
         }
         for i in 0..cw_us {
             let hi = (bytes[i * 2] as char).to_digit(16).ok_or_else(|| {
-                format!("poke: row {j}: invalid hex digit {:?} at column {} ({row:?})", bytes[i * 2] as char, i * 2)
+                format!(
+                    "poke: row {j}: invalid hex digit {:?} at column {} ({row:?})",
+                    bytes[i * 2] as char,
+                    i * 2
+                )
             })?;
             let lo = (bytes[i * 2 + 1] as char).to_digit(16).ok_or_else(|| {
                 format!(
@@ -204,7 +216,11 @@ fn run_edit(text: &str, op: &str, op_args: &[String]) -> Result<EditResult, Stri
         "shift" => run_shift(&mut tiles, op_args)?,
         "fill" => run_fill(&mut tiles, op_args)?,
         "clear" => run_clear(&mut tiles, op_args)?,
-        other => return Err(format!("unknown edit op {other:?}; expected copy|shift|fill|clear")),
+        other => {
+            return Err(format!(
+                "unknown edit op {other:?}; expected copy|shift|fill|clear"
+            ));
+        }
     }
 
     finish_edit(text, cart.map(), &tiles, "edit")
@@ -222,7 +238,11 @@ fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
 fn take_value(args: &mut Vec<String>, flag: &str) -> Option<String> {
     let pos = args.iter().position(|a| a == flag)?;
     args.remove(pos);
-    if pos < args.len() { Some(args.remove(pos)) } else { None }
+    if pos < args.len() {
+        Some(args.remove(pos))
+    } else {
+        None
+    }
 }
 
 /// Parse and bound-check an explicit `cx,cy,cw,ch` region argument for `map
@@ -242,8 +262,12 @@ fn required_region(s: &str) -> Result<(u32, u32, u32, u32), String> {
 }
 
 fn parse_tile_hex(s: &str) -> Result<u8, String> {
-    let hex = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
-    u8::from_str_radix(hex, 16).map_err(|e| format!("bad tile id {s:?} (want 1-2 hex digits, 00-ff): {e}"))
+    let hex = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+    u8::from_str_radix(hex, 16)
+        .map_err(|e| format!("bad tile id {s:?} (want 1-2 hex digits, 00-ff): {e}"))
 }
 
 fn parse_point(s: &str) -> Result<(u32, u32), String> {
@@ -251,8 +275,14 @@ fn parse_point(s: &str) -> Result<(u32, u32), String> {
     if parts.len() != 2 {
         return Err(format!("destination must be cx,cy: {s:?}"));
     }
-    let x = parts[0].trim().parse::<u32>().map_err(|e| format!("bad destination {s:?}: {e}"))?;
-    let y = parts[1].trim().parse::<u32>().map_err(|e| format!("bad destination {s:?}: {e}"))?;
+    let x = parts[0]
+        .trim()
+        .parse::<u32>()
+        .map_err(|e| format!("bad destination {s:?}: {e}"))?;
+    let y = parts[1]
+        .trim()
+        .parse::<u32>()
+        .map_err(|e| format!("bad destination {s:?}: {e}"))?;
     Ok((x, y))
 }
 
@@ -297,7 +327,9 @@ fn run_clear(tiles: &mut TileMap, args: &[String]) -> Result<(), String> {
 
 fn run_copy(tiles: &mut TileMap, args: &[String]) -> Result<(), String> {
     let [region_str, dest_str] = args else {
-        return Err("copy requires a region and a destination: copy <cx,cy,cw,ch> <dest_cx,dest_cy>".into());
+        return Err(
+            "copy requires a region and a destination: copy <cx,cy,cw,ch> <dest_cx,dest_cy>".into(),
+        );
     };
     let region = required_region(region_str)?;
     let dest = parse_point(dest_str)?;
@@ -380,14 +412,22 @@ enum EditResult {
     /// touched, or a freshly-inserted `__map__` section); `report` is the
     /// dry-run listing of `(1-based line number, new line content)` for
     /// each row that changed, in row order.
-    Changed { new_text: String, report: Vec<(usize, String)> },
+    Changed {
+        new_text: String,
+        report: Vec<(usize, String)>,
+    },
 }
 
 /// Compute the rewrite (if any), re-parsing to confirm validity before
 /// handing back a `Changed` result. Shared tail of `run_poke` and
 /// `run_edit`; `what` only flavors the "would produce an invalid cart"
 /// error message.
-fn finish_edit(text: &str, old_tiles: &TileMap, new_tiles: &TileMap, what: &str) -> Result<EditResult, String> {
+fn finish_edit(
+    text: &str,
+    old_tiles: &TileMap,
+    new_tiles: &TileMap,
+    what: &str,
+) -> Result<EditResult, String> {
     match rewrite_map(text, old_tiles, new_tiles) {
         None => Ok(EditResult::Unchanged),
         Some((new_text, report)) => {
@@ -588,8 +628,9 @@ fn rewrite_map(
     old_tiles: &TileMap,
     new_tiles: &TileMap,
 ) -> Option<(String, Vec<(usize, String)>)> {
-    let mut changed_rows: Vec<usize> =
-        (0..MAP_H).filter(|&y| row_slice(old_tiles, y) != row_slice(new_tiles, y)).collect();
+    let mut changed_rows: Vec<usize> = (0..MAP_H)
+        .filter(|&y| row_slice(old_tiles, y) != row_slice(new_tiles, y))
+        .collect();
     if changed_rows.is_empty() {
         return None;
     }
@@ -603,7 +644,11 @@ fn rewrite_map(
     for &y in &changed_rows {
         if y < row_lines.len() {
             let file_line = row_lines[y];
-            let eol = if lines[file_line].ends_with('\r') { "\r" } else { "" };
+            let eol = if lines[file_line].ends_with('\r') {
+                "\r"
+            } else {
+                ""
+            };
             owned[file_line] = format!("{}{eol}", encode_row(new_tiles, y));
         }
     }
@@ -612,7 +657,13 @@ fn rewrite_map(
         let append_from = row_lines.len();
         let zero_row = "0".repeat(MAP_W * 2);
         let gap_rows: Vec<String> = (append_from..=max_row)
-            .map(|y| if changed_rows.binary_search(&y).is_ok() { encode_row(new_tiles, y) } else { zero_row.clone() })
+            .map(|y| {
+                if changed_rows.binary_search(&y).is_ok() {
+                    encode_row(new_tiles, y)
+                } else {
+                    zero_row.clone()
+                }
+            })
             .collect();
 
         match insert_at {

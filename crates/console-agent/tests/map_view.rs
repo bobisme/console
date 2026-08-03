@@ -58,7 +58,10 @@ fn args(v: &[&str]) -> Vec<String> {
 }
 
 fn temp_path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("console-agent-map-view-{}-{name}", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "console-agent-map-view-{}-{name}",
+        std::process::id()
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -68,8 +71,12 @@ fn temp_path(name: &str) -> std::path::PathBuf {
 #[test]
 fn render_default_region_is_the_used_extent() {
     let cart = cart();
-    let img = view::render(&cart, console_agent::map::parse_region(None, cart.map()).unwrap(), &MapRenderOpts::default())
-        .expect("render default region");
+    let img = view::render(
+        &cart,
+        console_agent::map::parse_region(None, cart.map()).unwrap(),
+        &MapRenderOpts::default(),
+    )
+    .expect("render default region");
 
     // used extent is 4x2 cells at zoom 8: 4*8*8 x 2*8*8.
     assert_eq!((img.width, img.height), (256, 128));
@@ -103,7 +110,11 @@ fn render_paints_known_tiles_and_skips_tile_zero() {
     // every one of its pixels is individually transparent, so it *looks*
     // identical to an empty cell -- exactly the "probable typo" case `lint`
     // calls out under `blank_sprite_tiles`.
-    assert_eq!(sample(0, 1), empty, "blank-sprite tile 3 looks like an empty cell");
+    assert_eq!(
+        sample(0, 1),
+        empty,
+        "blank-sprite tile 3 looks like an empty cell"
+    );
 }
 
 #[test]
@@ -113,17 +124,38 @@ fn render_zoom_and_grid() {
     let plain = view::render(&cart, region, &MapRenderOpts::default()).expect("plain");
     assert_eq!((plain.width, plain.height), (64, 64));
 
-    let zoomed = view::render(&cart, region, &MapRenderOpts { zoom: 4, ..MapRenderOpts::default() })
-        .expect("zoom 4");
+    let zoomed = view::render(
+        &cart,
+        region,
+        &MapRenderOpts {
+            zoom: 4,
+            ..MapRenderOpts::default()
+        },
+    )
+    .expect("zoom 4");
     assert_eq!((zoomed.width, zoomed.height), (32, 32));
 
-    let grid = view::render(&cart, region, &MapRenderOpts { grid: true, ..MapRenderOpts::default() })
-        .expect("grid");
+    let grid = view::render(
+        &cart,
+        region,
+        &MapRenderOpts {
+            grid: true,
+            ..MapRenderOpts::default()
+        },
+    )
+    .expect("grid");
     // One extra device pixel closes the boundary, same convention as
     // `sprite render --grid`.
     assert_eq!((grid.width, grid.height), (65, 65));
 
-    let bad = view::render(&cart, region, &MapRenderOpts { zoom: 0, ..MapRenderOpts::default() });
+    let bad = view::render(
+        &cart,
+        region,
+        &MapRenderOpts {
+            zoom: 0,
+            ..MapRenderOpts::default()
+        },
+    );
     assert!(bad.unwrap_err().contains("zoom must be"));
 }
 
@@ -132,10 +164,20 @@ fn render_ids_overlay_changes_only_nonempty_cells() {
     let cart = cart();
     let region = (0, 0, 4, 2);
     let plain = view::render(&cart, region, &MapRenderOpts::default()).expect("plain");
-    let labelled =
-        view::render(&cart, region, &MapRenderOpts { ids: true, ..MapRenderOpts::default() }).expect("ids");
+    let labelled = view::render(
+        &cart,
+        region,
+        &MapRenderOpts {
+            ids: true,
+            ..MapRenderOpts::default()
+        },
+    )
+    .expect("ids");
 
-    assert_ne!(plain.rgba, labelled.rgba, "--ids must draw something over a non-empty cell");
+    assert_ne!(
+        plain.rgba, labelled.rgba,
+        "--ids must draw something over a non-empty cell"
+    );
 
     // Cell (2,0) is tile 0 (empty): no id glyph should be drawn there, so
     // that whole 64x64 block must be untouched by the overlay.
@@ -204,7 +246,10 @@ fn lint_reports_extent_counts_and_blank_tiles() {
     assert_eq!(out["map_h"], 64);
     assert_eq!(out["total_cells"], 128 * 64);
     assert_eq!(out["nonzero_cells"], 4);
-    assert_eq!(out["used_extent"], json!({"cx": 0, "cy": 0, "cw": 4, "ch": 2}));
+    assert_eq!(
+        out["used_extent"],
+        json!({"cx": 0, "cy": 0, "cw": 4, "ch": 2})
+    );
     assert_eq!(out["distinct_tiles"], 3);
 
     let fill_pct = out["fill_pct"].as_f64().unwrap();
@@ -239,7 +284,13 @@ fn cli_render_writes_a_png() {
     std::fs::write(&path, fixture_cart()).unwrap();
     let out = temp_path("render.png");
 
-    let code = view::cli_view(&args(&["render", path.to_str().unwrap(), "0,0,4,2", "-o", out.to_str().unwrap()]));
+    let code = view::cli_view(&args(&[
+        "render",
+        path.to_str().unwrap(),
+        "0,0,4,2",
+        "-o",
+        out.to_str().unwrap(),
+    ]));
     assert_eq!(code, 0);
     assert!(std::fs::metadata(&out).expect("png written").len() > 0);
 }
@@ -269,7 +320,10 @@ fn loaded_session() -> Session {
 }
 
 fn call(session: &mut Session, method: &str, params: Value) -> Value {
-    handle(session, json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
+    handle(
+        session,
+        json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}),
+    )
 }
 
 #[test]
@@ -278,7 +332,11 @@ fn rpc_map_verbs_are_read_only_mirrors() {
 
     let path = temp_path("rpc-render.png");
     let p = path.to_str().unwrap();
-    let resp = call(&mut session, "map_render", json!({"region": "0,0,4,2", "path": p}));
+    let resp = call(
+        &mut session,
+        "map_render",
+        json!({"region": "0,0,4,2", "path": p}),
+    );
     assert!(resp.get("error").is_none(), "map_render: {resp}");
     assert_eq!(resp["result"]["width"], 256);
     assert_eq!(resp["result"]["height"], 128);
@@ -286,7 +344,12 @@ fn rpc_map_verbs_are_read_only_mirrors() {
 
     let resp = call(&mut session, "map_dump", json!({"region": "0,0,4,2"}));
     assert!(resp.get("error").is_none(), "map_dump: {resp}");
-    assert!(resp["result"]["text"].as_str().unwrap().starts_with("# cx=0 cy=0 cw=4 ch=2\n"));
+    assert!(
+        resp["result"]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("# cx=0 cy=0 cw=4 ch=2\n")
+    );
 
     let resp = call(&mut session, "map_lint", json!({}));
     assert!(resp.get("error").is_none(), "map_lint: {resp}");

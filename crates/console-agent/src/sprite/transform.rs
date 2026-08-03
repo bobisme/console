@@ -154,7 +154,11 @@ pub fn cli_poke(args: &[String]) -> i32 {
         }
     };
 
-    apply_edit_result(&cart_path, run_poke(&text, &target_str, frame, &rows), dry_run)
+    apply_edit_result(
+        &cart_path,
+        run_poke(&text, &target_str, frame, &rows),
+        dry_run,
+    )
 }
 
 /// Read poke rows from stdin: one row per line, in order, skipping any line
@@ -175,7 +179,12 @@ fn read_stdin_rows() -> Result<Vec<String>, String> {
 /// region (exact row count, exact row width, valid hex digits), overwrite
 /// those pixels, and compute the resulting cart text via the same rewrite
 /// path `sprite edit` uses. Pure — no file I/O — so it is directly testable.
-fn run_poke(text: &str, target_str: &str, frame: u8, rows: &[String]) -> Result<EditResult, String> {
+fn run_poke(
+    text: &str,
+    target_str: &str,
+    frame: u8,
+    rows: &[String],
+) -> Result<EditResult, String> {
     let cart = Cart::parse(text).map_err(|e| format!("cart: {e}"))?;
     let (x0, y0, w, h) = resolve_rect(&cart, target_str, frame)?;
     let (w, h) = (w as usize, h as usize);
@@ -227,7 +236,10 @@ enum EditResult {
     /// `new_text` is the full rewritten cart text (only `__sprites__` lines
     /// touched); `report` is the dry-run listing of `(1-based line number,
     /// new line content)` for each row that changed, in row order.
-    Changed { new_text: String, report: Vec<(usize, String)> },
+    Changed {
+        new_text: String,
+        report: Vec<(usize, String)>,
+    },
 }
 
 /// Parse `text` as a cart, apply `op` with `op_args`, and compute the
@@ -279,12 +291,18 @@ fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
 fn take_value(args: &mut Vec<String>, flag: &str) -> Option<String> {
     let pos = args.iter().position(|a| a == flag)?;
     args.remove(pos);
-    if pos < args.len() { Some(args.remove(pos)) } else { None }
+    if pos < args.len() {
+        Some(args.remove(pos))
+    } else {
+        None
+    }
 }
 
 fn take_frame(args: &mut Vec<String>) -> Result<u8, String> {
     match take_value(args, "--frame") {
-        Some(v) => v.parse::<u8>().map_err(|e| format!("bad --frame {v:?}: {e}")),
+        Some(v) => v
+            .parse::<u8>()
+            .map_err(|e| format!("bad --frame {v:?}: {e}")),
         None => Ok(0),
     }
 }
@@ -371,7 +389,8 @@ fn parse_copy_endpoint(cart: &Cart, s: &str) -> Result<(u32, u32, u32, u32), Str
     let (name, frame) = match s.split_once(':') {
         Some((n, f)) => (
             n,
-            f.parse::<u8>().map_err(|e| format!("bad frame in {s:?}: {e}"))?,
+            f.parse::<u8>()
+                .map_err(|e| format!("bad frame in {s:?}: {e}"))?,
         ),
         None => (s, 0u8),
     };
@@ -565,7 +584,10 @@ fn locate_sprites_layout(lines: &[&str]) -> SpritesLayout {
     }
 
     let insert_at = ranges.last().map(|&(_, end)| end);
-    SpritesLayout { row_lines, insert_at }
+    SpritesLayout {
+        row_lines,
+        insert_at,
+    }
 }
 
 fn encode_row(sheet: &SpriteSheet, y: usize) -> String {
@@ -613,7 +635,11 @@ fn rewrite_sprites(
     for &y in &changed_rows {
         if y < layout.row_lines.len() {
             let file_line = layout.row_lines[y];
-            let eol = if lines[file_line].ends_with('\r') { "\r" } else { "" };
+            let eol = if lines[file_line].ends_with('\r') {
+                "\r"
+            } else {
+                ""
+            };
             owned[file_line] = format!("{}{eol}", encode_row(new_sheet, y));
         }
     }
@@ -731,7 +757,11 @@ mod tests {
         new[idx(0, 3)] = 0xa;
 
         let (new_text, report) = rewrite_sprites(text, &old, &new).expect("rows changed");
-        assert_eq!(report.len(), 2, "only rows 0 and 3 actually changed: {report:?}");
+        assert_eq!(
+            report.len(),
+            2,
+            "only rows 0 and 3 actually changed: {report:?}"
+        );
 
         let cart = Cart::parse(&new_text).expect("still a valid cart");
         assert_eq!(cart.sprites()[idx(0, 0)], 0);
@@ -747,10 +777,22 @@ mod tests {
             .unwrap()
             .lines()
             .collect();
-        assert_eq!(sprites_body.len(), 4, "row 0 plus 3 appended rows: {sprites_body:?}");
+        assert_eq!(
+            sprites_body.len(),
+            4,
+            "row 0 plus 3 appended rows: {sprites_body:?}"
+        );
         assert_eq!(sprites_body[0], "0".repeat(SHEET_W));
-        assert_eq!(sprites_body[1], "0".repeat(SHEET_W), "row 1 is a zero filler");
-        assert_eq!(sprites_body[2], "0".repeat(SHEET_W), "row 2 is a zero filler");
+        assert_eq!(
+            sprites_body[1],
+            "0".repeat(SHEET_W),
+            "row 1 is a zero filler"
+        );
+        assert_eq!(
+            sprites_body[2],
+            "0".repeat(SHEET_W),
+            "row 2 is a zero filler"
+        );
         assert_eq!(sprites_body[3], format!("a{}", "0".repeat(SHEET_W - 1)));
     }
 }

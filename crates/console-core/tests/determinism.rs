@@ -194,11 +194,7 @@ fn rnd_range_and_srand_reset() {
 
 #[test]
 fn default_seed_zero_still_varies_between_calls() {
-    let mut con = Console::new(
-        "__lua__\nfunction _update() x, y = rnd(), rnd() end",
-        0,
-    )
-    .unwrap();
+    let mut con = Console::new("__lua__\nfunction _update() x, y = rnd(), rnd() end", 0).unwrap();
     con.step(0).unwrap();
     let x = con.get_global("x").unwrap().as_f64().unwrap();
     let y = con.get_global("y").unwrap().as_f64().unwrap();

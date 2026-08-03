@@ -80,12 +80,30 @@ fn shift_fill_moves_pixel_and_clears_vacated() {
     let text = cart("sprite player rect=0,0 size=1x1", &["a0000000"]);
     let path = temp_cart("shift-fill", &text);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "player", "--dx", "1", "--dy", "0"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "shift",
+        "player",
+        "--dx",
+        "1",
+        "--dy",
+        "0",
+    ]));
     assert_eq!(code, 0);
 
     let out = read(&path);
-    let row0 = out.split("__sprites__\n").nth(1).unwrap().lines().next().unwrap();
-    assert_eq!(row0, row128(&[(1, "a")]), "pixel moved from x=0 to x=1, vacated x=0 cleared");
+    let row0 = out
+        .split("__sprites__\n")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap();
+    assert_eq!(
+        row0,
+        row128(&[(1, "a")]),
+        "pixel moved from x=0 to x=1, vacated x=0 cleared"
+    );
 }
 
 #[test]
@@ -94,28 +112,56 @@ fn shift_dx_alone_defaults_dy_to_zero() {
     let path = temp_cart("shift-dx-only", &text);
 
     // --dy omitted entirely: must default to 0, not error.
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "player", "--dx", "1"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "shift",
+        "player",
+        "--dx",
+        "1",
+    ]));
     assert_eq!(code, 0);
 
     let out = read(&path);
-    let row0 = out.split("__sprites__\n").nth(1).unwrap().lines().next().unwrap();
-    assert_eq!(row0, row128(&[(1, "a")]), "dy defaults to 0, pixel only moves in x");
+    let row0 = out
+        .split("__sprites__\n")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap();
+    assert_eq!(
+        row0,
+        row128(&[(1, "a")]),
+        "dy defaults to 0, pixel only moves in x"
+    );
 }
 
 #[test]
 fn shift_dy_alone_defaults_dx_to_zero() {
-    let rows: Vec<String> = (0..8u32).map(|y| char::from_digit(y, 16).unwrap().to_string().repeat(8)).collect();
+    let rows: Vec<String> = (0..8u32)
+        .map(|y| char::from_digit(y, 16).unwrap().to_string().repeat(8))
+        .collect();
     let row_refs: Vec<&str> = rows.iter().map(String::as_str).collect();
     let text = cart("sprite player rect=0,0 size=1x1", &row_refs);
     let path = temp_cart("shift-dy-only", &text);
 
     // --dx omitted entirely: must default to 0, not error.
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "player", "--dy", "2"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "shift",
+        "player",
+        "--dy",
+        "2",
+    ]));
     assert_eq!(code, 0);
 
     let out = read(&path);
     let after_lines: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
-    assert_eq!(after_lines[3], row128(&[(0, "11111111")]), "row3 <- src(row1), no x shift");
+    assert_eq!(
+        after_lines[3],
+        row128(&[(0, "11111111")]),
+        "row3 <- src(row1), no x shift"
+    );
 }
 
 #[test]
@@ -148,7 +194,13 @@ fn shift_wrap_handles_negative_delta() {
     assert_eq!(code, 0);
 
     let out = read(&path);
-    let row0 = out.split("__sprites__\n").nth(1).unwrap().lines().next().unwrap();
+    let row0 = out
+        .split("__sprites__\n")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap();
     assert_eq!(row0, row128(&[(7, "a")]), "wraps around to x=7");
 }
 
@@ -158,21 +210,38 @@ fn shift_vertical_fill_only_rewrites_rows_that_actually_changed() {
     // row0 end up identical to its own original content ("00000000"),
     // even though row0 is inside the shifted rect -- it must NOT be
     // rewritten, since nothing about it changed.
-    let rows: Vec<String> = (0..8u32).map(|y| char::from_digit(y, 16).unwrap().to_string().repeat(8)).collect();
+    let rows: Vec<String> = (0..8u32)
+        .map(|y| char::from_digit(y, 16).unwrap().to_string().repeat(8))
+        .collect();
     let row_refs: Vec<&str> = rows.iter().map(String::as_str).collect();
     let text = cart("sprite player rect=0,0 size=1x1", &row_refs);
     let path = temp_cart("shift-vfill", &text);
 
     let before = read(&path);
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "player", "--dx", "0", "--dy", "2"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "shift",
+        "player",
+        "--dx",
+        "0",
+        "--dy",
+        "2",
+    ]));
     assert_eq!(code, 0);
     let after = read(&path);
 
     let before_lines: Vec<&str> = before.lines().collect();
     let after_lines: Vec<&str> = after.lines().collect();
-    assert_eq!(before_lines.len(), after_lines.len(), "no rows appended, none removed");
+    assert_eq!(
+        before_lines.len(),
+        after_lines.len(),
+        "no rows appended, none removed"
+    );
 
-    let sprites_header = before_lines.iter().position(|l| *l == "__sprites__").unwrap();
+    let sprites_header = before_lines
+        .iter()
+        .position(|l| *l == "__sprites__")
+        .unwrap();
     let sprite_line_of_row = |y: usize| sprites_header + 1 + y;
 
     // Row 0 unaffected (dy shift pulls in out-of-bounds -> 0, same as its
@@ -184,8 +253,8 @@ fn shift_vertical_fill_only_rewrites_rows_that_actually_changed() {
     );
     // Rows 1..7 do change.
     let expected = [
-        row128(&[]),               // row1 <- src(row -1) OOB -> 0
-        row128(&[]),               // row2 <- src(row 0) = "00000000"
+        row128(&[]),                // row1 <- src(row -1) OOB -> 0
+        row128(&[]),                // row2 <- src(row 0) = "00000000"
         row128(&[(0, "11111111")]), // row3 <- src(row1)
         row128(&[(0, "22222222")]), // row4 <- src(row2)
         row128(&[(0, "33333333")]), // row5 <- src(row3)
@@ -208,7 +277,12 @@ fn flip_horizontal_reverses_columns() {
     let text = cart("sprite player rect=0,0 size=1x1", &rows);
     let path = temp_cart("flip-h", &text);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "flip", "player", "--horizontal"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "flip",
+        "player",
+        "--horizontal",
+    ]));
     assert_eq!(code, 0);
 
     let out = read(&path);
@@ -219,19 +293,29 @@ fn flip_horizontal_reverses_columns() {
 
 #[test]
 fn flip_vertical_reverses_rows() {
-    let rows: Vec<String> = (0..8u32).map(|y| char::from_digit(y, 16).unwrap().to_string().repeat(8)).collect();
+    let rows: Vec<String> = (0..8u32)
+        .map(|y| char::from_digit(y, 16).unwrap().to_string().repeat(8))
+        .collect();
     let row_refs: Vec<&str> = rows.iter().map(String::as_str).collect();
     let text = cart("sprite player rect=0,0 size=1x1", &row_refs);
     let path = temp_cart("flip-v", &text);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "flip", "player", "--vertical"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "flip",
+        "player",
+        "--vertical",
+    ]));
     assert_eq!(code, 0);
 
     let out = read(&path);
     let new_rows: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
     assert_eq!(new_rows.len(), 8);
     for (y, row) in new_rows.iter().enumerate() {
-        let expected_digit = char::from_digit(7 - y as u32, 16).unwrap().to_string().repeat(8);
+        let expected_digit = char::from_digit(7 - y as u32, 16)
+            .unwrap()
+            .to_string()
+            .repeat(8);
         assert_eq!(*row, row128(&[(0, &expected_digit)]), "row {y}");
     }
 }
@@ -243,7 +327,10 @@ fn flip_vertical_reverses_rows() {
 #[test]
 fn rotate_cw_8x8_moves_corners() {
     // TL=1 TR=2 BR=3 BL=4 (row0: col0=1,col7=2; row7: col0=4,col7=3).
-    let rows = ["10000002", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "40000003"];
+    let rows = [
+        "10000002", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000",
+        "40000003",
+    ];
     let text = cart("sprite player rect=0,0 size=1x1", &rows);
     let path = temp_cart("rotate-cw", &text);
 
@@ -254,10 +341,17 @@ fn rotate_cw_8x8_moves_corners() {
     // The 8 physical rows all still exist (they were all already present);
     // only 2 of them actually changed value -- the rest must stay byte
     // identical to their original (short, 8-char) form.
-    let before: Vec<&str> = text.split("__sprites__\n").nth(1).unwrap().lines().collect();
+    let before: Vec<&str> = text
+        .split("__sprites__\n")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .collect();
     let after: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
     assert_eq!(before.len(), after.len());
-    let changed: Vec<usize> = (0..before.len()).filter(|&i| before[i] != after[i]).collect();
+    let changed: Vec<usize> = (0..before.len())
+        .filter(|&i| before[i] != after[i])
+        .collect();
     assert_eq!(changed, vec![0, 7], "only row0 and row7 actually change");
     // After cw: new TL=old BL=4, new TR=old TL=1, new BR=old TR=2, new BL=old BR=3.
     assert_eq!(after[0], row128(&[(0, "4"), (7, "1")]));
@@ -266,18 +360,33 @@ fn rotate_cw_8x8_moves_corners() {
 
 #[test]
 fn rotate_ccw_8x8_moves_corners() {
-    let rows = ["10000002", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "40000003"];
+    let rows = [
+        "10000002", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000",
+        "40000003",
+    ];
     let text = cart("sprite player rect=0,0 size=1x1", &rows);
     let path = temp_cart("rotate-ccw", &text);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "rotate", "player", "--ccw"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "rotate",
+        "player",
+        "--ccw",
+    ]));
     assert_eq!(code, 0);
 
     let out = read(&path);
-    let before: Vec<&str> = text.split("__sprites__\n").nth(1).unwrap().lines().collect();
+    let before: Vec<&str> = text
+        .split("__sprites__\n")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .collect();
     let after: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
     assert_eq!(before.len(), after.len());
-    let changed: Vec<usize> = (0..before.len()).filter(|&i| before[i] != after[i]).collect();
+    let changed: Vec<usize> = (0..before.len())
+        .filter(|&i| before[i] != after[i])
+        .collect();
     assert_eq!(changed, vec![0, 7]);
     // After ccw: new TL=old TR=2, new TR=old BR=3, new BR=old BL=4, new BL=old TL=1.
     assert_eq!(after[0], row128(&[(0, "2"), (7, "3")]));
@@ -300,11 +409,22 @@ fn rotate_16x16_on_a_2x2_tile_sprite() {
     assert_eq!(code, 0);
 
     let out = read(&path);
-    let before: Vec<&str> = text.split("__sprites__\n").nth(1).unwrap().lines().collect();
+    let before: Vec<&str> = text
+        .split("__sprites__\n")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .collect();
     let after: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
     assert_eq!(before.len(), after.len());
-    let changed: Vec<usize> = (0..before.len()).filter(|&i| before[i] != after[i]).collect();
-    assert_eq!(changed, vec![8, 23], "only row 8 and row 23 actually change");
+    let changed: Vec<usize> = (0..before.len())
+        .filter(|&i| before[i] != after[i])
+        .collect();
+    assert_eq!(
+        changed,
+        vec![8, 23],
+        "only row 8 and row 23 actually change"
+    );
     assert_eq!(after[8], row128(&[(0, "4"), (15, "1")]));
     assert_eq!(after[23], row128(&[(0, "3"), (15, "2")]));
 }
@@ -315,7 +435,12 @@ fn rotate_rejects_non_square_region() {
     let path = temp_cart("rotate-nonsquare", &text);
     let before = read(&path);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "rotate", "0,0,2,1", "--cw"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "rotate",
+        "0,0,2,1",
+        "--cw",
+    ]));
     assert_ne!(code, 0);
     assert_eq!(read(&path), before, "file must be untouched on error");
 }
@@ -326,7 +451,9 @@ fn rotate_rejects_non_square_region() {
 
 #[test]
 fn copy_rect_to_sprite_non_overlapping() {
-    let rows: Vec<String> = (1..=8u32).map(|d| char::from_digit(d, 16).unwrap().to_string().repeat(8)).collect();
+    let rows: Vec<String> = (1..=8u32)
+        .map(|d| char::from_digit(d, 16).unwrap().to_string().repeat(8))
+        .collect();
     let row_refs: Vec<&str> = rows.iter().map(String::as_str).collect();
     let text = cart("sprite dest rect=2,0 size=1x1", &row_refs);
     let path = temp_cart("copy-rect-sprite", &text);
@@ -338,7 +465,10 @@ fn copy_rect_to_sprite_non_overlapping() {
     let new_rows: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
     assert_eq!(new_rows.len(), 8);
     for (y, row) in new_rows.iter().enumerate() {
-        let digit = char::from_digit(y as u32 + 1, 16).unwrap().to_string().repeat(8);
+        let digit = char::from_digit(y as u32 + 1, 16)
+            .unwrap()
+            .to_string()
+            .repeat(8);
         assert_eq!(*row, row128(&[(0, &digit), (16, &digit)]), "row {y}");
     }
 }
@@ -354,7 +484,12 @@ fn copy_overlapping_regions_behave_as_if_through_a_temp_buffer() {
     let text = cart("", &rows);
     let path = temp_cart("copy-overlap", &text);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "copy", "0,0,2,1", "1,0,2,1"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "copy",
+        "0,0,2,1",
+        "1,0,2,1",
+    ]));
     assert_eq!(code, 0);
 
     let out = read(&path);
@@ -371,7 +506,12 @@ fn copy_size_mismatch_errors_without_modifying_file() {
     let path = temp_cart("copy-mismatch", &text);
     let before = read(&path);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "copy", "0,0,1,1", "0,0,2,1"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "copy",
+        "0,0,1,1",
+        "0,0,2,1",
+    ]));
     assert_ne!(code, 0);
     assert_eq!(read(&path), before);
 }
@@ -432,7 +572,15 @@ fn only_the_changed_sprite_row_is_touched_everything_else_is_byte_identical() {
     );
     let path = temp_cart("byte-preserve", text);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "player", "--dx", "1", "--dy", "0"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "shift",
+        "player",
+        "--dx",
+        "1",
+        "--dy",
+        "0",
+    ]));
     assert_eq!(code, 0);
 
     let out = read(&path);
@@ -460,11 +608,22 @@ fn shift_appends_missing_rows_with_zero_fillers_for_the_gap() {
     let text = "__lua__\nfunction _init() end\n\n__gfx_meta__\nsprite player rect=0,0 size=1x1\n\n__sprites__\na0000000\n__notes__\ntail\n";
     let path = temp_cart("append-gap", text);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "player", "--dx", "0", "--dy", "3"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "shift",
+        "player",
+        "--dx",
+        "0",
+        "--dy",
+        "3",
+    ]));
     assert_eq!(code, 0);
 
     let out = read(&path);
-    assert!(out.ends_with("__notes__\ntail\n"), "trailing section preserved: {out:?}");
+    assert!(
+        out.ends_with("__notes__\ntail\n"),
+        "trailing section preserved: {out:?}"
+    );
 
     let sprite_lines: Vec<&str> = out
         .split("__sprites__\n")
@@ -475,11 +634,27 @@ fn shift_appends_missing_rows_with_zero_fillers_for_the_gap() {
         .unwrap()
         .lines()
         .collect();
-    assert_eq!(sprite_lines.len(), 4, "row0 (overwritten) + 3 appended rows: {sprite_lines:?}");
+    assert_eq!(
+        sprite_lines.len(),
+        4,
+        "row0 (overwritten) + 3 appended rows: {sprite_lines:?}"
+    );
     assert_eq!(sprite_lines[0], zero_row(), "row0 vacated by the shift");
-    assert_eq!(sprite_lines[1], zero_row(), "row1 filler (still implicitly zero)");
-    assert_eq!(sprite_lines[2], zero_row(), "row2 filler (still implicitly zero)");
-    assert_eq!(sprite_lines[3], row128(&[(0, "a")]), "row3 receives the shifted pixel");
+    assert_eq!(
+        sprite_lines[1],
+        zero_row(),
+        "row1 filler (still implicitly zero)"
+    );
+    assert_eq!(
+        sprite_lines[2],
+        zero_row(),
+        "row2 filler (still implicitly zero)"
+    );
+    assert_eq!(
+        sprite_lines[3],
+        row128(&[(0, "a")]),
+        "row3 receives the shifted pixel"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -530,10 +705,21 @@ fn dry_run_prints_the_expected_line_number_and_content_to_stdout() {
         ])
         .output()
         .expect("spawn console-agent");
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim_end(), format!("{expected_lineno}: {expected_content}"));
-    assert_eq!(read(&path), text, "dry-run via the real binary must not write either");
+    assert_eq!(
+        stdout.trim_end(),
+        format!("{expected_lineno}: {expected_content}")
+    );
+    assert_eq!(
+        read(&path),
+        text,
+        "dry-run via the real binary must not write either"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -557,7 +743,13 @@ fn frame_off_sheet_errors_without_modifying_file() {
     let path = temp_cart("err-frame-off-sheet", &text);
     let before = read(&path);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "clear", "full", "--frame", "1"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "clear",
+        "full",
+        "--frame",
+        "1",
+    ]));
     assert_ne!(code, 0);
     assert_eq!(read(&path), before);
 }

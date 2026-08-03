@@ -400,7 +400,9 @@ fn required_str<'a>(params: &'a Value, method: &str, name: &str) -> Result<&'a s
 
 fn required_u32(params: &Value, method: &str, name: &str) -> Result<u32, RpcErr> {
     u32_param(params, name).ok_or_else(|| {
-        RpcErr::bad_params(format!("{method} requires a non-negative integer {name:?} param"))
+        RpcErr::bad_params(format!(
+            "{method} requires a non-negative integer {name:?} param"
+        ))
     })
 }
 
@@ -432,7 +434,8 @@ fn m_sprite_render(session: &Session, params: &Value) -> Result<Value, RpcErr> {
         indices: bool_param(params, "indices"),
         anchor: bool_param(params, "anchor"),
     };
-    let image = view::render(session.console()?.cart(), target, &opts).map_err(RpcErr::bad_params)?;
+    let image =
+        view::render(session.console()?.cart(), target, &opts).map_err(RpcErr::bad_params)?;
     write_image(path, &image)
 }
 
@@ -486,8 +489,7 @@ fn m_sprite_ghost(session: &Session, params: &Value) -> Result<Value, RpcErr> {
         grid: bool_param(params, "grid"),
         anchor: bool_param(params, "anchor"),
     };
-    let image =
-        view::ghost(session.console()?.cart(), anim, &opts).map_err(RpcErr::bad_params)?;
+    let image = view::ghost(session.console()?.cart(), anim, &opts).map_err(RpcErr::bad_params)?;
     write_image(path, &image)
 }
 
@@ -634,7 +636,8 @@ fn m_music_piano_roll(session: &Session, params: &Value) -> Result<Value, RpcErr
         cell: u32_param(params, "cell").unwrap_or(music::roll::DEFAULT_CELL),
         row_h: u32_param(params, "row_h").unwrap_or(music::roll::DEFAULT_ROW_H),
     };
-    let image = music::roll::piano_roll(cart, &order, loop_at, &opts).map_err(RpcErr::bad_params)?;
+    let image =
+        music::roll::piano_roll(cart, &order, loop_at, &opts).map_err(RpcErr::bad_params)?;
     let mut out = write_image(path, &image)?;
     out["patterns"] = json!(order);
     out["loop_pattern"] = json!(loop_at.map(|i| order[i]));

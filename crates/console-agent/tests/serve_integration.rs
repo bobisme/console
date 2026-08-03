@@ -176,7 +176,11 @@ fn serve_screenshot_zoom_param_scales_output() {
     drop(stdin);
     child.wait().expect("wait for console-agent to exit");
 
-    assert!(responses[1].get("error").is_none(), "screenshot failed: {:?}", responses[1]);
+    assert!(
+        responses[1].get("error").is_none(),
+        "screenshot failed: {:?}",
+        responses[1]
+    );
     assert_eq!(responses[1]["result"]["width"], 576);
     assert_eq!(responses[1]["result"]["height"], 1024);
 

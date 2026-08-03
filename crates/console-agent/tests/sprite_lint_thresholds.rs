@@ -83,8 +83,13 @@ fn args(v: &[&str]) -> Vec<String> {
 }
 
 fn approx(value: &Value, expected: f64) {
-    let got = value.as_f64().unwrap_or_else(|| panic!("{value} is not a number"));
-    assert!((got - expected).abs() < 1e-9, "expected {expected}, got {got}");
+    let got = value
+        .as_f64()
+        .unwrap_or_else(|| panic!("{value} is not a number"));
+    assert!(
+        (got - expected).abs() < 1e-9,
+        "expected {expected}, got {got}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +112,10 @@ fn no_thresholds_means_no_violations_key_and_not_violated() {
 #[test]
 fn active_thresholds_that_pass_still_report_an_empty_violations_array() {
     let cart = cart();
-    let thresholds = LintThresholds { max_drift: Some(100.0), ..LintThresholds::default() };
+    let thresholds = LintThresholds {
+        max_drift: Some(100.0),
+        ..LintThresholds::default()
+    };
     let (value, violated) =
         view::lint_gated(&cart, &["dot.wave".to_string()], &thresholds).expect("lint_gated");
     assert!(!violated);
@@ -123,9 +131,8 @@ fn sprite_id_reports_the_resolved_tile_for_classic_index_frames() {
     // dot's rect is (0,0), size 1x1: frame i (classic index addressing)
     // resolves to tile (i, 0).
     let cart = cart();
-    let (value, _) =
-        view::lint_gated(&cart, &["dot.tri".to_string()], &LintThresholds::default())
-            .expect("lint_gated");
+    let (value, _) = view::lint_gated(&cart, &["dot.tri".to_string()], &LintThresholds::default())
+        .expect("lint_gated");
     let frames = value["anims"][0]["frames"].as_array().expect("frames");
     assert_eq!(frames.len(), 3);
     for (i, f) in frames.iter().enumerate() {
@@ -143,9 +150,8 @@ fn sprite_id_reports_the_resolved_tile_for_frames_rect_and_explicit_coords() {
         "anim dot.tri frames=0,1:0,1 fps=4 loop frames_rect=2,0",
     );
     let cart = Cart::parse(&cart_text).expect("relocated cart parses");
-    let (value, _) =
-        view::lint_gated(&cart, &["dot.tri".to_string()], &LintThresholds::default())
-            .expect("lint_gated");
+    let (value, _) = view::lint_gated(&cart, &["dot.tri".to_string()], &LintThresholds::default())
+        .expect("lint_gated");
     let frames = value["anims"][0]["frames"].as_array().expect("frames");
     assert_eq!(frames.len(), 3);
     // frame 0: index 0 from the (2,0) origin -> tile (2,0)
@@ -164,7 +170,10 @@ fn sprite_id_reports_the_resolved_tile_for_frames_rect_and_explicit_coords() {
 #[test]
 fn max_drift_violation_names_anim_frame_metric_value_and_limit() {
     let cart = cart();
-    let thresholds = LintThresholds { max_drift: Some(2.0), ..LintThresholds::default() };
+    let thresholds = LintThresholds {
+        max_drift: Some(2.0),
+        ..LintThresholds::default()
+    };
     let (value, violated) =
         view::lint_gated(&cart, &["dot.wave".to_string()], &thresholds).expect("lint_gated");
     assert!(violated);
@@ -184,7 +193,10 @@ fn max_drift_violation_names_anim_frame_metric_value_and_limit() {
 #[test]
 fn max_drift_above_the_actual_drift_does_not_violate() {
     let cart = cart();
-    let thresholds = LintThresholds { max_drift: Some(10.0), ..LintThresholds::default() };
+    let thresholds = LintThresholds {
+        max_drift: Some(10.0),
+        ..LintThresholds::default()
+    };
     let (_value, violated) =
         view::lint_gated(&cart, &["dot.wave".to_string()], &thresholds).expect("lint_gated");
     assert!(!violated);
@@ -199,7 +211,10 @@ fn max_area_var_violation_uses_absolute_percentage() {
     let cart = cart();
     // Forward pair drifts +100%, wrap pair -50%: a 60% limit catches only
     // the forward one (|-50| = 50 <= 60).
-    let thresholds = LintThresholds { max_area_var: Some(60.0), ..LintThresholds::default() };
+    let thresholds = LintThresholds {
+        max_area_var: Some(60.0),
+        ..LintThresholds::default()
+    };
     let (value, violated) =
         view::lint_gated(&cart, &["dot.wave".to_string()], &thresholds).expect("lint_gated");
     assert!(violated);
@@ -218,7 +233,10 @@ fn max_area_var_violation_uses_absolute_percentage() {
 #[test]
 fn max_changed_violation_fires_on_both_wrap_pairs() {
     let cart = cart();
-    let thresholds = LintThresholds { max_changed: Some(2), ..LintThresholds::default() };
+    let thresholds = LintThresholds {
+        max_changed: Some(2),
+        ..LintThresholds::default()
+    };
     let (value, violated) =
         view::lint_gated(&cart, &["dot.wave".to_string()], &thresholds).expect("lint_gated");
     assert!(violated);
@@ -235,10 +253,16 @@ fn max_changed_violation_fires_on_both_wrap_pairs() {
 #[test]
 fn max_changed_at_or_above_the_actual_count_does_not_violate() {
     let cart = cart();
-    let thresholds = LintThresholds { max_changed: Some(3), ..LintThresholds::default() };
+    let thresholds = LintThresholds {
+        max_changed: Some(3),
+        ..LintThresholds::default()
+    };
     let (_value, violated) =
         view::lint_gated(&cart, &["dot.wave".to_string()], &thresholds).expect("lint_gated");
-    assert!(!violated, "changed_pixels == limit must not violate (strictly greater only)");
+    assert!(
+        !violated,
+        "changed_pixels == limit must not violate (strictly greater only)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -248,14 +272,19 @@ fn max_changed_at_or_above_the_actual_count_does_not_violate() {
 #[test]
 fn no_unique_colors_flags_the_stray_color_by_anim_and_frame() {
     let cart = cart();
-    let thresholds = LintThresholds { no_unique_colors: true, ..LintThresholds::default() };
+    let thresholds = LintThresholds {
+        no_unique_colors: true,
+        ..LintThresholds::default()
+    };
     let (value, violated) =
         view::lint_gated(&cart, &["dot.wave".to_string()], &thresholds).expect("lint_gated");
     assert!(violated);
     let violations = value["violations"].as_array().expect("violations");
     assert_eq!(
         violations,
-        &vec![json!({"anim": "dot.wave", "frame": 1, "metric": "unique_color", "value": 9, "limit": 0})]
+        &vec![
+            json!({"anim": "dot.wave", "frame": 1, "metric": "unique_color", "value": 9, "limit": 0})
+        ]
     );
 }
 
@@ -293,7 +322,10 @@ fn summary_reports_frame_count_worst_drift_worst_changed_and_unique_colors() {
 #[test]
 fn summary_combines_with_thresholds_and_still_reports_violations() {
     let cart = cart();
-    let thresholds = LintThresholds { max_changed: Some(2), ..LintThresholds::default() };
+    let thresholds = LintThresholds {
+        max_changed: Some(2),
+        ..LintThresholds::default()
+    };
     let (summaries, violations, violated) =
         view::lint_summary(&cart, &["dot.wave".to_string()], &thresholds).expect("lint_summary");
     assert!(violated);
@@ -371,7 +403,10 @@ fn loaded_session() -> Session {
 }
 
 fn call(session: &mut Session, method: &str, params: Value) -> Value {
-    handle(session, json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
+    handle(
+        session,
+        json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}),
+    )
 }
 
 #[test]
@@ -382,8 +417,14 @@ fn rpc_sprite_lint_with_no_thresholds_reports_violated_false_and_no_violations_k
     assert_eq!(resp["result"]["violated"], false);
     assert!(resp["result"].get("violations").is_none(), "{resp}");
     // sprite_id is always present, regardless of thresholds.
-    assert_eq!(resp["result"]["anims"][0]["frames"][0]["sprite_id"], json!([0, 0]));
-    assert_eq!(resp["result"]["anims"][0]["frames"][1]["sprite_id"], json!([1, 0]));
+    assert_eq!(
+        resp["result"]["anims"][0]["frames"][0]["sprite_id"],
+        json!([0, 0])
+    );
+    assert_eq!(
+        resp["result"]["anims"][0]["frames"][1]["sprite_id"],
+        json!([1, 0])
+    );
 }
 
 #[test]

@@ -718,10 +718,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
     )?;
 
     // ---- math helpers ------------------------------------------------------
-    g.set(
-        "flr",
-        lua.create_function(|_, x: f64| Ok(num(x.floor())))?,
-    )?;
+    g.set("flr", lua.create_function(|_, x: f64| Ok(num(x.floor())))?)?;
     g.set("ceil", lua.create_function(|_, x: f64| Ok(num(x.ceil())))?)?;
     g.set("abs", lua.create_function(|_, x: f64| Ok(num(x.abs())))?)?;
     g.set(
@@ -739,14 +736,8 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         })?,
     )?;
     // Turns, not radians. Sign is *not* inverted (unlike PICO-8).
-    g.set(
-        "sin",
-        lua.create_function(|_, x: f64| Ok((x * TAU).sin()))?,
-    )?;
-    g.set(
-        "cos",
-        lua.create_function(|_, x: f64| Ok((x * TAU).cos()))?,
-    )?;
+    g.set("sin", lua.create_function(|_, x: f64| Ok((x * TAU).sin()))?)?;
+    g.set("cos", lua.create_function(|_, x: f64| Ok((x * TAU).cos()))?)?;
 
     // ---- audio -------------------------------------------------------------
     // Both take effect immediately, so a call from `_update` or `_draw` is

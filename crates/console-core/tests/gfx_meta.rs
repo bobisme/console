@@ -190,7 +190,8 @@ fn anim_references_unknown_sprite() {
 fn anim_forward_reference_to_a_sprite_is_fine() {
     // The anim comes before the sprite it names; validation happens after
     // the whole section parses.
-    let text = "__lua__\nx=1\n\n__gfx_meta__\nanim p.walk frames=0,1 fps=10\nsprite p rect=0,0 size=1x1\n";
+    let text =
+        "__lua__\nx=1\n\n__gfx_meta__\nanim p.walk frames=0,1 fps=10\nsprite p rect=0,0 size=1x1\n";
     let cart = Cart::parse(text).unwrap();
     assert_eq!(cart.gfx_meta().anim("p.walk").unwrap().sprite, "p");
 }
@@ -232,7 +233,11 @@ fn empty_frames_is_an_error() {
 
 #[test]
 fn missing_dot_in_anim_name() {
-    expect_cart_error("anim playerwalk frames=0 fps=10\n", 1, "must be `<sprite>.<label>`");
+    expect_cart_error(
+        "anim playerwalk frames=0 fps=10\n",
+        1,
+        "must be `<sprite>.<label>`",
+    );
 }
 
 #[test]
@@ -263,8 +268,9 @@ fn unknown_line_kind_is_an_error() {
 #[test]
 fn presence_of_gfx_meta_does_not_affect_rendering() {
     let plain = "__lua__\nfunction _draw() cls(3) spr(0, 10, 10) end\n";
-    let with_meta =
-        format!("{plain}\n__gfx_meta__\nsprite s rect=0,0 size=1x1\nanim s.a frames=0,1 fps=10 loop\n");
+    let with_meta = format!(
+        "{plain}\n__gfx_meta__\nsprite s rect=0,0 size=1x1\nanim s.a frames=0,1 fps=10 loop\n"
+    );
 
     let mut a = Console::new(plain, 0).unwrap();
     let mut b = Console::new(&with_meta, 0).unwrap();

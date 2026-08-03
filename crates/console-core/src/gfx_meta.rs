@@ -256,13 +256,19 @@ impl GfxMeta {
             if tokens[0].eq_ignore_ascii_case("sprite") {
                 let def = parse_sprite_line(line, &tokens)?;
                 if sprites.contains_key(&def.name) {
-                    return Err(cart_err(line, format!("duplicate sprite name {:?}", def.name)));
+                    return Err(cart_err(
+                        line,
+                        format!("duplicate sprite name {:?}", def.name),
+                    ));
                 }
                 sprites.insert(def.name.clone(), def);
             } else if tokens[0].eq_ignore_ascii_case("anim") {
                 let raw_anim = parse_anim_line(line, &tokens)?;
                 if anim_names.contains_key(&raw_anim.name) {
-                    return Err(cart_err(line, format!("duplicate anim name {:?}", raw_anim.name)));
+                    return Err(cart_err(
+                        line,
+                        format!("duplicate anim name {:?}", raw_anim.name),
+                    ));
                 }
                 anim_names.insert(raw_anim.name.clone(), line);
                 raw_anims.push(raw_anim);
@@ -338,7 +344,9 @@ fn clean(raw: &str) -> &str {
 
 /// `[a-z0-9_]+`.
 fn valid_name(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
 fn parse_u8(line: usize, what: &str, text: &str, min: u8, max: u8) -> Result<u8, Error> {
@@ -429,10 +437,16 @@ fn parse_sprite_line(line: usize, tokens: &[&str]) -> Result<SpriteDef, Error> {
     }
 
     let Some(rect) = rect else {
-        return Err(cart_err(line, format!("sprite {name} is missing `rect=<tx>,<ty>`")));
+        return Err(cart_err(
+            line,
+            format!("sprite {name} is missing `rect=<tx>,<ty>`"),
+        ));
     };
     let Some(size) = size else {
-        return Err(cart_err(line, format!("sprite {name} is missing `size=<w>x<h>`")));
+        return Err(cart_err(
+            line,
+            format!("sprite {name} is missing `size=<w>x<h>`"),
+        ));
     };
     // Default: bottom-center, i.e. ground contact.
     let anchor = anchor.unwrap_or((i32::from(size.0) * 8 / 2, i32::from(size.1) * 8 - 1));
@@ -465,7 +479,13 @@ fn parse_frame_spec(line: usize, part: &str) -> Result<FrameSpec, Error> {
         let ty = parse_u8(line, "frame tile ty", b, 0, TILE_GRID - 1)?;
         Ok(FrameSpec::Rect(tx, ty))
     } else {
-        Ok(FrameSpec::Index(parse_u8(line, "frame index", part, 0, u8::MAX)?))
+        Ok(FrameSpec::Index(parse_u8(
+            line,
+            "frame index",
+            part,
+            0,
+            u8::MAX,
+        )?))
     }
 }
 
@@ -542,17 +562,25 @@ fn parse_anim_line(line: usize, tokens: &[&str]) -> Result<RawAnim, Error> {
             other => {
                 return Err(cart_err(
                     line,
-                    format!("unknown anim key {other:?} (want `frames`, `fps`, `frames_rect` or `loop`)"),
+                    format!(
+                        "unknown anim key {other:?} (want `frames`, `fps`, `frames_rect` or `loop`)"
+                    ),
                 ));
             }
         }
     }
 
     let Some(frames) = frames else {
-        return Err(cart_err(line, format!("anim {full} is missing `frames=<i0,i1,...>`")));
+        return Err(cart_err(
+            line,
+            format!("anim {full} is missing `frames=<i0,i1,...>`"),
+        ));
     };
     let Some(fps) = fps else {
-        return Err(cart_err(line, format!("anim {full} is missing `fps=<1-60>`")));
+        return Err(cart_err(
+            line,
+            format!("anim {full} is missing `fps=<1-60>`"),
+        ));
     };
 
     Ok(RawAnim {
@@ -603,12 +631,20 @@ mod tests {
     fn classic_frames_parse_and_resolve_unchanged() {
         // Back-compat: no frames_rect, all-index frames behave exactly like
         // before this bone.
-        let meta =
-            GfxMeta::parse(Some("sprite p rect=1,0 size=1x1\nanim p.a frames=0,1,15 fps=4 loop\n"))
-                .unwrap();
+        let meta = GfxMeta::parse(Some(
+            "sprite p rect=1,0 size=1x1\nanim p.a frames=0,1,15 fps=4 loop\n",
+        ))
+        .unwrap();
         let a = meta.anim("p.a").unwrap();
         let p = meta.sprite("p").unwrap();
-        assert_eq!(a.frames, vec![FrameSpec::Index(0), FrameSpec::Index(1), FrameSpec::Index(15)]);
+        assert_eq!(
+            a.frames,
+            vec![
+                FrameSpec::Index(0),
+                FrameSpec::Index(1),
+                FrameSpec::Index(15)
+            ]
+        );
         assert_eq!(a.frames_rect, None);
         assert_eq!(a.resolve_frame(p, 0), Some((8, 0, 8, 8)));
         assert_eq!(a.resolve_frame(p, 1), Some((16, 0, 8, 8)));
@@ -660,11 +696,14 @@ mod tests {
         assert_eq!(a.resolve_frame(p, 1), Some((12 * 8, 4 * 8, 8, 8)));
         // frames=3 (index again) still goes through frames_rect.
         assert_eq!(a.resolve_frame(p, 2), Some((8 * 8 + 3 * 8, 8 * 8, 8, 8)));
-        assert_eq!(a.frames, vec![
-            FrameSpec::Index(0),
-            FrameSpec::Rect(12, 4),
-            FrameSpec::Index(3),
-        ]);
+        assert_eq!(
+            a.frames,
+            vec![
+                FrameSpec::Index(0),
+                FrameSpec::Rect(12, 4),
+                FrameSpec::Index(3),
+            ]
+        );
     }
 
     #[test]
@@ -683,8 +722,10 @@ mod tests {
         // Sprite is 2x2 tiles; explicit tile (15,15) is a valid in-range
         // coordinate on its own but the 2x2 rect anchored there spills past
         // the sheet edge.
-        let err = GfxMeta::parse(Some("sprite p rect=0,0 size=2x2\nanim p.a frames=0,15:15 fps=4\n"))
-            .unwrap_err();
+        let err = GfxMeta::parse(Some(
+            "sprite p rect=0,0 size=2x2\nanim p.a frames=0,15:15 fps=4\n",
+        ))
+        .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("p.a"), "{msg}");
         // Position 1 (0-based) is the offending 15:15 entry.
@@ -695,9 +736,10 @@ mod tests {
     fn explicit_tile_frame_bad_syntax_is_a_parse_error() {
         // Missing the `:` separator entirely falls through to the plain
         // index parser and fails as "not a number".
-        let err =
-            GfxMeta::parse(Some("sprite p rect=0,0 size=1x1\nanim p.a frames=1x2 fps=4\n"))
-                .unwrap_err();
+        let err = GfxMeta::parse(Some(
+            "sprite p rect=0,0 size=1x1\nanim p.a frames=1x2 fps=4\n",
+        ))
+        .unwrap_err();
         assert!(err.to_string().contains("frame index"), "{err}");
     }
 

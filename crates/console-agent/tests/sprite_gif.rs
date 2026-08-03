@@ -21,7 +21,9 @@ fn demo_cart() -> Cart {
 fn decode(bytes: &[u8]) -> (u16, u16, usize) {
     let mut opts = gif::DecodeOptions::new();
     opts.set_color_output(gif::ColorOutput::RGBA);
-    let mut decoder = opts.read_info(std::io::Cursor::new(bytes)).expect("valid gif header");
+    let mut decoder = opts
+        .read_info(std::io::Cursor::new(bytes))
+        .expect("valid gif header");
     let (w, h) = (decoder.width(), decoder.height());
     let mut n = 0;
     while decoder.read_next_frame().expect("decode frame").is_some() {
@@ -34,14 +36,21 @@ fn decode(bytes: &[u8]) -> (u16, u16, usize) {
 fn gif_of_demo_cart_player_walk_decodes_to_the_right_shape() {
     let cart = demo_cart();
     // player.walk: 4 frames, 1x1-tile (8 sheet px) sprite, fps=8, loop.
-    let opts = GifOpts { zoom: 4, ..GifOpts::default() };
+    let opts = GifOpts {
+        zoom: 4,
+        ..GifOpts::default()
+    };
     let out = view::gif(&cart, "player.walk", &opts).expect("encode gif");
 
     assert_eq!(out.frames, 4);
     assert_eq!((out.width, out.height), (32, 32));
 
     let (w, h, n) = decode(&out.bytes);
-    assert_eq!((w, h), (32, 32), "decoded dimensions must match what we asked to encode");
+    assert_eq!(
+        (w, h),
+        (32, 32),
+        "decoded dimensions must match what we asked to encode"
+    );
     assert_eq!(n, 4, "decoded frame count must match the anim's frame list");
 }
 
@@ -58,36 +67,69 @@ fn gif_defaults_to_zoom_8() {
 fn gif_delay_matches_declared_fps() {
     let cart = demo_cart();
     // fps=8 -> 125ms/frame -> 12.5, rounds to 13 hundredths (130ms).
-    let out = view::gif(&cart, "player.walk", &GifOpts { zoom: 2, ..GifOpts::default() })
-        .expect("encode gif");
+    let out = view::gif(
+        &cart,
+        "player.walk",
+        &GifOpts {
+            zoom: 2,
+            ..GifOpts::default()
+        },
+    )
+    .expect("encode gif");
 
     let mut opts = gif::DecodeOptions::new();
     opts.set_color_output(gif::ColorOutput::RGBA);
-    let mut decoder = opts.read_info(std::io::Cursor::new(&out.bytes)).expect("valid gif header");
-    let frame = decoder.read_next_frame().expect("decode frame").expect("at least one frame");
+    let mut decoder = opts
+        .read_info(std::io::Cursor::new(&out.bytes))
+        .expect("valid gif header");
+    let frame = decoder
+        .read_next_frame()
+        .expect("decode frame")
+        .expect("at least one frame");
     assert_eq!(frame.delay, 13, "125ms rounds to 13 hundredths of a second");
 }
 
 #[test]
 fn gif_grid_and_anchor_change_the_encoded_pixels() {
     let cart = demo_cart();
-    let plain = view::gif(&cart, "player.walk", &GifOpts { zoom: 8, ..GifOpts::default() })
-        .expect("plain gif");
+    let plain = view::gif(
+        &cart,
+        "player.walk",
+        &GifOpts {
+            zoom: 8,
+            ..GifOpts::default()
+        },
+    )
+    .expect("plain gif");
     let grid = view::gif(
         &cart,
         "player.walk",
-        &GifOpts { zoom: 8, grid: true, ..GifOpts::default() },
+        &GifOpts {
+            zoom: 8,
+            grid: true,
+            ..GifOpts::default()
+        },
     )
     .expect("grid gif");
     let anchored = view::gif(
         &cart,
         "player.walk",
-        &GifOpts { zoom: 8, anchor: true, ..GifOpts::default() },
+        &GifOpts {
+            zoom: 8,
+            anchor: true,
+            ..GifOpts::default()
+        },
     )
     .expect("anchor gif");
 
-    assert_ne!(plain.bytes, grid.bytes, "--grid must change the encoded frames");
-    assert_ne!(plain.bytes, anchored.bytes, "--anchor must change the encoded frames");
+    assert_ne!(
+        plain.bytes, grid.bytes,
+        "--grid must change the encoded frames"
+    );
+    assert_ne!(
+        plain.bytes, anchored.bytes,
+        "--anchor must change the encoded frames"
+    );
     // Overlays don't change the animation's shape, only its pixels.
     assert_eq!(plain.frames, grid.frames);
     assert_eq!((plain.width, plain.height), (grid.width, grid.height));
@@ -122,7 +164,11 @@ fn cli_sprite_gif_writes_a_decodable_file() {
         ])
         .output()
         .expect("spawn console-agent");
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let bytes = std::fs::read(&out_path).expect("read gif output");
     let (w, h, n) = decode(&bytes);

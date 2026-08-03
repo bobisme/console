@@ -2,8 +2,8 @@
 //! determinism contract.
 
 use console_core::{
-    CHANNEL_COUNT, Cart, Console, DUCK_ATTACK_SAMPLES, Duck, Echo, Env, Error, Fx,
-    FM_DECAY_HALF_LIFE, Fm, MASTER_REF_LEVEL, MAX_DRIVE, MAX_DUCK_DEPTH, MAX_HISS, MAX_TONE, Master, NIBBLE_LEVEL,
+    CHANNEL_COUNT, Cart, Console, DUCK_ATTACK_SAMPLES, Duck, Echo, Env, Error, FM_DECAY_HALF_LIFE,
+    Fm, Fx, MASTER_REF_LEVEL, MAX_DRIVE, MAX_DUCK_DEPTH, MAX_HISS, MAX_TONE, Master, NIBBLE_LEVEL,
     NOTE_FREQ, PatternEnd, RowMod, SAMPLE_RATE, SAMPLES_PER_FRAME, SINE_QUARTER, SfxRow, Sweep,
     Vib, WAVE_COUNT, WAVE_FM, WAVE_TABLE_BASE, WAVETABLE_LEN, WAVETABLE_SLOTS, Wavetable, freq_at,
     input,
@@ -83,18 +83,60 @@ fn sfx_section_round_trips() {
     assert_eq!(a.speed, 4);
     assert_eq!(a.loop_range, None);
     assert_eq!(a.rows.len(), 4);
-    assert_eq!(a.rows[0], SfxRow::Note { note: 0, wave: 0, vol: 7 }); // C0
-    assert_eq!(a.rows[1], SfxRow::Note { note: 49, wave: 1, vol: 6 }); // C#4
+    assert_eq!(
+        a.rows[0],
+        SfxRow::Note {
+            note: 0,
+            wave: 0,
+            vol: 7
+        }
+    ); // C0
+    assert_eq!(
+        a.rows[1],
+        SfxRow::Note {
+            note: 49,
+            wave: 1,
+            vol: 6
+        }
+    ); // C#4
     assert_eq!(a.rows[2], SfxRow::Rest);
-    assert_eq!(a.rows[3], SfxRow::Note { note: 95, wave: 5, vol: 0 }); // B7
+    assert_eq!(
+        a.rows[3],
+        SfxRow::Note {
+            note: 95,
+            wave: 5,
+            vol: 0
+        }
+    ); // B7
     assert_eq!(a.duration(), 16);
 
     let b = cart.sfx(63).unwrap();
     assert_eq!(b.speed, 255);
     assert_eq!(b.loop_range, Some((1, 2)));
-    assert_eq!(b.rows[0], SfxRow::Note { note: 57, wave: 2, vol: 3 }); // A4
-    assert_eq!(b.rows[1], SfxRow::Note { note: 44, wave: 3, vol: 4 }); // G#3
-    assert_eq!(b.rows[2], SfxRow::Note { note: 63, wave: 4, vol: 5 }); // D#5
+    assert_eq!(
+        b.rows[0],
+        SfxRow::Note {
+            note: 57,
+            wave: 2,
+            vol: 3
+        }
+    ); // A4
+    assert_eq!(
+        b.rows[1],
+        SfxRow::Note {
+            note: 44,
+            wave: 3,
+            vol: 4
+        }
+    ); // G#3
+    assert_eq!(
+        b.rows[2],
+        SfxRow::Note {
+            note: 63,
+            wave: 4,
+            vol: 5
+        }
+    ); // D#5
 
     assert!(cart.sfx(1).is_none());
 }
@@ -227,7 +269,11 @@ fn malformed_sfx_is_a_line_numbered_cart_error() {
         "expected `NOTE WAVE VOL [FX]`",
     );
     expect_cart_error("__lua__\n\n__sfx__\nsfx 64 speed=1\nC4 0 1\n", 1, "0-63");
-    expect_cart_error("__lua__\n\n__sfx__\nsfx 0 speed=0\nC4 0 1\n", 1, "speed must be");
+    expect_cart_error(
+        "__lua__\n\n__sfx__\nsfx 0 speed=0\nC4 0 1\n",
+        1,
+        "speed must be",
+    );
     expect_cart_error("__lua__\n\n__sfx__\nsfx 0\nC4 0 1\n", 1, "missing `speed=");
     expect_cart_error("__lua__\n\n__sfx__\nsfx 0 speed=1\n", 1, "has no rows");
     expect_cart_error("__lua__\n\n__sfx__\nC4 0 1\n", 1, "before any");
@@ -260,12 +306,32 @@ fn malformed_music_is_a_line_numbered_cart_error() {
     const SFX: &str = "__lua__\n\n__sfx__\nsfx 0 speed=1\nC4 0 1\n\n__music__\n";
     // Fewer than 4 slots and more than 6 are both rejected.
     expect_cart_error(&format!("{SFX}pat 0 : 0 - -\n"), 1, "4-6 channel slots");
-    expect_cart_error(&format!("{SFX}pat 0 : 0 - - - - - -\n"), 1, "4-6 channel slots");
+    expect_cart_error(
+        &format!("{SFX}pat 0 : 0 - - - - - -\n"),
+        1,
+        "4-6 channel slots",
+    );
     expect_cart_error(&format!("{SFX}pat 0 0 - - -\n"), 1, "expected `pat");
-    expect_cart_error(&format!("{SFX}nope 0 : - - - -\n"), 1, "must start with `pat`");
-    expect_cart_error(&format!("{SFX}pat 64 : - - - -\n"), 1, "pattern id must be 0-63");
-    expect_cart_error(&format!("{SFX}pat 0 wat : - - - -\n"), 1, "unknown pattern flag");
-    expect_cart_error(&format!("{SFX}pat 0 : 0 1 - -\n"), 1, "sfx 1, which is not defined");
+    expect_cart_error(
+        &format!("{SFX}nope 0 : - - - -\n"),
+        1,
+        "must start with `pat`",
+    );
+    expect_cart_error(
+        &format!("{SFX}pat 64 : - - - -\n"),
+        1,
+        "pattern id must be 0-63",
+    );
+    expect_cart_error(
+        &format!("{SFX}pat 0 wat : - - - -\n"),
+        1,
+        "unknown pattern flag",
+    );
+    expect_cart_error(
+        &format!("{SFX}pat 0 : 0 1 - -\n"),
+        1,
+        "sfx 1, which is not defined",
+    );
     expect_cart_error(
         &format!("{SFX}pat 0 loop=5 : 0 - - -\n"),
         1,
@@ -497,7 +563,10 @@ fn mix_headroom_four_channels_is_unchanged() {
     assert!(peak > 0.99, "probe never got loud (peak {peak})");
     // A triangle only grazes its peak, so hardly any sample is pinned.
     let pinned = pinned_fraction(&samples);
-    assert!(pinned < 0.01, "{pinned} of samples pinned: this is clipping");
+    assert!(
+        pinned < 0.01,
+        "{pinned} of samples pinned: this is clipping"
+    );
 }
 
 #[test]
@@ -524,7 +593,10 @@ fn mix_headroom_six_channels_never_reaches_the_clamp_with_drive() {
         let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         // The shaper's output is bounded by MAKEUP[drive] < 1, so the hard
         // clamp is never engaged: any non-zero drive is a free limiter.
-        assert!(peak < 1.0, "drive {drive} still hit the clamp (peak {peak})");
+        assert!(
+            peak < 1.0,
+            "drive {drive} still hit the clamp (peak {peak})"
+        );
         assert_eq!(
             pinned_fraction(&samples),
             0.0,
@@ -617,7 +689,11 @@ fn volume_changes_are_ramped_too() {
         .filter(|(_, w)| (w[1].abs() - w[0].abs()).abs() > 0.25 / 64.0 + 1e-6)
         .map(|(i, w)| (i, w[1].abs() - w[0].abs()))
         .collect();
-    assert!(jumps.is_empty(), "un-ramped envelope steps: {:?}", &jumps[..jumps.len().min(4)]);
+    assert!(
+        jumps.is_empty(),
+        "un-ramped envelope steps: {:?}",
+        &jumps[..jumps.len().min(4)]
+    );
     // The envelope really does open and close.
     assert!(samples.iter().any(|&s| s.abs() > 0.2));
     assert!(samples.contains(&0.0));
@@ -948,9 +1024,15 @@ fn out_of_range_ids_error_clearly() {
     assert!(msg.contains("no __music__ section"), "{msg}");
 
     let msg = lua_error(SEQ, "sfx(9)");
-    assert!(msg.contains("is not defined") && msg.contains("0, 1, 2"), "{msg}");
+    assert!(
+        msg.contains("is not defined") && msg.contains("0, 1, 2"),
+        "{msg}"
+    );
     let msg = lua_error(SEQ, "music(9)");
-    assert!(msg.contains("is not defined") && msg.contains("0, 1"), "{msg}");
+    assert!(
+        msg.contains("is not defined") && msg.contains("0, 1"),
+        "{msg}"
+    );
 
     let msg = lua_error(SEQ, "sfx(64)");
     assert!(msg.contains("out of range"), "{msg}");
@@ -964,7 +1046,8 @@ fn out_of_range_ids_error_clearly() {
     assert!(msg.contains("channel -2 out of range"), "{msg}");
     // ...and 4/5 are perfectly legal.
     let mut con = Console::new(SEQ, 0).unwrap();
-    con.eval("sfx(0, 4) sfx(0, 5)").expect("channels 4 and 5 exist");
+    con.eval("sfx(0, 4) sfx(0, 5)")
+        .expect("channels 4 and 5 exist");
     assert_eq!(con.audio_channels()[4].sfx, Some(0));
     assert_eq!(con.audio_channels()[5].sfx, Some(0));
     let msg = lua_error(SEQ, "music(-2)");
@@ -1065,7 +1148,12 @@ fn instruments_section_round_trips() {
     assert!(cart.instrument("nope").is_none());
     assert!(!cart.audio().is_empty());
     // A cart with no section at all still has none of this.
-    assert!(Cart::parse("__lua__\nx=1\n").unwrap().instruments().is_empty());
+    assert!(
+        Cart::parse("__lua__\nx=1\n")
+            .unwrap()
+            .instruments()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -1074,23 +1162,52 @@ fn sfx_rows_resolve_instrument_names_to_their_waveform() {
     let sfx = cart.sfx(0).unwrap();
     // The row's `wave` is the instrument's, so every PoC v1 consumer of
     // SfxRow keeps working unchanged.
-    assert_eq!(sfx.rows[0], SfxRow::Note { note: 57, wave: 1, vol: 6 });
-    assert_eq!(sfx.rows[1], SfxRow::Note { note: 60, wave: 2, vol: 5 });
+    assert_eq!(
+        sfx.rows[0],
+        SfxRow::Note {
+            note: 57,
+            wave: 1,
+            vol: 6
+        }
+    );
+    assert_eq!(
+        sfx.rows[1],
+        SfxRow::Note {
+            note: 60,
+            wave: 2,
+            vol: 5
+        }
+    );
     assert_eq!(sfx.rows[2], SfxRow::Rest);
-    assert_eq!(sfx.rows[3], SfxRow::Note { note: 43, wave: 3, vol: 7 });
+    assert_eq!(
+        sfx.rows[3],
+        SfxRow::Note {
+            note: 43,
+            wave: 3,
+            vol: 7
+        }
+    );
 
     // ...and the instrument itself is on the side.
     let bank = cart.audio();
     assert_eq!(
-        bank.instrument_at(sfx.row_mod(0).inst.unwrap()).unwrap().name,
+        bank.instrument_at(sfx.row_mod(0).inst.unwrap())
+            .unwrap()
+            .name,
         "lead"
     );
     assert_eq!(
-        bank.instrument_at(sfx.row_mod(3).inst.unwrap()).unwrap().name,
+        bank.instrument_at(sfx.row_mod(3).inst.unwrap())
+            .unwrap()
+            .name,
         "kick"
     );
     assert_eq!(sfx.row_mod(2).inst, None, "rests name no instrument");
-    assert_eq!(sfx.row_mod(99), Default::default(), "out of range is default");
+    assert_eq!(
+        sfx.row_mod(99),
+        Default::default(),
+        "out of range is default"
+    );
     assert_eq!(sfx.mods.len(), sfx.rows.len());
 }
 
@@ -1114,7 +1231,14 @@ inst horn wave=4 env=2,3,4
 ";
     let cart = Cart::parse(text).unwrap();
     assert_eq!(cart.instrument("horn").unwrap().wave, 4);
-    assert_eq!(cart.sfx(0).unwrap().rows[0], SfxRow::Note { note: 57, wave: 4, vol: 6 });
+    assert_eq!(
+        cart.sfx(0).unwrap().rows[0],
+        SfxRow::Note {
+            note: 57,
+            wave: 4,
+            vol: 6
+        }
+    );
     // ...and `speed=auto` still saw the tempo line: 3600/(90*2) = 20.
     assert_eq!(cart.sfx(0).unwrap().speed, 20);
 }
@@ -1122,10 +1246,18 @@ inst horn wave=4 env=2,3,4
 #[test]
 fn malformed_instruments_are_line_numbered_cart_errors() {
     fn inst_err(body: &str, line: usize, needle: &str) {
-        expect_cart_error(&format!("__lua__\nx=1\n\n__instruments__\n{body}"), line, needle);
+        expect_cart_error(
+            &format!("__lua__\nx=1\n\n__instruments__\n{body}"),
+            line,
+            needle,
+        );
     }
 
-    inst_err("inst a wave=6\n", 1, "but no `fm=<ratio>,<index>[,<decay>]`");
+    inst_err(
+        "inst a wave=6\n",
+        1,
+        "but no `fm=<ratio>,<index>[,<decay>]`",
+    );
     inst_err("inst a wave=7\n", 1, "wave must be 0-6");
     inst_err("inst a\n", 1, "missing `wave=<0-6>`");
     inst_err("inst\n", 1, "expected `inst <name>");
@@ -1133,21 +1265,37 @@ fn malformed_instruments_are_line_numbered_cart_errors() {
     inst_err("inst a-b wave=1\n", 1, "must match [a-z0-9_]+");
     inst_err("inst 3 wave=1\n", 1, "must not be a bare wave digit");
     inst_err("inst 12 wave=1\n", 1, "must not be a bare wave digit");
-    inst_err("inst a wave=1\ninst a wave=2\n", 2, "duplicate instrument name");
+    inst_err(
+        "inst a wave=1\ninst a wave=2\n",
+        2,
+        "duplicate instrument name",
+    );
     inst_err("wave=1\n", 1, "expected `inst <name>");
     inst_err("inst a wave=1 nope\n", 1, "unexpected \"nope\"");
     inst_err("inst a wave=1 boom=2\n", 1, "unknown inst key");
 
     // env
-    inst_err("inst a wave=1 env=1,2\n", 1, "env must be `env=<attack>,<decay>,<sustain>`");
+    inst_err(
+        "inst a wave=1 env=1,2\n",
+        1,
+        "env must be `env=<attack>,<decay>,<sustain>`",
+    );
     inst_err("inst a wave=1 env=1,2,3,4\n", 1, "env must be");
     inst_err("inst a wave=1 env=256,0,0\n", 1, "env attack must be 0-255");
     inst_err("inst a wave=1 env=0,999,0\n", 1, "env decay must be 0-255");
     inst_err("inst a wave=1 env=0,0,8\n", 1, "env sustain must be 0-7");
-    inst_err("inst a wave=1 env=x,0,0\n", 1, "env attack must be a number");
+    inst_err(
+        "inst a wave=1 env=x,0,0\n",
+        1,
+        "env attack must be a number",
+    );
 
     // vib
-    inst_err("inst a wave=1 vib=25,4\n", 1, "vib must be `vib=<cents>,<rate>,<delay>`");
+    inst_err(
+        "inst a wave=1 vib=25,4\n",
+        1,
+        "vib must be `vib=<cents>,<rate>,<delay>`",
+    );
     inst_err("inst a wave=1 vib=0,4,0\n", 1, "vib cents must be 1-100");
     inst_err("inst a wave=1 vib=101,4,0\n", 1, "vib cents must be 1-100");
     inst_err("inst a wave=1 vib=25,0,0\n", 1, "vib rate must be 1-16");
@@ -1155,13 +1303,33 @@ fn malformed_instruments_are_line_numbered_cart_errors() {
     inst_err("inst a wave=1 vib=25,4,256\n", 1, "vib delay must be 0-255");
 
     // sweep
-    inst_err("inst a wave=1 sweep=-12\n", 1, "sweep must be `sweep=<semis>,<frames>`");
-    inst_err("inst a wave=1 sweep=-12,0\n", 1, "sweep frames must be 1-255");
-    inst_err("inst a wave=1 sweep=-12,256\n", 1, "sweep frames must be 1-255");
-    inst_err("inst a wave=1 sweep=97,4\n", 1, "sweep semitones must be -96-96");
+    inst_err(
+        "inst a wave=1 sweep=-12\n",
+        1,
+        "sweep must be `sweep=<semis>,<frames>`",
+    );
+    inst_err(
+        "inst a wave=1 sweep=-12,0\n",
+        1,
+        "sweep frames must be 1-255",
+    );
+    inst_err(
+        "inst a wave=1 sweep=-12,256\n",
+        1,
+        "sweep frames must be 1-255",
+    );
+    inst_err(
+        "inst a wave=1 sweep=97,4\n",
+        1,
+        "sweep semitones must be -96-96",
+    );
 
     // line numbers count from the section start, blank/comment lines included
-    inst_err("# note\n\ninst a wave=1\ninst b wave=9\n", 4, "wave must be 0-6");
+    inst_err(
+        "# note\n\ninst a wave=1\ninst b wave=9\n",
+        4,
+        "wave must be 0-6",
+    );
 }
 
 #[test]
@@ -1203,7 +1371,8 @@ fn fx_of(text: &str) -> Fx {
 
 #[test]
 fn effect_column_round_trips() {
-    const HEAD: &str = "__lua__\nx=1\n\n__instruments__\ninst v wave=1 vib=30,8,4\n\n__sfx__\nsfx 0 speed=8\n";
+    const HEAD: &str =
+        "__lua__\nx=1\n\n__instruments__\ninst v wave=1 vib=30,8,4\n\n__sfx__\nsfx 0 speed=8\n";
 
     assert_eq!(
         fx_of(&format!("{HEAD}A4 1 6 arp3,7\n")),
@@ -1217,7 +1386,10 @@ fn effect_column_round_trips() {
         fx_of(&format!("{HEAD}A4 1 6 sl+7\n")),
         Fx::Slide { semis: 7 }
     );
-    assert_eq!(fx_of(&format!("{HEAD}A4 1 6 sl-12\n")), Fx::Slide { semis: -12 });
+    assert_eq!(
+        fx_of(&format!("{HEAD}A4 1 6 sl-12\n")),
+        Fx::Slide { semis: -12 }
+    );
     assert_eq!(
         fx_of(&format!("{HEAD}A4 1 6 sl5\n")),
         Fx::Slide { semis: 5 },
@@ -1250,7 +1422,10 @@ fn effect_column_round_trips() {
         })
     );
     // Case-insensitive, like every other keyword in the format.
-    assert_eq!(fx_of(&format!("{HEAD}A4 1 6 ARP3,7\n")), Fx::Arp { a: 3, b: 7 });
+    assert_eq!(
+        fx_of(&format!("{HEAD}A4 1 6 ARP3,7\n")),
+        Fx::Arp { a: 3, b: 7 }
+    );
     // Absent by default.
     let cart = Cart::parse(&format!("{HEAD}A4 1 6\n---\n")).unwrap();
     assert_eq!(cart.sfx(0).unwrap().row_mod(0).fx, None);
@@ -1259,8 +1434,7 @@ fn effect_column_round_trips() {
 
 #[test]
 fn malformed_effects_are_line_numbered_cart_errors() {
-    const HEAD: &str =
-        "__lua__\nx=1\n\n__instruments__\ninst v wave=1 vib=30,8,4\ninst p wave=1\n\n__sfx__\nsfx 0 speed=8\n";
+    const HEAD: &str = "__lua__\nx=1\n\n__instruments__\ninst v wave=1 vib=30,8,4\ninst p wave=1\n\n__sfx__\nsfx 0 speed=8\n";
     fn fx_err(row: &str, needle: &str) {
         expect_cart_error(
             &format!("{HEAD}{row}\n"),
@@ -1283,7 +1457,10 @@ fn malformed_effects_are_line_numbered_cart_errors() {
     fx_err("A4 1 6 fade-8", "fade levels must be -7-7");
     // Bare `vib` needs an instrument that has one.
     fx_err("A4 p 6 vib", "bare `vib` needs the row's instrument \"p\"");
-    fx_err("A4 1 6 vib", "bare `vib` needs the row to name an instrument");
+    fx_err(
+        "A4 1 6 vib",
+        "bare `vib` needs the row to name an instrument",
+    );
     // Only one effect per row.
     fx_err("A4 1 6 sl+2 vib", "expected `NOTE WAVE VOL [FX]`");
 }
@@ -1338,9 +1515,21 @@ fn speed_auto_without_a_bpm_line_is_an_error() {
 #[test]
 fn malformed_tempo_lines_are_line_numbered_cart_errors() {
     const SFX: &str = "__lua__\nx=1\n\n__sfx__\nsfx 0 speed=4\nA4 1 6\n\n__music__\n";
-    expect_cart_error(&format!("{SFX}bpm=0\npat 0 : 0 - - -\n"), 1, "bpm must be 1-1000");
-    expect_cart_error(&format!("{SFX}bpm=1001\npat 0 : 0 - - -\n"), 1, "bpm must be 1-1000");
-    expect_cart_error(&format!("{SFX}bpm=x\npat 0 : 0 - - -\n"), 1, "bpm must be a number");
+    expect_cart_error(
+        &format!("{SFX}bpm=0\npat 0 : 0 - - -\n"),
+        1,
+        "bpm must be 1-1000",
+    );
+    expect_cart_error(
+        &format!("{SFX}bpm=1001\npat 0 : 0 - - -\n"),
+        1,
+        "bpm must be 1-1000",
+    );
+    expect_cart_error(
+        &format!("{SFX}bpm=x\npat 0 : 0 - - -\n"),
+        1,
+        "bpm must be a number",
+    );
     expect_cart_error(
         &format!("{SFX}bpm=120 rows_per_beat=0\npat 0 : 0 - - -\n"),
         1,
@@ -1356,7 +1545,11 @@ fn malformed_tempo_lines_are_line_numbered_cart_errors() {
         1,
         "unknown tempo key",
     );
-    expect_cart_error(&format!("{SFX}bpm=120 wat\npat 0 : 0 - - -\n"), 1, "unexpected \"wat\"");
+    expect_cart_error(
+        &format!("{SFX}bpm=120 wat\npat 0 : 0 - - -\n"),
+        1,
+        "unexpected \"wat\"",
+    );
     // 3600/(1000*16) rounds to 0, which is not a legal speed.
     expect_cart_error(
         &format!("{SFX}bpm=1000 rows_per_beat=16\npat 0 : 0 - - -\n"),
@@ -1364,7 +1557,11 @@ fn malformed_tempo_lines_are_line_numbered_cart_errors() {
         "gives speed=0",
     );
     // ...and 3600/(1*1) = 3600 is past 255.
-    expect_cart_error(&format!("{SFX}bpm=1\npat 0 : 0 - - -\n"), 1, "gives speed=900");
+    expect_cart_error(
+        &format!("{SFX}bpm=1\npat 0 : 0 - - -\n"),
+        1,
+        "gives speed=900",
+    );
     // The tempo line may only be the first line.
     expect_cart_error(
         &format!("{SFX}pat 0 : 0 - - -\nbpm=120\n"),
@@ -1480,7 +1677,11 @@ A4 2 1 fade+4
 ";
     let mut con = console(cart);
     let vols = vol_trajectory(&mut con, 16);
-    assert_eq!(&vols[..8], &[7, 6, 5, 4, 3, 2, 1, 0], "fade-7 reaches silence");
+    assert_eq!(
+        &vols[..8],
+        &[7, 6, 5, 4, 3, 2, 1, 0],
+        "fade-7 reaches silence"
+    );
     assert_eq!(&vols[8..], &[1, 2, 2, 3, 3, 4, 4, 5], "fade+4 reaches 1+4");
 }
 
@@ -1510,7 +1711,10 @@ C3 kick 7
     let f0 = frame_freq(&samples, 0);
     let f5 = frame_freq(&samples, 4);
     assert!((f0 - 130.8).abs() < 6.0, "frame 0 should be C3, got {f0}");
-    assert!((f5 - 69.3).abs() < 6.0, "frame 4 should be near C2, got {f5}");
+    assert!(
+        (f5 - 69.3).abs() < 6.0,
+        "frame 4 should be near C2, got {f5}"
+    );
 }
 
 /// Estimate the fundamental of one rendered frame from its rising zero
@@ -1566,7 +1770,10 @@ A4 2 7 sl+12
     // on the *boundary*, so a slide glides into whatever plays next.
     let last = frame_freq(&samples, 59);
     let full = freq_at(57, 12.0);
-    assert!(last < full && last > freq_at(57, 11.0) * 0.99, "{last} vs {full}");
+    assert!(
+        last < full && last > freq_at(57, 11.0) * 0.99,
+        "{last} vs {full}"
+    );
 }
 
 #[test]
@@ -1582,7 +1789,9 @@ A4 2 7 arp4,7
     let mut con = console(cart);
     let samples = collect(&mut con, 12);
     // 0, 0, +4, +4, +7, +7, then back round.
-    let want = [0.0f32, 0.0, 4.0, 4.0, 7.0, 7.0, 0.0, 0.0, 4.0, 4.0, 7.0, 7.0];
+    let want = [
+        0.0f32, 0.0, 4.0, 4.0, 7.0, 7.0, 0.0, 0.0, 4.0, 4.0, 7.0, 7.0,
+    ];
     for (frame, semis) in want.iter().enumerate() {
         let got = frame_freq(&samples, frame);
         let want = freq_at(57, *semis);
@@ -1613,7 +1822,10 @@ A4 wob 7
     let up = frame_freq(&samples, 4);
     let down = frame_freq(&samples, 12);
     assert!((flat - 440.0).abs() < 4.0, "{flat}");
-    assert!(up > flat + 15.0, "peak {up} should be ~+100 cents of {flat}");
+    assert!(
+        up > flat + 15.0,
+        "peak {up} should be ~+100 cents of {flat}"
+    );
     assert!(down < flat - 15.0, "trough {down} should be ~-100 cents");
     // Delay holds the pitch still first.
     let delayed = "\
@@ -1629,7 +1841,10 @@ A4 wob 7
 ";
     let mut con = console(delayed);
     let samples = collect(&mut con, 26);
-    assert!((frame_freq(&samples, 4) - 440.0).abs() < 4.0, "still delayed");
+    assert!(
+        (frame_freq(&samples, 4) - 440.0).abs() < 4.0,
+        "still delayed"
+    );
     assert!(frame_freq(&samples, 24) > 455.0, "vibrato has started");
 }
 
@@ -1651,7 +1866,10 @@ A4 2 7
     let end_of_slide = frame_freq(&samples, 29);
     assert!(end_of_slide > 800.0, "the slide climbed: {end_of_slide}");
     let after = frame_freq(&samples, 31);
-    assert!((after - 440.0).abs() < 5.0, "row 2 is back at A4, got {after}");
+    assert!(
+        (after - 440.0).abs() < 5.0,
+        "row 2 is back at A4, got {after}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1659,7 +1877,9 @@ A4 2 7
 // ---------------------------------------------------------------------------
 
 fn inst_cart(instruments: &str) -> Result<Cart, Error> {
-    Cart::parse(&format!("__lua__\nx = 1\n\n__instruments__\n{instruments}\n"))
+    Cart::parse(&format!(
+        "__lua__\nx = 1\n\n__instruments__\n{instruments}\n"
+    ))
 }
 
 fn inst_err(instruments: &str) -> String {
@@ -1864,8 +2084,16 @@ fn drive_zero_is_the_bit_identical_legacy_path() {
     );
     let via_lua = run_audio(&lua_cart, 0, &[0u8; 20]);
     for (i, ((a, b), c)) in plain.iter().zip(&explicit).zip(&via_lua).enumerate() {
-        assert_eq!(a.to_bits(), b.to_bits(), "sample {i}: master drive=0 changed the mix");
-        assert_eq!(a.to_bits(), c.to_bits(), "sample {i}: master(0) changed the mix");
+        assert_eq!(
+            a.to_bits(),
+            b.to_bits(),
+            "sample {i}: master drive=0 changed the mix"
+        );
+        assert_eq!(
+            a.to_bits(),
+            c.to_bits(),
+            "sample {i}: master(0) changed the mix"
+        );
     }
     assert!(plain.iter().any(|&s| s != 0.0));
 }
@@ -1926,7 +2154,11 @@ fn tone_darkens_a_square_wave_monotonically() {
     let mut prev = f64::INFINITY;
     let mut measures = Vec::new();
     for tone in 0..=MAX_TONE {
-        let samples = run_audio(&tone_cart(&format!("master drive=0 tone={tone}")), 0, &[0u8; 12]);
+        let samples = run_audio(
+            &tone_cart(&format!("master drive=0 tone={tone}")),
+            0,
+            &[0u8; 12],
+        );
         let hf = delta_rms(&samples);
         assert!(
             hf < prev,
@@ -1985,7 +2217,11 @@ fn the_hiss_stream_does_not_depend_on_the_channels() {
     let frames = [0u8; 10];
     let dry = run_audio(&tone_cart(""), 0, &frames);
     let hissing = run_audio(&tone_cart("master hiss=3"), 0, &frames);
-    let floor = run_audio("__lua__\nx = 1\n\n__instruments__\nmaster hiss=3\n", 0, &frames);
+    let floor = run_audio(
+        "__lua__\nx = 1\n\n__instruments__\nmaster hiss=3\n",
+        0,
+        &frames,
+    );
     for (i, ((&d, &h), &f)) in dry.iter().zip(&hissing).zip(&floor).enumerate() {
         assert_eq!(
             (h - d).to_bits(),
@@ -2047,7 +2283,11 @@ fn the_master_bus_is_deterministic_across_consoles() {
     let b = run_audio(&cart, 0, &inputs);
     let c = run_audio(&cart, 4_242_424_242, &inputs);
     for (i, ((x, y), z)) in a.iter().zip(&b).zip(&c).enumerate() {
-        assert_eq!(x.to_bits(), y.to_bits(), "sample {i} diverged between consoles");
+        assert_eq!(
+            x.to_bits(),
+            y.to_bits(),
+            "sample {i} diverged between consoles"
+        );
         assert_eq!(x.to_bits(), z.to_bits(), "sample {i} depends on the seed");
     }
     assert!(a.iter().any(|&s| s != 0.0));
@@ -2070,22 +2310,60 @@ fn duck_field_parses_and_is_range_checked() {
         })
     );
     // `duck` is a mixer property, so it does not make the voice "modulated".
-    assert_eq!(inst_cart("inst k wave=3 duck=1,1").unwrap().instrument("k").unwrap().duck,
-        Some(Duck { depth: 1, release: 1 }));
-    assert!(inst_cart("inst k wave=3 duck=1,1").unwrap().instrument("k").unwrap().is_flat());
-    // Absent by default.
-    assert_eq!(inst_cart("inst k wave=3").unwrap().instrument("k").unwrap().duck, None);
     assert_eq!(
-        inst_cart("inst k wave=3 duck=7,255").unwrap().instrument("k").unwrap().duck,
-        Some(Duck { depth: MAX_DUCK_DEPTH, release: 255 })
+        inst_cart("inst k wave=3 duck=1,1")
+            .unwrap()
+            .instrument("k")
+            .unwrap()
+            .duck,
+        Some(Duck {
+            depth: 1,
+            release: 1
+        })
+    );
+    assert!(
+        inst_cart("inst k wave=3 duck=1,1")
+            .unwrap()
+            .instrument("k")
+            .unwrap()
+            .is_flat()
+    );
+    // Absent by default.
+    assert_eq!(
+        inst_cart("inst k wave=3")
+            .unwrap()
+            .instrument("k")
+            .unwrap()
+            .duck,
+        None
+    );
+    assert_eq!(
+        inst_cart("inst k wave=3 duck=7,255")
+            .unwrap()
+            .instrument("k")
+            .unwrap()
+            .duck,
+        Some(Duck {
+            depth: MAX_DUCK_DEPTH,
+            release: 255
+        })
     );
 
     for (line, want) in [
-        ("inst k wave=3 duck=4", "duck must be `duck=<depth>,<release>`"),
+        (
+            "inst k wave=3 duck=4",
+            "duck must be `duck=<depth>,<release>`",
+        ),
         ("inst k wave=3 duck=0,4", "duck depth must be 1-7, found 0"),
         ("inst k wave=3 duck=8,4", "duck depth must be 1-7, found 8"),
-        ("inst k wave=3 duck=4,0", "duck release must be 1-255, found 0"),
-        ("inst k wave=3 duck=4,256", "duck release must be 1-255, found 256"),
+        (
+            "inst k wave=3 duck=4,0",
+            "duck release must be 1-255, found 0",
+        ),
+        (
+            "inst k wave=3 duck=4,256",
+            "duck release must be 1-255, found 256",
+        ),
         ("inst k wave=3 duck=x,4", "duck depth must be a number"),
         ("inst k wave=3 ducky=1,2", "unknown inst key \"ducky\""),
     ] {
@@ -2140,7 +2418,11 @@ fn a_duck_trigger_dips_the_other_channels_by_exactly_depth_over_seven() {
     let peak = f32::from(depth) / 7.0;
 
     // Before the trigger the mix is untouched: a full-scale square at 0.25.
-    for (i, &s) in samples[..trigger].iter().enumerate().skip(SAMPLES_PER_FRAME) {
+    for (i, &s) in samples[..trigger]
+        .iter()
+        .enumerate()
+        .skip(SAMPLES_PER_FRAME)
+    {
         assert_eq!(s.abs(), 0.25, "sample {i} was ducked before the trigger");
     }
     // The very first sample of the trigger is still dry - the ramp is the
@@ -2186,7 +2468,10 @@ fn a_duck_trigger_dips_the_other_channels_by_exactly_depth_over_seven() {
 fn duck_depth_seven_mutes_the_other_channels_outright() {
     let samples = run_audio(&duck_probe_cart(7, 4, ""), 0, &[0u8; 6]);
     let floor = 2 * SAMPLES_PER_FRAME + DUCK_ATTACK_SAMPLES as usize;
-    assert_eq!(samples[floor], 0.0, "depth 7 should silence the other channels");
+    assert_eq!(
+        samples[floor], 0.0,
+        "depth 7 should silence the other channels"
+    );
     // The release starts immediately afterwards, so the next samples are only
     // a hair above zero rather than exactly on it.
     assert!(samples[floor + 1].abs() < 1e-4, "{}", samples[floor + 1]);
@@ -2297,7 +2582,11 @@ fn ducking_is_deterministic_across_consoles() {
     let b = run_audio(&cart, 0, &inputs);
     let c = run_audio(&cart, 7, &inputs);
     for (i, ((x, y), z)) in a.iter().zip(&b).zip(&c).enumerate() {
-        assert_eq!(x.to_bits(), y.to_bits(), "sample {i} diverged between consoles");
+        assert_eq!(
+            x.to_bits(),
+            y.to_bits(),
+            "sample {i} diverged between consoles"
+        );
         assert_eq!(x.to_bits(), z.to_bits(), "sample {i} depends on the seed");
     }
     // Two consoles also agree on the envelope state itself.
@@ -2404,7 +2693,11 @@ fn the_soundtest_cart_loads_and_describes_itself() {
             }
         }
     }
-    assert_eq!(kinds, [true, true, true, true], "arp/slide/vib/fade all used");
+    assert_eq!(
+        kinds,
+        [true, true, true, true],
+        "arp/slide/vib/fade all used"
+    );
     // Instruments cover envelopes, vibrato and sweeps.
     assert!(cart.instruments().iter().any(|i| i.env.is_some()));
     assert!(cart.instruments().iter().any(|i| i.vib.is_some()));
@@ -2419,7 +2712,10 @@ fn the_soundtest_cart_loads_and_describes_itself() {
         })
     );
     assert_eq!(
-        cart.instruments().iter().filter(|i| i.duck.is_some()).count(),
+        cart.instruments()
+            .iter()
+            .filter(|i| i.duck.is_some())
+            .count(),
         1,
         "only the kick should duck"
     );
@@ -2449,10 +2745,16 @@ fn every_soundtest_entry_makes_a_different_noise() {
             "entry {entry} is nearly silent ({audible} nonzero samples)"
         );
         let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
-        assert!(peak > 0.1, "entry {entry} is too quiet to judge (peak {peak})");
+        assert!(
+            peak > 0.1,
+            "entry {entry} is too quiet to judge (peak {peak})"
+        );
         assert!(samples.iter().all(|s| (-1.0..=1.0).contains(s)));
         let h = hash_samples(&samples);
-        assert!(!seen.contains(&h), "entry {entry} sounds like an earlier one");
+        assert!(
+            !seen.contains(&h),
+            "entry {entry} sounds like an earlier one"
+        );
         seen.push(h);
     }
 }
@@ -2478,7 +2780,11 @@ fn the_soundtest_menu_navigates_and_stops() {
     for mask in [input::UP, 0, input::UP, 0, input::UP, 0, input::A, 0] {
         con.step(mask).unwrap();
     }
-    assert_eq!(con.music_pattern(), Some(15), "UP past the top wraps around");
+    assert_eq!(
+        con.music_pattern(),
+        Some(15),
+        "UP past the top wraps around"
+    );
 
     // ...and B stops.
     con.step(input::B).unwrap();
@@ -2531,7 +2837,11 @@ const SOUNDTEST_AB_GOLDEN: u64 = 0xba78_0b63_7bd9_4ac3;
 
 #[test]
 fn soundtest_saturation_ab_matches_the_golden_hash() {
-    let hash = hash_samples(&run_audio(SOUNDTEST, 0, &soundtest_script(SOUNDTEST_AB, 600)));
+    let hash = hash_samples(&run_audio(
+        SOUNDTEST,
+        0,
+        &soundtest_script(SOUNDTEST_AB, 600),
+    ));
     assert_eq!(
         hash, SOUNDTEST_AB_GOLDEN,
         "soundtest A/B audio changed; new hash is {hash:#018x}"
@@ -2601,7 +2911,11 @@ fn soundtest_ab_flips_the_master_bus_on_the_bar() {
     for mask in soundtest_script(SOUNDTEST_AB, 0) {
         con.step(mask).unwrap();
     }
-    assert_eq!(con.music_pattern(), Some(12), "the A/B entry plays the groove");
+    assert_eq!(
+        con.music_pattern(),
+        Some(12),
+        "the A/B entry plays the groove"
+    );
     assert_eq!(con.master(), Master::OFF, "it starts dry");
 
     // Two bars of dry...
@@ -2785,7 +3099,11 @@ fn an_echo_send_with_no_echo_line_changes_nothing() {
     let sent = run_audio(&echo_cart("", 8), 0, &inputs);
     let dry = run_audio(&echo_cart("", 0), 0, &inputs);
     for (i, (a, b)) in sent.iter().zip(&dry).enumerate() {
-        assert_eq!(a.to_bits(), b.to_bits(), "sample {i} moved without an echo line");
+        assert_eq!(
+            a.to_bits(),
+            b.to_bits(),
+            "sample {i} moved without an echo line"
+        );
     }
 }
 
@@ -2832,7 +3150,10 @@ fn echo_parse_errors_name_the_range() {
         ("echo delay=0 level=4", "echo delay must be 1-60"),
         ("echo delay=61 level=4", "echo delay must be 1-60"),
         ("echo delay=4 level=9", "echo level must be 0-8"),
-        ("echo delay=4 level=4 feedback=9", "echo feedback must be 0-8"),
+        (
+            "echo delay=4 level=4 feedback=9",
+            "echo feedback must be 0-8",
+        ),
         ("echo delay=x level=4", "echo delay must be a number"),
         ("echo level=4", "echo needs `delay=<1-60>`"),
         ("echo delay=4", "echo needs `level=<0-8>`"),
@@ -2856,7 +3177,9 @@ fn echo_parse_errors_name_the_range() {
     }
     // ...and the per-instrument send has a range too.
     let err = Cart::parse(&echo_cart("echo delay=4 level=4", 9)).unwrap_err();
-    let Error::Cart(msg) = err else { panic!("want a cart error") };
+    let Error::Cart(msg) = err else {
+        panic!("want a cart error")
+    };
     assert!(msg.contains("inst echo send must be 0-8"), "{msg:?}");
 }
 
@@ -3042,7 +3365,9 @@ fn lua_echo_overrides_the_cart_line_and_can_kill_the_bus() {
 /// return: the loudest thing a cart can ask the bus for. `stop_at` is the frame
 /// the voices are cut, so the tail can be watched draining.
 fn echo_stress_cart(master_line: &str, stop_at: u32) -> String {
-    let starts: String = (0..CHANNEL_COUNT).map(|c| format!("sfx(0, {c}) ")).collect();
+    let starts: String = (0..CHANNEL_COUNT)
+        .map(|c| format!("sfx(0, {c}) "))
+        .collect();
     format!(
         "__lua__\n\
          local f = 0\n\
@@ -3077,7 +3402,9 @@ fn echo_stress_stays_bounded_and_finite() {
     let rms = |xs: &[f32]| -> f64 {
         (xs.iter().map(|&s| f64::from(s) * f64::from(s)).sum::<f64>() / xs.len() as f64).sqrt()
     };
-    let window = |k: usize| -> f64 { rms(&tail[k * 60 * SAMPLES_PER_FRAME..(k + 1) * 60 * SAMPLES_PER_FRAME]) };
+    let window = |k: usize| -> f64 {
+        rms(&tail[k * 60 * SAMPLES_PER_FRAME..(k + 1) * 60 * SAMPLES_PER_FRAME])
+    };
     assert!(window(0) > 0.0, "the tail vanished instantly");
     for k in 1..6 {
         assert!(
@@ -3264,7 +3591,10 @@ fn wavetable_lines_parse_and_round_trip() {
     assert_eq!(w7.hex(), "ffff0000ffff0000ffff0000ffff0000");
     // Untouched slots stay empty.
     for slot in 1..7 {
-        assert!(cart.wavetable(slot).is_none(), "slot {slot} should be empty");
+        assert!(
+            cart.wavetable(slot).is_none(),
+            "slot {slot} should be empty"
+        );
     }
     assert_eq!(cart.audio().wavetables().iter().flatten().count(), 2);
 
@@ -3272,14 +3602,26 @@ fn wavetable_lines_parse_and_round_trip() {
     // instrument field is untouched by the change of oscillator.
     let saw_ish = cart.instrument("saw_ish").unwrap();
     assert_eq!(saw_ish.wave, WAVE_TABLE_BASE);
-    assert_eq!(saw_ish.env, Some(Env { attack: 0, decay: 8, sustain: 4 }));
+    assert_eq!(
+        saw_ish.env,
+        Some(Env {
+            attack: 0,
+            decay: 8,
+            sustain: 4
+        })
+    );
     assert_eq!(cart.instrument("buzzy").unwrap().wave, WAVE_TABLE_BASE + 7);
     // ...and the bank can go back the other way.
     assert_eq!(
-        cart.audio().wavetable_for_wave(WAVE_TABLE_BASE + 7).map(Wavetable::hex),
+        cart.audio()
+            .wavetable_for_wave(WAVE_TABLE_BASE + 7)
+            .map(Wavetable::hex),
         Some(w7.hex())
     );
-    assert!(cart.audio().wavetable_for_wave(2).is_none(), "builtin waves have no table");
+    assert!(
+        cart.audio().wavetable_for_wave(2).is_none(),
+        "builtin waves have no table"
+    );
 }
 
 #[test]
@@ -3295,7 +3637,11 @@ fn a_sfx_row_may_name_a_wavetable_slot_directly() {
     let cart = Cart::parse(&text).unwrap();
     assert_eq!(
         cart.sfx(0).unwrap().rows[0],
-        SfxRow::Note { note: 57, wave: WAVE_TABLE_BASE + 3, vol: 6 }
+        SfxRow::Note {
+            note: 57,
+            wave: WAVE_TABLE_BASE + 3,
+            vol: 6
+        }
     );
     // No instrument named, so no modulation and no echo send: the PoC v1 path.
     assert_eq!(cart.sfx(0).unwrap().row_mod(0), RowMod::default());
@@ -3304,18 +3650,42 @@ fn a_sfx_row_may_name_a_wavetable_slot_directly() {
 #[test]
 fn malformed_wavetables_are_line_numbered_cart_errors() {
     fn wt_err(body: &str, line: usize, needle: &str) {
-        expect_cart_error(&format!("__lua__\nx=1\n\n__instruments__\n{body}"), line, needle);
+        expect_cart_error(
+            &format!("__lua__\nx=1\n\n__instruments__\n{body}"),
+            line,
+            needle,
+        );
     }
 
     // Slot range and shape.
-    wt_err("wavetable 8 00112233445566778899aabbccddeeff\n", 1, "wavetable slot must be 0-7");
-    wt_err("wavetable 0\n", 1, "expected `wavetable <slot 0-7> <32 hex nibbles>`");
+    wt_err(
+        "wavetable 8 00112233445566778899aabbccddeeff\n",
+        1,
+        "wavetable slot must be 0-7",
+    );
+    wt_err(
+        "wavetable 0\n",
+        1,
+        "expected `wavetable <slot 0-7> <32 hex nibbles>`",
+    );
     wt_err("wavetable\n", 1, "expected `wavetable <slot 0-7>");
     // Too few / too many nibbles, counted after the groups are joined.
-    wt_err("wavetable 0 0011223344556677 8899aabbccddee\n", 1, "needs exactly 32 hex nibbles, found 30");
-    wt_err("wavetable 0 00112233445566778899aabbccddeeff0\n", 1, "found 33");
+    wt_err(
+        "wavetable 0 0011223344556677 8899aabbccddee\n",
+        1,
+        "needs exactly 32 hex nibbles, found 30",
+    );
+    wt_err(
+        "wavetable 0 00112233445566778899aabbccddeeff0\n",
+        1,
+        "found 33",
+    );
     // Bad hex, reported by sample index.
-    wt_err("wavetable 0 00112233445566778899aabbccddeegf\n", 1, "sample 30: 'g' is not a hex nibble");
+    wt_err(
+        "wavetable 0 00112233445566778899aabbccddeegf\n",
+        1,
+        "sample 30: 'g' is not a hex nibble",
+    );
     // One slot, one table.
     wt_err(
         "wavetable 2 00112233445566778899aabbccddeeff\nwavetable 2 ffffffffffffffff0000000000000000\n",
@@ -3324,14 +3694,22 @@ fn malformed_wavetables_are_line_numbered_cart_errors() {
     );
     // Undefined references are errors at parse time, never a silent fallback
     // to some default waveform - the console's house style.
-    wt_err("inst lead wave=w1\n", 1, "references wavetable w1, which the cart does not define");
+    wt_err(
+        "inst lead wave=w1\n",
+        1,
+        "references wavetable w1, which the cart does not define",
+    );
     wt_err(
         "wavetable 0 00112233445566778899aabbccddeeff\ninst lead wave=w5\n",
         2,
         "defined: w0",
     );
     wt_err("inst lead wave=w9\n", 1, "wave slot must be 0-7");
-    wt_err("inst lead wave=wx\n", 1, "wave must be 0-6 (builtin) or w0-w7");
+    wt_err(
+        "inst lead wave=wx\n",
+        1,
+        "wave must be 0-6 (builtin) or w0-w7",
+    );
     // A slot name is reserved, so `w0` in a sfx row is never ambiguous.
     wt_err("inst w0 wave=1\n", 1, "must not look like a wavetable slot");
 
@@ -3342,7 +3720,9 @@ fn malformed_wavetables_are_line_numbered_cart_errors() {
         "references wavetable w0, which the cart does not define",
     );
     expect_cart_error(
-        &format!("__lua__\nx=1\n\n__instruments__\nwavetable 0 {RAMP_HEX}\n\n__sfx__\nsfx 0 speed=8\nA4 w4 6\n"),
+        &format!(
+            "__lua__\nx=1\n\n__instruments__\nwavetable 0 {RAMP_HEX}\n\n__sfx__\nsfx 0 speed=8\nA4 w4 6\n"
+        ),
         2,
         "references wavetable w4",
     );
@@ -3391,7 +3771,8 @@ fn wavetable_square_is_the_builtin_square() {
     // The mapping is (2n-15)/15 precisely so that code 0 is -1.0 and code f is
     // +1.0: a table written as sixteen f's then sixteen 0's is not "like" the
     // builtin square, it *is* the builtin square, sample for sample.
-    let mut builtin = console("__lua__\nfunction _init() sfx(0, 0) end\n\n__sfx__\nsfx 0 speed=60\nA4 2 6\n");
+    let mut builtin =
+        console("__lua__\nfunction _init() sfx(0, 0) end\n\n__sfx__\nsfx 0 speed=60\nA4 2 6\n");
     let mut table = console(&wt_cart(SQUARE_HEX, "A4 w0 6"));
     let a = collect(&mut builtin, 30);
     let b = collect(&mut table, 30);
@@ -3412,16 +3793,37 @@ fn four_bits_cannot_hit_zero_so_a_flat_table_is_dc_not_silence() {
     let steady = &samples[SAMPLES_PER_FRAME..];
     let dc = (1.0f32 / 15.0) * 0.25;
     for (i, &s) in steady.iter().enumerate() {
-        assert_eq!(s.to_bits(), dc.to_bits(), "sample {i} is {s}, not the DC level");
+        assert_eq!(
+            s.to_bits(),
+            dc.to_bits(),
+            "sample {i} is {s}, not the DC level"
+        );
     }
-    assert!(dc.abs() < 0.02, "one half-code of DC should be inaudible, got {dc}");
+    assert!(
+        dc.abs() < 0.02,
+        "one half-code of DC should be inaudible, got {dc}"
+    );
 
     // The exact-zero question is decidable on the nibbles themselves.
-    let flat = Wavetable { nibbles: [8; WAVETABLE_LEN] };
+    let flat = Wavetable {
+        nibbles: [8; WAVETABLE_LEN],
+    };
     assert_eq!(flat.dc_sum(), 32, "all-8 is one half-code high");
-    assert_eq!(Wavetable { nibbles: [7; WAVETABLE_LEN] }.dc_sum(), -32);
+    assert_eq!(
+        Wavetable {
+            nibbles: [7; WAVETABLE_LEN]
+        }
+        .dc_sum(),
+        -32
+    );
     // ...and any table that pairs each code with its mirror is exactly DC-free.
-    assert_eq!(Wavetable { nibbles: ramp_nibbles() }.dc_sum(), 0);
+    assert_eq!(
+        Wavetable {
+            nibbles: ramp_nibbles()
+        }
+        .dc_sum(),
+        0
+    );
     let square = Wavetable {
         nibbles: std::array::from_fn(|i| if i < 16 { 15 } else { 0 }),
     };
@@ -3452,7 +3854,10 @@ fn a_wavetable_voice_composes_with_env_vib_sweep_fx_and_echo() {
     // a different signal for it.
     let row = |n: usize| &samples[n * 40 * SAMPLES_PER_FRAME..(n + 1) * 40 * SAMPLES_PER_FRAME];
     assert!(
-        row(0).iter().zip(row(1)).any(|(a, b)| a.to_bits() != b.to_bits()),
+        row(0)
+            .iter()
+            .zip(row(1))
+            .any(|(a, b)| a.to_bits() != b.to_bits()),
         "env/vib changed nothing on a wavetable voice"
     );
     // The envelope really is an envelope: row 1 starts quiet and swells.
@@ -3468,17 +3873,26 @@ fn a_wavetable_voice_composes_with_env_vib_sweep_fx_and_echo() {
     // row 1 the way it is inside row 0.
     let flat_a = frame_freq(&samples, 20);
     let flat_b = frame_freq(&samples, 30);
-    assert!((flat_a - flat_b).abs() < 1.0, "the flat voice drifted: {flat_a} vs {flat_b}");
+    assert!(
+        (flat_a - flat_b).abs() < 1.0,
+        "the flat voice drifted: {flat_a} vs {flat_b}"
+    );
     let vib_lo = frame_freq(&samples, 50);
     let vib_hi = frame_freq(&samples, 54);
-    assert!((vib_lo - vib_hi).abs() > 1.0, "vibrato did not bend the pitch");
+    assert!(
+        (vib_lo - vib_hi).abs() > 1.0,
+        "vibrato did not bend the pitch"
+    );
     // Sweep: row 2 dives an octave over 20 frames, so it ends far below A4.
     let start = frame_freq(&samples, 81);
     let end = frame_freq(&samples, 99);
     assert!(end < start * 0.75, "sweep did not dive ({start} -> {end})");
     // The echo bus took the `echo=6` send from a wavetable voice like any
     // other, and the whole thing stayed inside the rails.
-    assert!(!con.echo_is_silent(), "the wavetable voice never fed the delay line");
+    assert!(
+        !con.echo_is_silent(),
+        "the wavetable voice never fed the delay line"
+    );
     assert!(samples.iter().all(|s| (-1.0..=1.0).contains(s)));
 }
 
@@ -3507,7 +3921,10 @@ fn carts_without_wavetables_are_untouched() {
         let cart = Cart::parse(text).unwrap();
         for id in 0..WAVETABLE_SLOTS as u8 {
             if text == DEMO {
-                assert!(cart.wavetable(id).is_none(), "the demo cart declares no tables");
+                assert!(
+                    cart.wavetable(id).is_none(),
+                    "the demo cart declares no tables"
+                );
             }
         }
     }
@@ -3573,8 +3990,16 @@ fn the_soundtest_wavetable_entry_uses_three_dc_free_tables() {
     for slot in defined {
         let t = cart.wavetable(slot).unwrap();
         assert_eq!(t.dc_sum(), 0, "table w{slot} is not DC-free");
-        assert_eq!(t.nibbles.iter().copied().min(), Some(0), "w{slot} wastes headroom");
-        assert_eq!(t.nibbles.iter().copied().max(), Some(15), "w{slot} wastes headroom");
+        assert_eq!(
+            t.nibbles.iter().copied().min(),
+            Some(0),
+            "w{slot} wastes headroom"
+        );
+        assert_eq!(
+            t.nibbles.iter().copied().max(),
+            Some(15),
+            "w{slot} wastes headroom"
+        );
     }
     // The three instruments that play them, and nothing else in the cart.
     for (name, slot) in [("wt_hollow", 0), ("wt_organ", 1), ("wt_buzz", 2)] {
@@ -3656,12 +4081,23 @@ fn fm_instrument_lines_parse_and_round_trip() {
     assert_eq!(fm("epian").ratio(), 3.5);
     assert_eq!(fm("epian").ratio_text(), "3.5");
     // `decay` is optional and defaults to "no decay".
-    assert_eq!(fm("held"), Fm { ratio_half: 30, index: 0, decay: 0 });
+    assert_eq!(
+        fm("held"),
+        Fm {
+            ratio_half: 30,
+            index: 0,
+            decay: 0
+        }
+    );
     assert_eq!(fm("held").ratio_text(), "15");
     assert_eq!(fm("tiny").ratio(), 0.5);
     assert_eq!(fm("tiny").ratio_text(), "0.5");
     // `wave` really is 6, and the other instrument features still attach.
-    assert!(cart.instruments().iter().all(|i| i.fm.is_none() || i.wave == WAVE_FM));
+    assert!(
+        cart.instruments()
+            .iter()
+            .all(|i| i.fm.is_none() || i.wave == WAVE_FM)
+    );
     assert_eq!(cart.instrument("epian").unwrap().env.unwrap().decay, 40);
     assert_eq!(cart.instrument("bell").unwrap().echo, 4);
     // ...and a non-FM instrument carries no patch at all.
@@ -3675,16 +4111,28 @@ fn fm_instrument_lines_parse_and_round_trip() {
 #[test]
 fn malformed_fm_is_a_line_numbered_cart_error() {
     fn fm_err(body: &str, line: usize, needle: &str) {
-        expect_cart_error(&format!("__lua__\nx=1\n\n__instruments__\n{body}"), line, needle);
+        expect_cart_error(
+            &format!("__lua__\nx=1\n\n__instruments__\n{body}"),
+            line,
+            needle,
+        );
     }
 
     // The two halves of the statement are required together.
-    fm_err("inst a wave=6\n", 1, "but no `fm=<ratio>,<index>[,<decay>]`");
+    fm_err(
+        "inst a wave=6\n",
+        1,
+        "but no `fm=<ratio>,<index>[,<decay>]`",
+    );
     fm_err("inst a wave=2 fm=1,4\n", 1, "has `fm=` but `wave=2`");
     fm_err("inst a wave=w0 fm=1,4\n", 1, "has `fm=` but `wave=8`");
 
     // Shape.
-    fm_err("inst a wave=6 fm=1\n", 1, "fm must be `fm=<ratio>,<index>[,<decay>]`");
+    fm_err(
+        "inst a wave=6 fm=1\n",
+        1,
+        "fm must be `fm=<ratio>,<index>[,<decay>]`",
+    );
     fm_err("inst a wave=6 fm=1,2,3,4\n", 1, "fm must be");
 
     // Ratio: 0.5 steps only, inside 0.5..=15.
@@ -3753,7 +4201,11 @@ fn a_known_fm_patch_plays_the_exact_expected_samples() {
     }
     // ...and it is genuinely brighter than the same note with no modulation.
     let plain = run_audio(&fm_cart("3,0", "A2"), 0, &[0u8; 2]);
-    let crossings = |xs: &[f32]| (1..xs.len()).filter(|&i| (xs[i - 1] < 0.0) != (xs[i] < 0.0)).count();
+    let crossings = |xs: &[f32]| {
+        (1..xs.len())
+            .filter(|&i| (xs[i - 1] < 0.0) != (xs[i] < 0.0))
+            .count()
+    };
     assert!(
         crossings(&samples) > 3 * crossings(&plain),
         "index 8 should add sidebands: {} vs {}",
@@ -3811,7 +4263,9 @@ fn index_decay_dims_the_tone_over_the_life_of_a_note() {
     // counting them is enough to see the index fall - no spectrogram needed.
     let zc = |s: &[f32], f: usize| {
         let w = &s[f * SAMPLES_PER_FRAME..(f + 1) * SAMPLES_PER_FRAME];
-        (1..w.len()).filter(|&i| (w[i - 1] < 0.0) != (w[i] < 0.0)).count()
+        (1..w.len())
+            .filter(|&i| (w[i - 1] < 0.0) != (w[i] < 0.0))
+            .count()
     };
 
     let decaying = run_audio(&fm_cart("3,13,13", "A2"), 0, &[0u8; 60]);
@@ -3826,7 +4280,10 @@ fn index_decay_dims_the_tone_over_the_life_of_a_note() {
         zc(&decaying, 2),
         zc(&decaying, 30)
     );
-    assert!(zc(&decaying, 30) <= 4, "a spent index should leave a bare sine");
+    assert!(
+        zc(&decaying, 30) <= 4,
+        "a spent index should leave a bare sine"
+    );
     // `decay=0` is the control: same patch, brightness held for the whole note.
     // The envelope steps once per frame *after* the frame is rendered, so the
     // note's very first frame is bit-identical either way.
@@ -3864,7 +4321,9 @@ fn a_note_on_re_arms_the_index_envelope() {
     let s = run_audio(cart, 0, &[0u8; 60]);
     let zc = |f: usize| {
         let w = &s[f * SAMPLES_PER_FRAME..(f + 1) * SAMPLES_PER_FRAME];
-        (1..w.len()).filter(|&i| (w[i - 1] < 0.0) != (w[i] < 0.0)).count()
+        (1..w.len())
+            .filter(|&i| (w[i - 1] < 0.0) != (w[i] < 0.0))
+            .count()
     };
     // Row 0 starts bright and is dull by frame 25; row 1 starts at frame 30.
     assert!(zc(2) > 20, "row 0 should start bright");
@@ -3892,7 +4351,10 @@ fn an_fm_voice_composes_with_env_vib_sweep_fx_and_echo() {
 
     let row = |n: usize| &samples[n * 40 * SAMPLES_PER_FRAME..(n + 1) * 40 * SAMPLES_PER_FRAME];
     assert!(
-        row(0).iter().zip(row(1)).any(|(a, b)| a.to_bits() != b.to_bits()),
+        row(0)
+            .iter()
+            .zip(row(1))
+            .any(|(a, b)| a.to_bits() != b.to_bits()),
         "env/vib changed nothing on an FM voice"
     );
     let rms = |xs: &[f32]| -> f64 {
@@ -3906,16 +4368,25 @@ fn an_fm_voice_composes_with_env_vib_sweep_fx_and_echo() {
     // Vibrato bends the pitch, and the flat voice does not drift.
     let flat_a = frame_freq(&samples, 20);
     let flat_b = frame_freq(&samples, 30);
-    assert!((flat_a - flat_b).abs() < 1.0, "the flat voice drifted: {flat_a} vs {flat_b}");
+    assert!(
+        (flat_a - flat_b).abs() < 1.0,
+        "the flat voice drifted: {flat_a} vs {flat_b}"
+    );
     let vib_lo = frame_freq(&samples, 50);
     let vib_hi = frame_freq(&samples, 54);
-    assert!((vib_lo - vib_hi).abs() > 1.0, "vibrato did not bend the pitch");
+    assert!(
+        (vib_lo - vib_hi).abs() > 1.0,
+        "vibrato did not bend the pitch"
+    );
     // Sweep: row 2 dives an octave over 20 frames.
     let start = frame_freq(&samples, 81);
     let end = frame_freq(&samples, 99);
     assert!(end < start * 0.75, "sweep did not dive ({start} -> {end})");
     // The echo took the `echo=6` send from an FM voice like any other.
-    assert!(!con.echo_is_silent(), "the FM voice never fed the delay line");
+    assert!(
+        !con.echo_is_silent(),
+        "the FM voice never fed the delay line"
+    );
     assert!(samples.iter().all(|s| (-1.0..=1.0).contains(s)));
 }
 
@@ -3964,7 +4435,9 @@ fn an_fm_voice_reports_wave_6_and_stays_in_range() {
     assert!(samples.iter().all(|s| (-1.0..=1.0).contains(s)));
     // Six FM voices at full index and full volume still land inside the rails
     // the mixer promises (the 0.25 gain, then the clamp).
-    let starts: String = (0..CHANNEL_COUNT).map(|ch| format!("sfx(0, {ch}) ")).collect();
+    let starts: String = (0..CHANNEL_COUNT)
+        .map(|ch| format!("sfx(0, {ch}) "))
+        .collect();
     let stress = format!(
         "__lua__\nfunction _init() {starts}end\n\n\
          __instruments__\ninst fmv wave=6 fm=15,15\n\n\
@@ -3998,9 +4471,19 @@ fn carts_without_fm_are_untouched() {
         .map(|i| i.name.as_str())
         .collect();
     assert_eq!(fm_voices, vec!["fm_bass", "fm_epian", "fm_bell"]);
-    assert!(st.instruments().iter().all(|i| i.fm.is_some() == (i.wave == WAVE_FM)));
+    assert!(
+        st.instruments()
+            .iter()
+            .all(|i| i.fm.is_some() == (i.wave == WAVE_FM))
+    );
     // A cart with no `fm=` line has no FM instrument at all.
-    assert!(Cart::parse(DEMO).unwrap().instruments().iter().all(|i| i.fm.is_none()));
+    assert!(
+        Cart::parse(DEMO)
+            .unwrap()
+            .instruments()
+            .iter()
+            .all(|i| i.fm.is_none())
+    );
 }
 
 /// Golden hash of the soundtest cart's "FM  2-OP" entry (menu index 16,
@@ -4016,7 +4499,11 @@ const SOUNDTEST_FM_GOLDEN: u64 = 0xff45_3c58_9449_e0ae;
 
 #[test]
 fn soundtest_fm_matches_the_golden_hash() {
-    let hash = hash_samples(&run_audio(SOUNDTEST, 0, &soundtest_script(SOUNDTEST_FM, 150)));
+    let hash = hash_samples(&run_audio(
+        SOUNDTEST,
+        0,
+        &soundtest_script(SOUNDTEST_FM, 150),
+    ));
     assert_eq!(
         hash, SOUNDTEST_FM_GOLDEN,
         "soundtest FM audio changed; new hash is {hash:#018x}"
@@ -4029,21 +4516,38 @@ fn the_soundtest_fm_entry_auditions_three_classic_patches() {
     // Bass: ratio 1 (the fattest FM there is), a big index and the fastest
     // half of the decay ladder - bright for a fifth of a second, then a sine.
     let bass = cart.instrument("fm_bass").unwrap().fm.unwrap();
-    assert_eq!(bass, Fm { ratio_half: 2, index: 10, decay: 13 });
+    assert_eq!(
+        bass,
+        Fm {
+            ratio_half: 2,
+            index: 10,
+            decay: 13
+        }
+    );
     // Electric piano: a HALF-integer ratio, which is the whole point of
     // allowing halves - the sidebands land between the harmonics.
     let ep = cart.instrument("fm_epian").unwrap().fm.unwrap();
     assert_eq!(ep.ratio(), 3.5);
-    assert_ne!(ep.ratio_half % 2, 0, "the e-piano needs an inharmonic ratio");
+    assert_ne!(
+        ep.ratio_half % 2,
+        0,
+        "the e-piano needs an inharmonic ratio"
+    );
     // Bell: a wide ratio, a big index and a slow decay, so it rings.
     let bell = cart.instrument("fm_bell").unwrap().fm.unwrap();
     assert_eq!((bell.ratio(), bell.index), (7.0, 11));
-    assert!(bell.decay < ep.decay && ep.decay < bass.decay, "slow bell, fast bass");
+    assert!(
+        bell.decay < ep.decay && ep.decay < bass.decay,
+        "slow bell, fast bass"
+    );
     assert!(u32::from(FM_DECAY_HALF_LIFE[usize::from(bell.decay)]) > 60);
     // All three carry an ordinary amplitude envelope too: index decay and `env`
     // are separate gestures.
     for name in ["fm_bass", "fm_epian", "fm_bell"] {
-        assert!(cart.instrument(name).unwrap().env.is_some(), "{name} has no env");
+        assert!(
+            cart.instrument(name).unwrap().env.is_some(),
+            "{name} has no env"
+        );
     }
 }
 
@@ -4066,7 +4570,10 @@ fn the_soundtest_fm_entry_never_falls_silent_between_notes() {
     // Loud, and comfortably inside the rails: three FM voices at index 6-11
     // are dense, so this is worth pinning.
     let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-    assert!(peak > 0.2, "the FM entry is too quiet to judge (peak {peak})");
+    assert!(
+        peak > 0.2,
+        "the FM entry is too quiet to judge (peak {peak})"
+    );
     assert!(peak < 1.0, "the FM entry reached the clamp (peak {peak})");
     assert!(s.iter().all(|v| (-1.0..=1.0).contains(v)));
 }

@@ -68,17 +68,25 @@ fn cell(img: &Image, zoom: u32, sx: u32, sy: u32) -> [u8; 3] {
 }
 
 fn temp_path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("console-agent-sprite-{}-{name}", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "console-agent-sprite-{}-{name}",
+        std::process::id()
+    ))
 }
 
 /// `OverlayOpts` at `zoom`, grid/anchor off — the shape most `onion`/`ghost`
 /// tests want; tests that care about grid/anchor build their own.
 fn overlay(zoom: u32) -> OverlayOpts {
-    OverlayOpts { zoom, ..OverlayOpts::default() }
+    OverlayOpts {
+        zoom,
+        ..OverlayOpts::default()
+    }
 }
 
 fn approx(value: &Value, expected: f64) {
-    let got = value.as_f64().unwrap_or_else(|| panic!("{value} is not a number"));
+    let got = value
+        .as_f64()
+        .unwrap_or_else(|| panic!("{value} is not a number"));
     assert!(
         (got - expected).abs() < 1e-9,
         "expected {expected}, got {got}"
@@ -211,9 +219,8 @@ fn render_anchor_draws_a_color_4_crosshair() {
     )
     .expect("anchor");
 
-    let has_color_4 = |img: &Image| {
-        (0..img.height).any(|y| (0..img.width).any(|x| px(img, x, y) == PALETTE[4]))
-    };
+    let has_color_4 =
+        |img: &Image| (0..img.height).any(|y| (0..img.width).any(|x| px(img, x, y) == PALETTE[4]));
     assert!(!has_color_4(&plain));
     assert!(has_color_4(&crossed));
     // The anchor is (4,7): the crosshair centre is inside that pixel cell.
@@ -407,9 +414,8 @@ fn ghost_overlays_every_frame_at_low_alpha() {
     // Each frame is composited at the same low alpha, so a pixel two frames
     // share ends up with two applications of ink and a lone pixel with one.
     let alpha = 0.85f32 / 3.0;
-    let mix = |dst: u8, src: u8| {
-        (f32::from(dst) * (1.0 - alpha) + f32::from(src) * alpha).round() as u8
-    };
+    let mix =
+        |dst: u8, src: u8| (f32::from(dst) * (1.0 - alpha) + f32::from(src) * alpha).round() as u8;
     let over = |dst: [u8; 3], src: [u8; 3]| {
         [
             mix(dst[0], src[0]),
@@ -422,8 +428,16 @@ fn ghost_overlays_every_frame_at_low_alpha() {
     let twice3 = over(once3, PALETTE[3]);
     assert_eq!(cell(&img, 4, 1, 1), twice3, "shared by frames 0 and 1");
     assert_eq!(cell(&img, 4, 1, 2), twice3, "shared by frames 0 and 1");
-    assert_eq!(cell(&img, 4, 3, 3), over(CHECKER_A, PALETTE[5]), "frame 2 only");
-    assert_eq!(cell(&img, 4, 5, 5), over(CHECKER_A, PALETTE[9]), "frame 1 only");
+    assert_eq!(
+        cell(&img, 4, 3, 3),
+        over(CHECKER_A, PALETTE[5]),
+        "frame 2 only"
+    );
+    assert_eq!(
+        cell(&img, 4, 5, 5),
+        over(CHECKER_A, PALETTE[9]),
+        "frame 1 only"
+    );
 
     assert!(twice3[0] > once3[0], "overlap must accumulate");
     assert_ne!(twice3, PALETTE[3], "ghosts are never fully opaque");
@@ -433,10 +447,24 @@ fn ghost_overlays_every_frame_at_low_alpha() {
 fn ghost_grid_and_anchor_overlays_draw_extra_pixels() {
     let cart = cart();
     let plain = view::ghost(&cart, "dot.tri", &overlay(4)).expect("plain ghost");
-    let grid = view::ghost(&cart, "dot.tri", &OverlayOpts { grid: true, ..overlay(4) })
-        .expect("grid ghost");
-    let anchored = view::ghost(&cart, "dot.tri", &OverlayOpts { anchor: true, ..overlay(4) })
-        .expect("anchor ghost");
+    let grid = view::ghost(
+        &cart,
+        "dot.tri",
+        &OverlayOpts {
+            grid: true,
+            ..overlay(4)
+        },
+    )
+    .expect("grid ghost");
+    let anchored = view::ghost(
+        &cart,
+        "dot.tri",
+        &OverlayOpts {
+            anchor: true,
+            ..overlay(4)
+        },
+    )
+    .expect("anchor ghost");
 
     assert_eq!((plain.width, plain.height), (grid.width, grid.height));
     assert_ne!(plain.rgba, grid.rgba, "--grid must draw something");
@@ -456,10 +484,26 @@ fn ghost_grid_and_anchor_overlays_draw_extra_pixels() {
 fn onion_grid_and_anchor_overlays_draw_extra_pixels() {
     let cart = cart();
     let plain = view::onion(&cart, "dot.tri", 0, &overlay(4)).expect("plain onion");
-    let grid = view::onion(&cart, "dot.tri", 0, &OverlayOpts { grid: true, ..overlay(4) })
-        .expect("grid onion");
-    let anchored = view::onion(&cart, "dot.tri", 0, &OverlayOpts { anchor: true, ..overlay(4) })
-        .expect("anchor onion");
+    let grid = view::onion(
+        &cart,
+        "dot.tri",
+        0,
+        &OverlayOpts {
+            grid: true,
+            ..overlay(4)
+        },
+    )
+    .expect("grid onion");
+    let anchored = view::onion(
+        &cart,
+        "dot.tri",
+        0,
+        &OverlayOpts {
+            anchor: true,
+            ..overlay(4)
+        },
+    )
+    .expect("anchor onion");
 
     assert_eq!((plain.width, plain.height), (grid.width, grid.height));
     assert_ne!(plain.rgba, grid.rgba, "--grid must draw something");
@@ -484,7 +528,10 @@ fn onion_all_lays_out_every_frame_with_a_caption_band() {
     // separated by the same 2px gutter `strip` uses.
     let cell = 32;
     assert_eq!(img.width, 3 * cell + 2 * 2, "3 cells + 2 gutters");
-    assert!(img.height > cell, "must reserve a caption band below the frames");
+    assert!(
+        img.height > cell,
+        "must reserve a caption band below the frames"
+    );
     assert_eq!(img.frames, 3);
 }
 
@@ -536,9 +583,15 @@ fn onion_all_is_loop_aware_like_onion() {
     };
 
     assert!(!any_in(0, &is_reddish), "first frame has no previous ghost");
-    assert!(any_in(0, &is_greenish), "first frame still ghosts its next frame");
+    assert!(
+        any_in(0, &is_greenish),
+        "first frame still ghosts its next frame"
+    );
 
-    assert!(any_in(2, &is_reddish), "last frame still ghosts its previous frame");
+    assert!(
+        any_in(2, &is_reddish),
+        "last frame still ghosts its previous frame"
+    );
     assert!(!any_in(2, &is_greenish), "last frame has no next ghost");
 }
 
@@ -762,8 +815,15 @@ fn rpc_sprite_verbs_write_images_and_report_sizes() {
         json!({"anim": "dot.tri", "all": true, "zoom": 4, "path": p}),
     );
     assert!(resp.get("error").is_none(), "sprite_onion --all: {resp}");
-    assert_eq!(resp["result"]["frames"], 3, "one contact-sheet image depicting all 3 frames");
-    assert_eq!(resp["result"]["width"], 32 * 3 + 2 * 2, "3 cells + 2 gutters");
+    assert_eq!(
+        resp["result"]["frames"], 3,
+        "one contact-sheet image depicting all 3 frames"
+    );
+    assert_eq!(
+        resp["result"]["width"],
+        32 * 3 + 2 * 2,
+        "3 cells + 2 gutters"
+    );
     let _ = std::fs::remove_file(&path);
 
     let path = temp_path("diff.png");
@@ -791,7 +851,10 @@ fn rpc_sprite_verbs_write_images_and_report_sizes() {
     let resp = call(&mut session, "sprite_lint", json!({"anims": ["dot.wave"]}));
     assert!(resp.get("error").is_none(), "sprite_lint: {resp}");
     assert_eq!(resp["result"]["anims"][0]["anim"], "dot.wave");
-    assert_eq!(resp["result"]["anims"][0]["frames"][1]["silhouette_area"], 6);
+    assert_eq!(
+        resp["result"]["anims"][0]["frames"][1]["silhouette_area"],
+        6
+    );
 
     let resp = call(&mut session, "sprite_lint", json!({}));
     assert_eq!(
@@ -814,7 +877,11 @@ fn rpc_sprite_verbs_report_bad_params_and_missing_carts() {
             .contains("target")
     );
 
-    let resp = call(&mut session, "sprite_strip", json!({"anim": "dot", "path": "/dev/null"}));
+    let resp = call(
+        &mut session,
+        "sprite_strip",
+        json!({"anim": "dot", "path": "/dev/null"}),
+    );
     assert_eq!(resp["error"]["code"], -32602);
 
     let resp = call(
@@ -827,14 +894,26 @@ fn rpc_sprite_verbs_report_bad_params_and_missing_carts() {
     // No cart loaded at all.
     let mut empty = Session::new();
     for (method, params) in [
-        ("sprite_render", json!({"target": "dot", "path": "/dev/null"})),
-        ("sprite_strip", json!({"anim": "dot.wave", "path": "/dev/null"})),
-        ("sprite_onion", json!({"anim": "dot.wave", "path": "/dev/null"})),
+        (
+            "sprite_render",
+            json!({"target": "dot", "path": "/dev/null"}),
+        ),
+        (
+            "sprite_strip",
+            json!({"anim": "dot.wave", "path": "/dev/null"}),
+        ),
+        (
+            "sprite_onion",
+            json!({"anim": "dot.wave", "path": "/dev/null"}),
+        ),
         (
             "sprite_diff",
             json!({"anim": "dot.wave", "frame_a": 0, "frame_b": 1, "path": "/dev/null"}),
         ),
-        ("sprite_ghost", json!({"anim": "dot.wave", "path": "/dev/null"})),
+        (
+            "sprite_ghost",
+            json!({"anim": "dot.wave", "path": "/dev/null"}),
+        ),
         ("sprite_lint", json!({})),
     ] {
         let resp = call(&mut empty, method, params);

@@ -73,7 +73,10 @@ fn row128(segments: &[(usize, &str)]) -> String {
 
 #[test]
 fn dump_prints_header_and_rows() {
-    let rows = ["12345678", "abcdef01", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"];
+    let rows = [
+        "12345678", "abcdef01", "00000000", "00000000", "00000000", "00000000", "00000000",
+        "00000000",
+    ];
     let text = cart("sprite player rect=0,0 size=1x1", &rows);
     let cart_parsed = Cart::parse(&text).unwrap();
 
@@ -117,7 +120,10 @@ fn poke_rows_overwrites_the_region() {
     let text = cart("sprite player rect=0,0 size=1x1", &["00000000"; 8]);
     let path = temp_cart("poke-basic", &text);
 
-    let new_rows = ["12345678", "9abcdef0", "11111111", "22222222", "33333333", "44444444", "55555555", "66666666"];
+    let new_rows = [
+        "12345678", "9abcdef0", "11111111", "22222222", "33333333", "44444444", "55555555",
+        "66666666",
+    ];
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
         "player",
@@ -135,7 +141,9 @@ fn poke_rows_overwrites_the_region() {
 
 #[test]
 fn poke_only_rewrites_rows_that_actually_changed() {
-    let rows: Vec<String> = (0..8u32).map(|y| char::from_digit(y, 16).unwrap().to_string().repeat(8)).collect();
+    let rows: Vec<String> = (0..8u32)
+        .map(|y| char::from_digit(y, 16).unwrap().to_string().repeat(8))
+        .collect();
     let row_refs: Vec<&str> = rows.iter().map(String::as_str).collect();
     let text = cart("sprite player rect=0,0 size=1x1", &row_refs);
     let path = temp_cart("poke-selective", &text);
@@ -151,10 +159,17 @@ fn poke_only_rewrites_rows_that_actually_changed() {
     ]));
     assert_eq!(code, 0);
 
-    let before: Vec<&str> = text.split("__sprites__\n").nth(1).unwrap().lines().collect();
+    let before: Vec<&str> = text
+        .split("__sprites__\n")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .collect();
     let out = read(&path);
     let after: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
-    let changed: Vec<usize> = (0..before.len()).filter(|&i| before[i] != after[i]).collect();
+    let changed: Vec<usize> = (0..before.len())
+        .filter(|&i| before[i] != after[i])
+        .collect();
     assert_eq!(changed, vec![3], "only row 3 actually changed");
     assert_eq!(after[3], row128(&[(0, "aaaaaaaa")]));
 }
@@ -172,7 +187,11 @@ fn poke_identical_rows_is_a_legal_noop() {
         &rows.join(","),
     ]));
     assert_eq!(code, 0);
-    assert_eq!(read(&path), text, "poking identical content changes nothing");
+    assert_eq!(
+        read(&path),
+        text,
+        "poking identical content changes nothing"
+    );
 }
 
 #[test]
@@ -226,7 +245,12 @@ fn poke_wrong_row_count_errors_without_modifying_file() {
 
     // Only 6 rows for an 8-row region.
     let rows: Vec<&str> = vec!["00000000"; 6];
-    let code = cli_poke(&args(&[path.to_str().unwrap(), "player", "--rows", &rows.join(",")]));
+    let code = cli_poke(&args(&[
+        path.to_str().unwrap(),
+        "player",
+        "--rows",
+        &rows.join(","),
+    ]));
     assert_ne!(code, 0);
     assert_eq!(read(&path), before);
 }
@@ -239,7 +263,12 @@ fn poke_wrong_row_length_errors_naming_expected_and_got() {
 
     let mut rows: Vec<String> = vec!["00000000".to_string(); 8];
     rows[2] = "abc".to_string(); // too short: 3 chars instead of 8
-    let code = cli_poke(&args(&[path.to_str().unwrap(), "player", "--rows", &rows.join(",")]));
+    let code = cli_poke(&args(&[
+        path.to_str().unwrap(),
+        "player",
+        "--rows",
+        &rows.join(","),
+    ]));
     assert_ne!(code, 0);
     assert_eq!(read(&path), before, "file must be untouched on error");
 }
@@ -252,7 +281,12 @@ fn poke_bad_hex_char_errors_without_modifying_file() {
 
     let mut rows: Vec<String> = vec!["00000000".to_string(); 8];
     rows[4] = "0000zz00".to_string();
-    let code = cli_poke(&args(&[path.to_str().unwrap(), "player", "--rows", &rows.join(",")]));
+    let code = cli_poke(&args(&[
+        path.to_str().unwrap(),
+        "player",
+        "--rows",
+        &rows.join(","),
+    ]));
     assert_ne!(code, 0);
     assert_eq!(read(&path), before, "file must be untouched on error");
 }
@@ -263,7 +297,12 @@ fn poke_unknown_target_errors_without_modifying_file() {
     let path = temp_cart("poke-err-target", &text);
     let before = read(&path);
 
-    let code = cli_poke(&args(&[path.to_str().unwrap(), "nope", "--rows", "00000000"]));
+    let code = cli_poke(&args(&[
+        path.to_str().unwrap(),
+        "nope",
+        "--rows",
+        "00000000",
+    ]));
     assert_ne!(code, 0);
     assert_eq!(read(&path), before);
 }
@@ -285,7 +324,13 @@ fn poke_rejects_both_rows_and_stdin() {
     let path = temp_cart("poke-err-both-sources", &text);
     let before = read(&path);
 
-    let code = cli_poke(&args(&[path.to_str().unwrap(), "player", "--rows", "00000000", "--stdin"]));
+    let code = cli_poke(&args(&[
+        path.to_str().unwrap(),
+        "player",
+        "--rows",
+        "00000000",
+        "--stdin",
+    ]));
     assert_ne!(code, 0);
     assert_eq!(read(&path), before);
 }
@@ -296,14 +341,20 @@ fn poke_rejects_both_rows_and_stdin() {
 
 #[test]
 fn dump_then_poke_is_a_noop() {
-    let rows = ["12345678", "9abcdef0", "fedcba98", "00000001", "10000000", "aaaaaaaa", "55555555", "ffffffff"];
+    let rows = [
+        "12345678", "9abcdef0", "fedcba98", "00000001", "10000000", "aaaaaaaa", "55555555",
+        "ffffffff",
+    ];
     let text = cart("sprite player rect=0,0 size=1x1", &rows);
     let path = temp_cart("roundtrip-dump-then-poke", &text);
 
     let cart_parsed = Cart::parse(&text).unwrap();
     let dumped = view::dump(&cart_parsed, "player", 0).expect("dump player");
     let dumped_rows: Vec<&str> = dumped.lines().filter(|l| !l.starts_with('#')).collect();
-    assert_eq!(dumped_rows, rows, "dump must echo back exactly what was there");
+    assert_eq!(
+        dumped_rows, rows,
+        "dump must echo back exactly what was there"
+    );
 
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
@@ -312,7 +363,11 @@ fn dump_then_poke_is_a_noop() {
         &dumped_rows.join(","),
     ]));
     assert_eq!(code, 0);
-    assert_eq!(read(&path), text, "poking dump's own output must be a no-op");
+    assert_eq!(
+        read(&path),
+        text,
+        "poking dump's own output must be a no-op"
+    );
 }
 
 #[test]
@@ -320,7 +375,10 @@ fn poke_then_dump_round_trips() {
     let text = cart("sprite player rect=0,0 size=1x1", &["00000000"; 8]);
     let path = temp_cart("roundtrip-poke-then-dump", &text);
 
-    let new_rows = ["11223344", "55667788", "99aabbcc", "ddeeff00", "01010101", "20202020", "30303030", "40404040"];
+    let new_rows = [
+        "11223344", "55667788", "99aabbcc", "ddeeff00", "01010101", "20202020", "30303030",
+        "40404040",
+    ];
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
         "player",
@@ -333,7 +391,10 @@ fn poke_then_dump_round_trips() {
     let out_cart = Cart::parse(&out_text).unwrap();
     let dumped = view::dump(&out_cart, "player", 0).expect("dump after poke");
     let dumped_rows: Vec<&str> = dumped.lines().filter(|l| !l.starts_with('#')).collect();
-    assert_eq!(dumped_rows, new_rows, "dump after poke must read back exactly what was poked");
+    assert_eq!(
+        dumped_rows, new_rows,
+        "dump after poke must read back exactly what was poked"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -349,7 +410,13 @@ fn poke_stdin_reads_rows_and_skips_comment_lines() {
 
     let bin = env!("CARGO_BIN_EXE_console-agent");
     let mut child = std::process::Command::new(bin)
-        .args(["sprite", "poke", path.to_str().unwrap(), "player", "--stdin"])
+        .args([
+            "sprite",
+            "poke",
+            path.to_str().unwrap(),
+            "player",
+            "--stdin",
+        ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -357,13 +424,25 @@ fn poke_stdin_reads_rows_and_skips_comment_lines() {
         .expect("spawn console-agent");
 
     let stdin_rows = "# x=0 y=0 w=8 h=8\na1a1a1a1\nb2b2b2b2\nc3c3c3c3\nd4d4d4d4\ne5e5e5e5\nf6f6f6f6\n07070707\n18181818\n";
-    child.stdin.take().unwrap().write_all(stdin_rows.as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin_rows.as_bytes())
+        .unwrap();
     let output = child.wait_with_output().expect("wait for console-agent");
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let out = read(&path);
     let rows: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
-    let expected = ["a1a1a1a1", "b2b2b2b2", "c3c3c3c3", "d4d4d4d4", "e5e5e5e5", "f6f6f6f6", "07070707", "18181818"];
+    let expected = [
+        "a1a1a1a1", "b2b2b2b2", "c3c3c3c3", "d4d4d4d4", "e5e5e5e5", "f6f6f6f6", "07070707",
+        "18181818",
+    ];
     for (y, row) in rows.iter().enumerate() {
         assert_eq!(*row, row128(&[(0, expected[y])]), "row {y}");
     }
@@ -373,7 +452,10 @@ fn poke_stdin_reads_rows_and_skips_comment_lines() {
 fn real_dump_piped_into_real_poke_is_a_noop() {
     use std::io::Write;
 
-    let rows = ["cafebabe", "deadbeef", "8badf00d", "0ff1ce00", "abad1dea", "b16b00b5", "f00dface", "5ca1ab1e"];
+    let rows = [
+        "cafebabe", "deadbeef", "8badf00d", "0ff1ce00", "abad1dea", "b16b00b5", "f00dface",
+        "5ca1ab1e",
+    ];
     let text = cart("sprite player rect=0,0 size=1x1", &rows);
     let path = temp_cart("roundtrip-real-pipe", &text);
     let before = read(&path);
@@ -383,18 +465,42 @@ fn real_dump_piped_into_real_poke_is_a_noop() {
         .args(["sprite", "dump", path.to_str().unwrap(), "player"])
         .output()
         .expect("spawn console-agent dump");
-    assert!(dump_out.status.success(), "stderr: {}", String::from_utf8_lossy(&dump_out.stderr));
+    assert!(
+        dump_out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&dump_out.stderr)
+    );
 
     let mut poke = std::process::Command::new(bin)
-        .args(["sprite", "poke", path.to_str().unwrap(), "player", "--stdin"])
+        .args([
+            "sprite",
+            "poke",
+            path.to_str().unwrap(),
+            "player",
+            "--stdin",
+        ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("spawn console-agent poke");
-    poke.stdin.take().unwrap().write_all(&dump_out.stdout).unwrap();
-    let poke_out = poke.wait_with_output().expect("wait for console-agent poke");
-    assert!(poke_out.status.success(), "stderr: {}", String::from_utf8_lossy(&poke_out.stderr));
+    poke.stdin
+        .take()
+        .unwrap()
+        .write_all(&dump_out.stdout)
+        .unwrap();
+    let poke_out = poke
+        .wait_with_output()
+        .expect("wait for console-agent poke");
+    assert!(
+        poke_out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&poke_out.stderr)
+    );
 
-    assert_eq!(read(&path), before, "dump piped straight into poke must be a no-op");
+    assert_eq!(
+        read(&path),
+        before,
+        "dump piped straight into poke must be a no-op"
+    );
 }

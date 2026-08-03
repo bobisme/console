@@ -156,9 +156,9 @@ pub fn render(cart: &Cart, target: &str, opts: &RenderOpts) -> Result<Image, Str
         draw_grid(&mut canvas, cell, zoom);
     }
     if opts.anchor {
-        let anchor = target_sprite(cart, &target).map(|d| d.anchor).ok_or(
-            "--anchor needs a sprite or anim target; raw tx,ty,w,h rects have no anchor",
-        )?;
+        let anchor = target_sprite(cart, &target)
+            .map(|d| d.anchor)
+            .ok_or("--anchor needs a sprite or anim target; raw tx,ty,w,h rects have no anchor")?;
         draw_anchor(&mut canvas, cell, anchor, zoom);
     }
     Ok(canvas.finish(1))
@@ -290,7 +290,12 @@ pub fn onion(cart: &Cart, anim: &str, pos: u32, opts: &OverlayOpts) -> Result<Im
         draw_grid(&mut canvas, cell, zoom);
     }
     if opts.anchor {
-        draw_anchor(&mut canvas, cell, (layout.anchor.0 as i32, layout.anchor.1 as i32), zoom);
+        draw_anchor(
+            &mut canvas,
+            cell,
+            (layout.anchor.0 as i32, layout.anchor.1 as i32),
+            zoom,
+        );
     }
     Ok(canvas.finish(1 + usize::from(prev.is_some()) + usize::from(next.is_some())))
 }
@@ -337,18 +342,38 @@ pub fn onion_all(cart: &Cart, anim: &str, opts: &OverlayOpts) -> Result<Image, S
         let (prev, next) = onion_neighbours(def.looped, i, n);
         paint_onion_ghosts(&mut canvas, &frames, &layout, prev, next, (cell_x, 0), zoom);
         let (ox, oy) = layout.offsets[i];
-        draw_frame(&mut canvas, &frames[i], (cell_x + ox * zoom, oy * zoom), zoom);
+        draw_frame(
+            &mut canvas,
+            &frames[i],
+            (cell_x + ox * zoom, oy * zoom),
+            zoom,
+        );
 
-        let cell = Rect { x: cell_x, y: 0, w: cell_w, h: cell_h };
+        let cell = Rect {
+            x: cell_x,
+            y: 0,
+            w: cell_w,
+            h: cell_h,
+        };
         if opts.grid {
             draw_grid(&mut canvas, cell, zoom);
         }
         if opts.anchor {
-            draw_anchor(&mut canvas, cell, (layout.anchor.0 as i32, layout.anchor.1 as i32), zoom);
+            draw_anchor(
+                &mut canvas,
+                cell,
+                (layout.anchor.0 as i32, layout.anchor.1 as i32),
+                zoom,
+            );
         }
         draw_label(
             &mut canvas,
-            Rect { x: cell_x, y: cell_h, w: cell_w, h: LABEL_HEIGHT },
+            Rect {
+                x: cell_x,
+                y: cell_h,
+                w: cell_w,
+                h: LABEL_HEIGHT,
+            },
             &i.to_string(),
         );
     }
@@ -430,7 +455,12 @@ pub fn ghost(cart: &Cart, anim: &str, opts: &OverlayOpts) -> Result<Image, Strin
         draw_grid(&mut canvas, cell, zoom);
     }
     if opts.anchor {
-        draw_anchor(&mut canvas, cell, (layout.anchor.0 as i32, layout.anchor.1 as i32), zoom);
+        draw_anchor(
+            &mut canvas,
+            cell,
+            (layout.anchor.0 as i32, layout.anchor.1 as i32),
+            zoom,
+        );
     }
     Ok(canvas.finish(frames.len()))
 }
@@ -469,7 +499,11 @@ pub struct GifOpts {
 
 impl Default for GifOpts {
     fn default() -> GifOpts {
-        GifOpts { zoom: DEFAULT_ZOOM, grid: false, anchor: false }
+        GifOpts {
+            zoom: DEFAULT_ZOOM,
+            grid: false,
+            anchor: false,
+        }
     }
 }
 
@@ -493,13 +527,20 @@ pub fn gif(cart: &Cart, anim: &str, opts: &GifOpts) -> Result<GifOutput, String>
     let height16 = u16::try_from(height)
         .map_err(|_| format!("gif: {height}px frame is too tall to encode"))?;
     let delay = gif_delay_from_fps(def.fps);
-    let cell = Rect { x: 0, y: 0, w: width, h: height };
+    let cell = Rect {
+        x: 0,
+        y: 0,
+        w: width,
+        h: height,
+    };
 
     let mut bytes = Vec::new();
     {
         let mut encoder = gif::Encoder::new(&mut bytes, width16, height16, &[])
             .map_err(|e| format!("gif: {e}"))?;
-        encoder.set_repeat(gif::Repeat::Infinite).map_err(|e| format!("gif: {e}"))?;
+        encoder
+            .set_repeat(gif::Repeat::Infinite)
+            .map_err(|e| format!("gif: {e}"))?;
 
         for (i, frame) in frames.iter().enumerate() {
             let (ox, oy) = layout.offsets[i];
@@ -509,7 +550,12 @@ pub fn gif(cart: &Cart, anim: &str, opts: &GifOpts) -> Result<GifOutput, String>
                 draw_grid(&mut canvas, cell, zoom);
             }
             if opts.anchor {
-                draw_anchor(&mut canvas, cell, (layout.anchor.0 as i32, layout.anchor.1 as i32), zoom);
+                draw_anchor(
+                    &mut canvas,
+                    cell,
+                    (layout.anchor.0 as i32, layout.anchor.1 as i32),
+                    zoom,
+                );
             }
             let mut rgba = canvas.into_rgba();
             let mut gif_frame = gif::Frame::from_rgba_speed(width16, height16, &mut rgba, 10);
@@ -523,7 +569,12 @@ pub fn gif(cart: &Cart, anim: &str, opts: &GifOpts) -> Result<GifOutput, String>
         // of no further use once the borrow it represents ends here.
         encoder.into_inner().map_err(|e| format!("gif: {e}"))?;
     }
-    Ok(GifOutput { bytes, width, height, frames: frames.len() })
+    Ok(GifOutput {
+        bytes,
+        width,
+        height,
+        frames: frames.len(),
+    })
 }
 
 /// GIF frame delay is in units of 10ms. `fps` converts as `1000/fps`,
@@ -582,9 +633,12 @@ impl AnimSummary {
     /// The one printable line SPEC.md's `--summary` describes: name,
     /// frames, worst drift, worst changed, unique-color count.
     pub fn line(&self) -> String {
-        let drift = self.worst_drift.map_or_else(|| "-".to_string(), |d| format!("{:.2}px", round2(d)));
-        let changed =
-            self.worst_changed.map_or_else(|| "-".to_string(), |c| format!("{c}px"));
+        let drift = self
+            .worst_drift
+            .map_or_else(|| "-".to_string(), |d| format!("{:.2}px", round2(d)));
+        let changed = self
+            .worst_changed
+            .map_or_else(|| "-".to_string(), |c| format!("{c}px"));
         format!(
             "{}: frames={} worst_drift={drift} worst_changed={changed} unique_colors={}",
             self.anim, self.frame_count, self.unique_colors,
@@ -701,7 +755,9 @@ fn lint_anim_gated(
             // through `AnimDef::resolve_frame` so `frames_rect=` relocation
             // and explicit `tx:ty` forms report the tile that actually
             // draws, not the classic sprite-relative displacement.
-            let sprite_id = def.resolve_frame(sprite, i).map(|(x, y, _, _)| json!([x / 8, y / 8]));
+            let sprite_id = def
+                .resolve_frame(sprite, i)
+                .map(|(x, y, _, _)| json!([x / 8, y / 8]));
             json!({
                 "index": i,
                 "sprite_frame": frame_spec_json(sheet_frame),
@@ -718,10 +774,22 @@ fn lint_anim_gated(
     let n = frames.len();
     let mut metrics = Vec::new();
     for i in 0..n.saturating_sub(1) {
-        metrics.push(pair_metrics(&frames[i], &frames[i + 1], &stats[i], &stats[i + 1], (i, i + 1)));
+        metrics.push(pair_metrics(
+            &frames[i],
+            &frames[i + 1],
+            &stats[i],
+            &stats[i + 1],
+            (i, i + 1),
+        ));
     }
     if def.looped && n > 1 {
-        metrics.push(pair_metrics(&frames[n - 1], &frames[0], &stats[n - 1], &stats[0], (n - 1, 0)));
+        metrics.push(pair_metrics(
+            &frames[n - 1],
+            &frames[0],
+            &stats[n - 1],
+            &stats[0],
+            (n - 1, 0),
+        ));
     }
     let pairs: Vec<Value> = metrics.iter().map(pair_json).collect();
 
@@ -754,9 +822,7 @@ fn lint_anim_gated(
     // frame (the pair's "to" frame, or the frame a unique color lives in),
     // the metric, its value and the configured limit.
     // -----------------------------------------------------------------
-    let violation = |frame: usize, metric: &str, value: Value, limit: Value| {
-        json!({ "anim": def.name, "frame": frame, "metric": metric, "value": value, "limit": limit })
-    };
+    let violation = |frame: usize, metric: &str, value: Value, limit: Value| json!({ "anim": def.name, "frame": frame, "metric": metric, "value": value, "limit": limit });
     let mut violations = Vec::new();
     for m in &metrics {
         if let Some(max_drift) = thresholds.max_drift {
@@ -803,7 +869,9 @@ fn lint_anim_gated(
     let worst_drift = metrics
         .iter()
         .filter_map(|m| m.centroid_drift.map(|(_, _, d)| d))
-        .fold(None, |acc: Option<f64>, d| Some(acc.map_or(d, |a| a.max(d))));
+        .fold(None, |acc: Option<f64>, d| {
+            Some(acc.map_or(d, |a| a.max(d)))
+        });
     let worst_changed = metrics.iter().map(|m| m.changed_pixels as u32).max();
     let summary = AnimSummary {
         anim: def.name.clone(),
@@ -926,11 +994,7 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
             "--no-unique-colors" => f.no_unique_colors = true,
             "--summary" => f.summary = true,
             "-o" | "--out" => {
-                f.out = Some(
-                    it.next()
-                        .ok_or("-o requires an output path")?
-                        .clone(),
-                );
+                f.out = Some(it.next().ok_or("-o requires an output path")?.clone());
             }
             other if other.starts_with('-') && other.len() > 1 => {
                 return Err(format!("unknown flag {other:?}"));
@@ -942,13 +1006,17 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
 }
 
 fn next_u32<'a>(it: &mut impl Iterator<Item = &'a String>, what: &str) -> Result<u32, String> {
-    let v = it.next().ok_or_else(|| format!("{what} requires a value"))?;
+    let v = it
+        .next()
+        .ok_or_else(|| format!("{what} requires a value"))?;
     v.parse()
         .map_err(|_| format!("invalid {what} value {v:?} (want a non-negative integer)"))
 }
 
 fn next_f64<'a>(it: &mut impl Iterator<Item = &'a String>, what: &str) -> Result<f64, String> {
-    let v = it.next().ok_or_else(|| format!("{what} requires a value"))?;
+    let v = it
+        .next()
+        .ok_or_else(|| format!("{what} requires a value"))?;
     v.parse()
         .map_err(|_| format!("invalid {what} value {v:?} (want a number)"))
 }
@@ -1003,7 +1071,11 @@ fn run_view(args: &[String]) -> Result<i32, String> {
             .out
             .as_deref()
             .ok_or_else(|| format!("sprite {cmd} requires -o <out.gif>"))?;
-        let opts = GifOpts { zoom: flags.zoom, grid: flags.grid, anchor: flags.anchor };
+        let opts = GifOpts {
+            zoom: flags.zoom,
+            grid: flags.grid,
+            anchor: flags.anchor,
+        };
         let result = gif(&cart, anim, &opts)?;
         std::fs::write(out, &result.bytes).map_err(|e| format!("cannot write {out:?}: {e}"))?;
         println!(
@@ -1049,12 +1121,14 @@ fn run_view(args: &[String]) -> Result<i32, String> {
         }
         "onion" => {
             let anim = one_positional(rest, cmd, "<anim>")?;
-            let opts = OverlayOpts { zoom: flags.zoom, grid: flags.grid, anchor: flags.anchor };
+            let opts = OverlayOpts {
+                zoom: flags.zoom,
+                grid: flags.grid,
+                anchor: flags.anchor,
+            };
             if flags.all {
                 if flags.frame.is_some() {
-                    return Err(
-                        "sprite onion --all covers every frame; omit --frame".into()
-                    );
+                    return Err("sprite onion --all covers every frame; omit --frame".into());
                 }
                 onion_all(&cart, anim, &opts)?
             } else {
@@ -1078,7 +1152,15 @@ fn run_view(args: &[String]) -> Result<i32, String> {
         }
         "ghost" => {
             let anim = one_positional(rest, cmd, "<anim>")?;
-            ghost(&cart, anim, &OverlayOpts { zoom: flags.zoom, grid: flags.grid, anchor: flags.anchor })?
+            ghost(
+                &cart,
+                anim,
+                &OverlayOpts {
+                    zoom: flags.zoom,
+                    grid: flags.grid,
+                    anchor: flags.anchor,
+                },
+            )?
         }
         other => return Err(format!("unknown sprite command {other:?}")),
     };
@@ -1095,7 +1177,9 @@ fn one_positional<'a>(rest: &'a [String], cmd: &str, what: &str) -> Result<&'a s
     match rest {
         [only] => Ok(only.as_str()),
         [] => Err(format!("sprite {cmd} requires {what}")),
-        _ => Err(format!("sprite {cmd} takes exactly one {what}, got {rest:?}")),
+        _ => Err(format!(
+            "sprite {cmd} takes exactly one {what}, got {rest:?}"
+        )),
     }
 }
 
@@ -1250,7 +1334,10 @@ fn align(frames: &[Frame], anchor: (i32, i32)) -> Layout {
         cell_w: (max.0 - min.0) as u32,
         cell_h: (max.1 - min.1) as u32,
         anchor: ((-min.0) as u32, (-min.1) as u32),
-        offsets: frames.iter().map(|_| ((-ax - min.0) as u32, (-ay - min.1) as u32)).collect(),
+        offsets: frames
+            .iter()
+            .map(|_| ((-ax - min.0) as u32, (-ay - min.1) as u32))
+            .collect(),
     }
 }
 
@@ -1654,14 +1741,8 @@ fn frame_stats(frame: &Frame, anchor: (i32, i32)) -> FrameStats {
     });
     FrameStats {
         area,
-        bbox: bounds.map(|[x0, y0, x1, y1]| {
-            [
-                x0 - anchor.0,
-                y0 - anchor.1,
-                x1 - anchor.0,
-                y1 - anchor.1,
-            ]
-        }),
+        bbox: bounds
+            .map(|[x0, y0, x1, y1]| [x0 - anchor.0, y0 - anchor.1, x1 - anchor.0, y1 - anchor.1]),
         centroid,
         hist,
     }
@@ -1702,7 +1783,13 @@ struct PairMetrics {
     bbox_drift: Option<[i32; 6]>,
 }
 
-fn pair_metrics(a: &Frame, b: &Frame, sa: &FrameStats, sb: &FrameStats, (from, to): (usize, usize)) -> PairMetrics {
+fn pair_metrics(
+    a: &Frame,
+    b: &Frame,
+    sa: &FrameStats,
+    sb: &FrameStats,
+    (from, to): (usize, usize),
+) -> PairMetrics {
     let changed_pixels = if a.w == b.w && a.h == b.h {
         a.px.iter().zip(&b.px).filter(|(x, y)| x != y).count()
     } else {

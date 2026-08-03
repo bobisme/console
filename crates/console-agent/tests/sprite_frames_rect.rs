@@ -62,13 +62,27 @@ fn frames_rect_relocates_the_frame_0_origin_away_from_the_sprites_own_rect() {
 
     // frame 0 -> frames_rect's own tile (5,0): marker color 3, NOT the
     // sprite's own-rect marker (color 9 at tile 0,0).
-    let f0 = view::render(&cart, "p.reloc", &RenderOpts { frame: Some(0), ..RenderOpts::default() })
-        .expect("render p.reloc frame 0");
+    let f0 = view::render(
+        &cart,
+        "p.reloc",
+        &RenderOpts {
+            frame: Some(0),
+            ..RenderOpts::default()
+        },
+    )
+    .expect("render p.reloc frame 0");
     assert_eq!(px(&f0, 0, 0), PALETTE[3]);
 
     // frame 1 -> one step right of frames_rect's origin: tile (6,0), marker 4.
-    let f1 = view::render(&cart, "p.reloc", &RenderOpts { frame: Some(1), ..RenderOpts::default() })
-        .expect("render p.reloc frame 1");
+    let f1 = view::render(
+        &cart,
+        "p.reloc",
+        &RenderOpts {
+            frame: Some(1),
+            ..RenderOpts::default()
+        },
+    )
+    .expect("render p.reloc frame 1");
     assert_eq!(px(&f1, 0, 0), PALETTE[4]);
 }
 
@@ -103,7 +117,10 @@ fn dump_of_an_explicit_tile_frame_matches_the_frames_rect_index_frame_side_by_si
     // image path.
     let cart = cart();
     let index_via_frames_rect = view::dump(&cart, "5,0,1,1", 0).expect("dump tile 5,0");
-    assert!(index_via_frames_rect.contains('3'), "{index_via_frames_rect}");
+    assert!(
+        index_via_frames_rect.contains('3'),
+        "{index_via_frames_rect}"
+    );
     let explicit_tile = view::dump(&cart, "2,3,1,1", 0).expect("dump tile 2,3");
     assert!(explicit_tile.contains('5'), "{explicit_tile}");
 }

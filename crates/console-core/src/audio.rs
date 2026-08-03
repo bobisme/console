@@ -247,26 +247,19 @@ const VOL_LEVELS: [f32; 8] = [
 pub const NOTE_FREQ: [f32; 96] = [
     // C0..B0
     16.351599, 17.323914, 18.354048, 19.445436, 20.601723, 21.826765, 23.124651, 24.499714,
-    25.956543, 27.5, 29.135235, 30.867706,
-    // C1..B1
+    25.956543, 27.5, 29.135235, 30.867706, // C1..B1
     32.703197, 34.647827, 36.708096, 38.890873, 41.203445, 43.65353, 46.249302, 48.999428,
-    51.913086, 55.0, 58.27047, 61.735413,
-    // C2..B2
+    51.913086, 55.0, 58.27047, 61.735413, // C2..B2
     65.406395, 69.295654, 73.41619, 77.781746, 82.40689, 87.30706, 92.498604, 97.998856, 103.82617,
-    110.0, 116.54094, 123.470825,
-    // C3..B3
+    110.0, 116.54094, 123.470825, // C3..B3
     130.81279, 138.59131, 146.83238, 155.56349, 164.81378, 174.61412, 184.99721, 195.99771,
-    207.65234, 220.0, 233.08188, 246.94165,
-    // C4..B4
+    207.65234, 220.0, 233.08188, 246.94165, // C4..B4
     261.62558, 277.18262, 293.66476, 311.12698, 329.62756, 349.22824, 369.99442, 391.99542,
-    415.3047, 440.0, 466.16376, 493.8833,
-    // C5..B5
+    415.3047, 440.0, 466.16376, 493.8833, // C5..B5
     523.25116, 554.36523, 587.3295, 622.25397, 659.2551, 698.4565, 739.98883, 783.99084, 830.6094,
-    880.0, 932.3275, 987.7666,
-    // C6..B6
+    880.0, 932.3275, 987.7666, // C6..B6
     1046.5023, 1108.7305, 1174.659, 1244.5079, 1318.5103, 1396.913, 1479.9777, 1567.9817,
-    1661.2188, 1760.0, 1864.655, 1975.5332,
-    // C7..B7
+    1661.2188, 1760.0, 1864.655, 1975.5332, // C7..B7
     2093.0046, 2217.461, 2349.318, 2489.0159, 2637.0205, 2793.826, 2959.9553, 3135.9634, 3322.4375,
     3520.0, 3729.31, 3951.0664,
 ];
@@ -368,38 +361,262 @@ fn div_round(n: i32, d: i32) -> i32 {
 /// voice lives with. Doubling it would buy nothing audible.
 #[allow(clippy::excessive_precision)]
 pub const SINE_QUARTER: [f32; 257] = [
-    0.0, 0.0061358847, 0.012271538, 0.01840673, 0.024541229, 0.030674804, 0.036807224, 0.04293826,
-    0.049067676, 0.055195246, 0.061320737, 0.06744392, 0.07356457, 0.07968244, 0.08579731, 0.091908954,
-    0.09801714, 0.10412163, 0.110222206, 0.11631863, 0.12241068, 0.1284981, 0.1345807, 0.14065824,
-    0.14673047, 0.15279719, 0.15885815, 0.16491312, 0.17096189, 0.17700422, 0.18303989, 0.18906866,
-    0.19509032, 0.20110464, 0.20711137, 0.21311031, 0.21910124, 0.22508392, 0.2310581, 0.2370236,
-    0.24298018, 0.24892761, 0.25486565, 0.2607941, 0.26671275, 0.27262136, 0.2785197, 0.28440753,
-    0.29028466, 0.2961509, 0.30200595, 0.30784965, 0.31368175, 0.31950203, 0.3253103, 0.3311063,
-    0.33688986, 0.34266073, 0.34841868, 0.35416353, 0.35989505, 0.36561298, 0.3713172, 0.37700742,
-    0.38268343, 0.38834503, 0.39399204, 0.3996242, 0.4052413, 0.41084316, 0.41642955, 0.42200026,
-    0.42755508, 0.43309382, 0.43861625, 0.44412214, 0.44961134, 0.45508358, 0.46053872, 0.4659765,
-    0.47139674, 0.47679922, 0.48218378, 0.48755017, 0.4928982, 0.49822766, 0.50353837, 0.50883013,
-    0.51410276, 0.519356, 0.52458966, 0.52980363, 0.53499764, 0.54017144, 0.545325, 0.55045795,
-    0.55557024, 0.56066155, 0.5657318, 0.57078075, 0.57580817, 0.58081394, 0.58579785, 0.5907597,
-    0.5956993, 0.60061646, 0.60551107, 0.6103828, 0.6152316, 0.6200572, 0.6248595, 0.62963825,
-    0.6343933, 0.63912445, 0.64383155, 0.6485144, 0.65317285, 0.6578067, 0.6624158, 0.66699994,
-    0.671559, 0.6760927, 0.680601, 0.6850837, 0.68954057, 0.69397146, 0.69837624, 0.70275474,
-    0.70710677, 0.7114322, 0.71573085, 0.72000253, 0.7242471, 0.72846437, 0.7326543, 0.7368166,
-    0.7409511, 0.74505776, 0.7491364, 0.7531868, 0.7572088, 0.7612024, 0.76516724, 0.76910335,
-    0.77301043, 0.7768885, 0.7807372, 0.78455657, 0.7883464, 0.79210657, 0.7958369, 0.79953724,
-    0.8032075, 0.8068476, 0.81045717, 0.8140363, 0.8175848, 0.8211025, 0.8245893, 0.82804507,
-    0.8314696, 0.8348629, 0.8382247, 0.841555, 0.8448536, 0.84812033, 0.8513552, 0.854558,
-    0.8577286, 0.86086696, 0.86397284, 0.86704624, 0.87008697, 0.873095, 0.8760701, 0.8790122,
-    0.8819213, 0.8847971, 0.88763964, 0.89044875, 0.8932243, 0.89596623, 0.8986745, 0.9013488,
-    0.9039893, 0.9065957, 0.909168, 0.91170603, 0.9142098, 0.9166791, 0.9191139, 0.92151403,
-    0.9238795, 0.9262102, 0.9285061, 0.93076694, 0.9329928, 0.9351835, 0.937339, 0.9394592,
-    0.94154406, 0.94359344, 0.9456073, 0.9475856, 0.94952816, 0.951435, 0.953306, 0.9551412,
-    0.95694035, 0.95870346, 0.9604305, 0.9621214, 0.96377605, 0.96539444, 0.96697646, 0.9685221,
-    0.97003126, 0.9715039, 0.97293997, 0.97433937, 0.9757021, 0.97702813, 0.9783174, 0.9795698,
-    0.98078525, 0.9819639, 0.9831055, 0.9842101, 0.98527765, 0.9863081, 0.9873014, 0.9882576,
-    0.9891765, 0.9900582, 0.99090266, 0.99170977, 0.99247956, 0.9932119, 0.993907, 0.9945646,
-    0.9951847, 0.9957674, 0.9963126, 0.9968203, 0.99729043, 0.99772304, 0.9981181, 0.99847555,
-    0.99879545, 0.99907774, 0.99932235, 0.9995294, 0.9996988, 0.9998306, 0.9999247, 0.99998116,
+    0.0,
+    0.0061358847,
+    0.012271538,
+    0.01840673,
+    0.024541229,
+    0.030674804,
+    0.036807224,
+    0.04293826,
+    0.049067676,
+    0.055195246,
+    0.061320737,
+    0.06744392,
+    0.07356457,
+    0.07968244,
+    0.08579731,
+    0.091908954,
+    0.09801714,
+    0.10412163,
+    0.110222206,
+    0.11631863,
+    0.12241068,
+    0.1284981,
+    0.1345807,
+    0.14065824,
+    0.14673047,
+    0.15279719,
+    0.15885815,
+    0.16491312,
+    0.17096189,
+    0.17700422,
+    0.18303989,
+    0.18906866,
+    0.19509032,
+    0.20110464,
+    0.20711137,
+    0.21311031,
+    0.21910124,
+    0.22508392,
+    0.2310581,
+    0.2370236,
+    0.24298018,
+    0.24892761,
+    0.25486565,
+    0.2607941,
+    0.26671275,
+    0.27262136,
+    0.2785197,
+    0.28440753,
+    0.29028466,
+    0.2961509,
+    0.30200595,
+    0.30784965,
+    0.31368175,
+    0.31950203,
+    0.3253103,
+    0.3311063,
+    0.33688986,
+    0.34266073,
+    0.34841868,
+    0.35416353,
+    0.35989505,
+    0.36561298,
+    0.3713172,
+    0.37700742,
+    0.38268343,
+    0.38834503,
+    0.39399204,
+    0.3996242,
+    0.4052413,
+    0.41084316,
+    0.41642955,
+    0.42200026,
+    0.42755508,
+    0.43309382,
+    0.43861625,
+    0.44412214,
+    0.44961134,
+    0.45508358,
+    0.46053872,
+    0.4659765,
+    0.47139674,
+    0.47679922,
+    0.48218378,
+    0.48755017,
+    0.4928982,
+    0.49822766,
+    0.50353837,
+    0.50883013,
+    0.51410276,
+    0.519356,
+    0.52458966,
+    0.52980363,
+    0.53499764,
+    0.54017144,
+    0.545325,
+    0.55045795,
+    0.55557024,
+    0.56066155,
+    0.5657318,
+    0.57078075,
+    0.57580817,
+    0.58081394,
+    0.58579785,
+    0.5907597,
+    0.5956993,
+    0.60061646,
+    0.60551107,
+    0.6103828,
+    0.6152316,
+    0.6200572,
+    0.6248595,
+    0.62963825,
+    0.6343933,
+    0.63912445,
+    0.64383155,
+    0.6485144,
+    0.65317285,
+    0.6578067,
+    0.6624158,
+    0.66699994,
+    0.671559,
+    0.6760927,
+    0.680601,
+    0.6850837,
+    0.68954057,
+    0.69397146,
+    0.69837624,
+    0.70275474,
+    0.70710677,
+    0.7114322,
+    0.71573085,
+    0.72000253,
+    0.7242471,
+    0.72846437,
+    0.7326543,
+    0.7368166,
+    0.7409511,
+    0.74505776,
+    0.7491364,
+    0.7531868,
+    0.7572088,
+    0.7612024,
+    0.76516724,
+    0.76910335,
+    0.77301043,
+    0.7768885,
+    0.7807372,
+    0.78455657,
+    0.7883464,
+    0.79210657,
+    0.7958369,
+    0.79953724,
+    0.8032075,
+    0.8068476,
+    0.81045717,
+    0.8140363,
+    0.8175848,
+    0.8211025,
+    0.8245893,
+    0.82804507,
+    0.8314696,
+    0.8348629,
+    0.8382247,
+    0.841555,
+    0.8448536,
+    0.84812033,
+    0.8513552,
+    0.854558,
+    0.8577286,
+    0.86086696,
+    0.86397284,
+    0.86704624,
+    0.87008697,
+    0.873095,
+    0.8760701,
+    0.8790122,
+    0.8819213,
+    0.8847971,
+    0.88763964,
+    0.89044875,
+    0.8932243,
+    0.89596623,
+    0.8986745,
+    0.9013488,
+    0.9039893,
+    0.9065957,
+    0.909168,
+    0.91170603,
+    0.9142098,
+    0.9166791,
+    0.9191139,
+    0.92151403,
+    0.9238795,
+    0.9262102,
+    0.9285061,
+    0.93076694,
+    0.9329928,
+    0.9351835,
+    0.937339,
+    0.9394592,
+    0.94154406,
+    0.94359344,
+    0.9456073,
+    0.9475856,
+    0.94952816,
+    0.951435,
+    0.953306,
+    0.9551412,
+    0.95694035,
+    0.95870346,
+    0.9604305,
+    0.9621214,
+    0.96377605,
+    0.96539444,
+    0.96697646,
+    0.9685221,
+    0.97003126,
+    0.9715039,
+    0.97293997,
+    0.97433937,
+    0.9757021,
+    0.97702813,
+    0.9783174,
+    0.9795698,
+    0.98078525,
+    0.9819639,
+    0.9831055,
+    0.9842101,
+    0.98527765,
+    0.9863081,
+    0.9873014,
+    0.9882576,
+    0.9891765,
+    0.9900582,
+    0.99090266,
+    0.99170977,
+    0.99247956,
+    0.9932119,
+    0.993907,
+    0.9945646,
+    0.9951847,
+    0.9957674,
+    0.9963126,
+    0.9968203,
+    0.99729043,
+    0.99772304,
+    0.9981181,
+    0.99847555,
+    0.99879545,
+    0.99907774,
+    0.99932235,
+    0.9995294,
+    0.9996988,
+    0.9998306,
+    0.9999247,
+    0.99998116,
     1.0,
 ];
 
@@ -427,9 +644,7 @@ const FM_INDEX_PHASE: f32 = 536_870_912.0;
 /// Roughly geometric from two seconds down to a single frame, so the ladder
 /// spans "a pad that slowly loses its edge" to "a plucked transient that is
 /// gone before the amplitude envelope has finished its attack".
-pub const FM_DECAY_HALF_LIFE: [u8; 16] = [
-    0, 120, 90, 64, 48, 36, 27, 20, 15, 11, 8, 6, 4, 3, 2, 1,
-];
+pub const FM_DECAY_HALF_LIFE: [u8; 16] = [0, 120, 90, 64, 48, 36, 27, 20, 15, 11, 8, 6, 4, 3, 2, 1];
 
 /// Per-frame index multiplier: `FM_DECAY_MUL[d] = 0.5^(1 / FM_DECAY_HALF_LIFE[d])`,
 /// and exactly `1.0` at `d == 0`.
@@ -449,10 +664,8 @@ pub const FM_DECAY_HALF_LIFE: [u8; 16] = [
 /// `sweep` already live on, and one multiply per frame per voice cannot drift.
 #[allow(clippy::excessive_precision)]
 const FM_DECAY_MUL: [f32; 16] = [
-    1.0, 0.9942404, 0.9923279, 0.989228,
-    0.9856632, 0.9809301, 0.9746546, 0.9659363,
-    0.9548416, 0.9389309, 0.91700405, 0.8908987,
-    0.8408964, 0.7937005, 0.70710677, 0.5,
+    1.0, 0.9942404, 0.9923279, 0.989228, 0.9856632, 0.9809301, 0.9746546, 0.9659363, 0.9548416,
+    0.9389309, 0.91700405, 0.8908987, 0.8408964, 0.7937005, 0.70710677, 0.5,
 ];
 
 /// Index below which the decay envelope snaps to exactly zero.
@@ -791,13 +1004,7 @@ pub const TONE_CUTOFF_HZ: [u32; 9] = [0, 16000, 12600, 9900, 7800, 6100, 4800, 3
 /// Hiss amplitude per setting: `hiss / 2048`, so setting 4 is 2^-9 ≈ -54 dBFS
 /// and setting 1 is -66 dBFS. Every value is an exact power-of-two multiple,
 /// so the table is representable to the last bit on every target.
-const HISS_LEVEL: [f32; 5] = [
-    0.0,
-    1.0 / 2048.0,
-    2.0 / 2048.0,
-    3.0 / 2048.0,
-    4.0 / 2048.0,
-];
+const HISS_LEVEL: [f32; 5] = [0.0, 1.0 / 2048.0, 2.0 / 2048.0, 3.0 / 2048.0, 4.0 / 2048.0];
 
 /// Seed of the dedicated hiss LFSR. Distinct from [`LFSR_SEED`] so the noise
 /// waveform and the noise floor never lock into the same pattern.
@@ -1444,7 +1651,9 @@ impl AudioBank {
 
     /// The wavetable in slot `id` (`w<id>`), if the cart defines it.
     pub fn wavetable(&self, id: u8) -> Option<&Wavetable> {
-        self.wavetables.get(usize::from(id)).and_then(|t| t.as_ref())
+        self.wavetables
+            .get(usize::from(id))
+            .and_then(|t| t.as_ref())
     }
 
     /// All eight wavetable slots, `None` where the cart defined nothing.
@@ -1506,7 +1715,10 @@ impl AudioBank {
 
     /// The lowest pattern id greater than `id`.
     pub fn next_pattern_after(&self, id: u8) -> Option<u8> {
-        self.patterns.range(id.saturating_add(1)..).next().map(|(k, _)| *k)
+        self.patterns
+            .range(id.saturating_add(1)..)
+            .next()
+            .map(|(k, _)| *k)
     }
 
     /// Parse the raw text of `__instruments__`, `__sfx__` and `__music__`
@@ -1622,16 +1834,14 @@ fn is_rest(token: &str) -> bool {
     !token.is_empty() && token.bytes().all(|c| c == b'-')
 }
 
-fn parse_u8_in(
-    section: &str,
-    line: usize,
-    what: &str,
-    text: &str,
-    max: u8,
-) -> Result<u8, Error> {
-    let v: u32 = text
-        .parse()
-        .map_err(|_| cart_err(section, line, format!("{what} must be a number, found {text:?}")))?;
+fn parse_u8_in(section: &str, line: usize, what: &str, text: &str, max: u8) -> Result<u8, Error> {
+    let v: u32 = text.parse().map_err(|_| {
+        cart_err(
+            section,
+            line,
+            format!("{what} must be a number, found {text:?}"),
+        )
+    })?;
     if v > u32::from(max) {
         return Err(cart_err(
             section,
@@ -1651,9 +1861,13 @@ fn parse_i32_in(
     min: i32,
     max: i32,
 ) -> Result<i32, Error> {
-    let v: i32 = text
-        .parse()
-        .map_err(|_| cart_err(section, line, format!("{what} must be a number, found {text:?}")))?;
+    let v: i32 = text.parse().map_err(|_| {
+        cart_err(
+            section,
+            line,
+            format!("{what} must be a number, found {text:?}"),
+        )
+    })?;
     if v < min || v > max {
         return Err(cart_err(
             section,
@@ -1666,7 +1880,9 @@ fn parse_i32_in(
 
 /// Same rule as `__gfx_meta__` names: `[a-z0-9_]+`.
 fn valid_name(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
 /// A row's 2nd token is a waveform when it is all digits; anything else is an
@@ -1964,9 +2180,7 @@ fn parse_wavetable_line(line: usize, tokens: &[&str]) -> Result<(u8, Wavetable),
             return Err(cart_err(
                 SEC,
                 line,
-                format!(
-                    "wavetable w{slot} sample {i}: {c:?} is not a hex nibble (0-9, a-f)"
-                ),
+                format!("wavetable w{slot} sample {i}: {c:?} is not a hex nibble (0-9, a-f)"),
             ));
         };
         nibbles[i] = v as u8;
@@ -1991,9 +2205,7 @@ fn parse_echo_line(line: usize, tokens: &[&str]) -> Result<Echo, Error> {
             return Err(cart_err(
                 SEC,
                 line,
-                format!(
-                    "unexpected {tok:?} in echo line (want `delay=`, `feedback=` or `level=`)"
-                ),
+                format!("unexpected {tok:?} in echo line (want `delay=`, `feedback=` or `level=`)"),
             ));
         };
         match key.to_ascii_lowercase().as_str() {
@@ -2110,7 +2322,9 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
         return Err(cart_err(
             SEC,
             line,
-            format!("instrument name {name:?} must not be a bare wave digit (0-5 already name the built-in waveforms)"),
+            format!(
+                "instrument name {name:?} must not be a bare wave digit (0-5 already name the built-in waveforms)"
+            ),
         ));
     }
     if is_wave_slot_token(name) {
@@ -2299,9 +2513,7 @@ fn parse_fx(line: usize, token: &str, inst: Option<&Instrument>) -> Result<Fx, E
     }
     if let Some(v) = tok.strip_prefix("sl") {
         let semis = parse_i32_in(SEC, line, "slide semitones", v, -MAX_FX_SEMIS, MAX_FX_SEMIS)?;
-        return Ok(Fx::Slide {
-            semis: semis as i8,
-        });
+        return Ok(Fx::Slide { semis: semis as i8 });
     }
     if let Some(v) = tok.strip_prefix("vib") {
         if v.is_empty() {
@@ -2350,7 +2562,9 @@ fn parse_fx(line: usize, token: &str, inst: Option<&Instrument>) -> Result<Fx, E
     Err(cart_err(
         SEC,
         line,
-        format!("unknown effect {token:?} (want `arp<a>,<b>`, `sl<n>`, `vib[<cents>,<rate>]` or `fade<n>`)"),
+        format!(
+            "unknown effect {token:?} (want `arp<a>,<b>`, `sl<n>`, `vib[<cents>,<rate>]` or `fade<n>`)"
+        ),
     ))
 }
 
@@ -2568,7 +2782,11 @@ fn parse_sfx_header(
     }
 
     let Some(speed) = speed else {
-        return Err(cart_err(SEC, line, format!("sfx {id} is missing `speed=<n>`")));
+        return Err(cart_err(
+            SEC,
+            line,
+            format!("sfx {id} is missing `speed=<n>`"),
+        ));
     };
     Ok((
         id,
@@ -2615,7 +2833,8 @@ type MusicParse = (BTreeMap<u8, Pattern>, Vec<(u8, usize)>);
 /// True for the optional `bpm=...` header line of `__music__`.
 fn is_tempo_line(body: &str) -> bool {
     // `get` rather than a slice: the line may be arbitrary UTF-8.
-    body.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("bpm="))
+    body.get(..4)
+        .is_some_and(|p| p.eq_ignore_ascii_case("bpm="))
 }
 
 /// Read `bpm=<n> [rows_per_beat=<r>]`, which may only be `__music__`'s first
@@ -3446,7 +3665,11 @@ impl Audio {
         }
         let id = n as u8;
         if !self.bank.patterns.contains_key(&id) {
-            return Err(format!("music: pattern {} {}", id, self.missing_pattern_hint()));
+            return Err(format!(
+                "music: pattern {} {}",
+                id,
+                self.missing_pattern_hint()
+            ));
         }
         self.start_pattern(id);
         Ok(())
@@ -3466,7 +3689,10 @@ impl Audio {
             "is not defined: this cart has no __music__ section".to_string()
         } else {
             let ids: Vec<String> = self.bank.pattern_ids().map(|i| i.to_string()).collect();
-            format!("is not defined (this cart defines patterns {})", ids.join(", "))
+            format!(
+                "is not defined (this cart defines patterns {})",
+                ids.join(", ")
+            )
         }
     }
 
@@ -4035,7 +4261,10 @@ mod tests {
     #[test]
     fn whole_semitones_hit_the_table_exactly() {
         for note in 0..96u8 {
-            assert_eq!(freq_at(note, 0.0).to_bits(), NOTE_FREQ[note as usize].to_bits());
+            assert_eq!(
+                freq_at(note, 0.0).to_bits(),
+                NOTE_FREQ[note as usize].to_bits()
+            );
         }
         // An unmodulated note must produce the very same increment as v1.
         for note in 0..96u8 {
@@ -4191,7 +4420,10 @@ mod tests {
             frames: 6,
         });
         let offs = trajectory(m, 9, Modulation::semitone_offset);
-        assert_eq!(offs, vec![0.0, -2.0, -4.0, -6.0, -8.0, -10.0, -12.0, -12.0, -12.0]);
+        assert_eq!(
+            offs,
+            vec![0.0, -2.0, -4.0, -6.0, -8.0, -10.0, -12.0, -12.0, -12.0]
+        );
         // Halfway through the sweep the frequency is the linear interpolation
         // of the two neighbouring table entries.
         let mut half = m;
@@ -4206,7 +4438,9 @@ mod tests {
         let offs = trajectory(m, 14, Modulation::semitone_offset);
         assert_eq!(
             offs,
-            vec![0.0, 0.0, 4.0, 4.0, 7.0, 7.0, 0.0, 0.0, 4.0, 4.0, 7.0, 7.0, 0.0, 0.0]
+            vec![
+                0.0, 0.0, 4.0, 4.0, 7.0, 7.0, 0.0, 0.0, 4.0, 4.0, 7.0, 7.0, 0.0, 0.0
+            ]
         );
         assert_eq!(ARP_FRAMES_PER_STEP, 2);
         // Each step lands exactly on a table entry (whole semitones).
@@ -4281,7 +4515,10 @@ mod tests {
         assert_eq!(peak.freq(), NOTE_FREQ[57] * (1.0 + 100.0 * CENTS_TO_RATIO));
         let mut trough = m;
         trough.frame = 12;
-        assert_eq!(trough.freq(), NOTE_FREQ[57] * (1.0 - 100.0 * CENTS_TO_RATIO));
+        assert_eq!(
+            trough.freq(),
+            NOTE_FREQ[57] * (1.0 - 100.0 * CENTS_TO_RATIO)
+        );
         // 100 cents is a semitone to within the linear approximation's error.
         let semitone = f64::from(NOTE_FREQ[58] / NOTE_FREQ[57]);
         let approx = f64::from(peak.freq() / NOTE_FREQ[57]);
@@ -4356,7 +4593,10 @@ mod tests {
             // Odd symmetry, to the bit: every operation in the formula is
             // sign-symmetric.
             assert_eq!(y, -shape(-x), "not odd at {x}");
-            assert!((-1.0..=1.0).contains(&y), "shape({x}) = {y} escaped [-1, 1]");
+            assert!(
+                (-1.0..=1.0).contains(&y),
+                "shape({x}) = {y} escaped [-1, 1]"
+            );
             // Monotonic. `R' >= 0` exactly, so the only way the sampled curve
             // can step backwards is f32 rounding right at the knee - allow one
             // epsilon of that and nothing more.
@@ -4392,9 +4632,7 @@ mod tests {
                 PRE_GAIN[d]
             );
             // ...and makeup is REF / R(pre * REF), bit for bit.
-            let m = (MASTER_REF_LEVEL
-                / shape64(f64::from(PRE_GAIN[d]) * MASTER_REF_LEVEL))
-                as f32;
+            let m = (MASTER_REF_LEVEL / shape64(f64::from(PRE_GAIN[d]) * MASTER_REF_LEVEL)) as f32;
             assert_eq!(
                 MAKEUP[d].to_bits(),
                 m.to_bits(),
@@ -4475,9 +4713,30 @@ mod tests {
     fn master_defaults_to_a_full_bypass() {
         assert_eq!(Master::default(), Master::OFF);
         assert!(Master::default().is_bypass());
-        assert!(!Master { drive: 1, tone: 0, hiss: 0 }.is_bypass());
-        assert!(!Master { drive: 0, tone: 1, hiss: 0 }.is_bypass());
-        assert!(!Master { drive: 0, tone: 0, hiss: 1 }.is_bypass());
+        assert!(
+            !Master {
+                drive: 1,
+                tone: 0,
+                hiss: 0
+            }
+            .is_bypass()
+        );
+        assert!(
+            !Master {
+                drive: 0,
+                tone: 1,
+                hiss: 0
+            }
+            .is_bypass()
+        );
+        assert!(
+            !Master {
+                drive: 0,
+                tone: 0,
+                hiss: 1
+            }
+            .is_bypass()
+        );
     }
 
     // -----------------------------------------------------------------
@@ -4547,7 +4806,13 @@ mod tests {
     #[test]
     fn retrigger_restores_full_depth_and_hands_over_the_channel() {
         let mut d = DuckBus::new();
-        d.trigger(0, Duck { depth: 7, release: 4 });
+        d.trigger(
+            0,
+            Duck {
+                depth: 7,
+                release: 4,
+            },
+        );
         for _ in 0..DUCK_ATTACK_SAMPLES + 2000 {
             d.tick();
         }
@@ -4555,7 +4820,13 @@ mod tests {
 
         // Re-fire from a different channel: full depth again after one attack
         // window, and the new channel is the exempt one.
-        d.trigger(3, Duck { depth: 7, release: 4 });
+        d.trigger(
+            3,
+            Duck {
+                depth: 7,
+                release: 4,
+            },
+        );
         assert_eq!(d.trigger_ch, Some(3));
         for _ in 0..DUCK_ATTACK_SAMPLES {
             d.tick();
@@ -4563,7 +4834,13 @@ mod tests {
         assert_eq!(d.atten, 1.0, "re-trigger must reach full depth again");
 
         // A shallower trigger over a deeper one ramps *down* to the new depth.
-        d.trigger(1, Duck { depth: 2, release: 4 });
+        d.trigger(
+            1,
+            Duck {
+                depth: 2,
+                release: 4,
+            },
+        );
         for _ in 0..DUCK_ATTACK_SAMPLES {
             d.tick();
         }
@@ -4583,7 +4860,13 @@ mod tests {
         }
         // Depth 7 is a full mute of the other channels.
         let mut d = DuckBus::new();
-        d.trigger(0, Duck { depth: 7, release: 1 });
+        d.trigger(
+            0,
+            Duck {
+                depth: 7,
+                release: 1,
+            },
+        );
         for _ in 0..DUCK_ATTACK_SAMPLES {
             d.tick();
         }
@@ -4643,7 +4926,10 @@ mod tests {
 
     #[test]
     fn echo_delay_is_whole_frames_and_the_line_is_one_second() {
-        assert_eq!(ECHO_LINE_LEN, usize::from(MAX_ECHO_DELAY) * SAMPLES_PER_FRAME);
+        assert_eq!(
+            ECHO_LINE_LEN,
+            usize::from(MAX_ECHO_DELAY) * SAMPLES_PER_FRAME
+        );
         assert_eq!(ECHO_LINE_LEN, SAMPLE_RATE as usize, "60 frames = 1 second");
         for d in 0..=MAX_ECHO_DELAY {
             let e = Echo {
@@ -4738,7 +5024,10 @@ mod tests {
             let delay = 64;
             let out = echo_impulse(delay, fb, delay * 6);
             let energy = |k: usize| -> f32 {
-                out[k * delay..(k + 1) * delay].iter().map(|s| s.abs()).sum()
+                out[k * delay..(k + 1) * delay]
+                    .iter()
+                    .map(|s| s.abs())
+                    .sum()
             };
             for k in 1..5 {
                 assert!(

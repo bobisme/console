@@ -41,7 +41,9 @@ fn cart(map_rows: &[&str]) -> String {
 /// The tile ids of the first `n` cells of row `y`, read back out of a
 /// re-parsed cart — the common shape every op test's assertion takes.
 fn row_tiles(cart: &Cart, y: usize, n: usize) -> Vec<u8> {
-    (0..n).map(|x| cart.map()[y * console_core::MAP_W + x]).collect()
+    (0..n)
+        .map(|x| cart.map()[y * console_core::MAP_W + x])
+        .collect()
 }
 
 // ---------------------------------------------------------------------
@@ -54,7 +56,13 @@ fn shift_moves_cells_and_clears_vacated() {
     let text = cart(&["01020304"]);
     let path = temp_cart("shift-basic", &text);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "0,0,4,1", "--dx", "1"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "shift",
+        "0,0,4,1",
+        "--dx",
+        "1",
+    ]));
     assert_eq!(code, 0);
 
     let out = Cart::parse(&read(&path)).unwrap();
@@ -68,7 +76,13 @@ fn shift_dx_defaults_to_zero() {
     let text = cart(&["01020304"]);
     let path = temp_cart("shift-dx-default", &text);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "0,0,4,1", "--dy", "0"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "shift",
+        "0,0,4,1",
+        "--dy",
+        "0",
+    ]));
     assert_eq!(code, 0);
     // No actual change (dx=0 dy=0): a legal no-op, file untouched.
     assert_eq!(read(&path), text);
@@ -80,13 +94,23 @@ fn shift_vertically_within_a_column() {
     let text = cart(&["01", "02", "03"]);
     let path = temp_cart("shift-vertical", &text);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "0,0,1,3", "--dy", "1"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "shift",
+        "0,0,1,3",
+        "--dy",
+        "1",
+    ]));
     assert_eq!(code, 0);
 
     let out = Cart::parse(&read(&path)).unwrap();
     assert_eq!(out.map()[0], 0, "row 0 vacated");
     assert_eq!(out.map()[console_core::MAP_W], 1, "row 1 <- old row 0");
-    assert_eq!(out.map()[console_core::MAP_W * 2], 2, "row 2 <- old row 1 (old row 2 dropped)");
+    assert_eq!(
+        out.map()[console_core::MAP_W * 2],
+        2,
+        "row 2 <- old row 1 (old row 2 dropped)"
+    );
 }
 
 #[test]
@@ -152,7 +176,11 @@ fn clear_zeroes_the_region() {
     assert_eq!(code, 0);
 
     let out = Cart::parse(&read(&path)).unwrap();
-    assert_eq!(row_tiles(&out, 0, 4), vec![0, 0, 3, 4], "only the first 2 cells cleared");
+    assert_eq!(
+        row_tiles(&out, 0, 4),
+        vec![0, 0, 3, 4],
+        "only the first 2 cells cleared"
+    );
 }
 
 #[test]
@@ -178,7 +206,11 @@ fn copy_duplicates_the_region_to_the_destination() {
     assert_eq!(code, 0);
 
     let out = Cart::parse(&read(&path)).unwrap();
-    assert_eq!(row_tiles(&out, 0, 4), vec![1, 2, 1, 2], "source preserved, dest overwritten");
+    assert_eq!(
+        row_tiles(&out, 0, 4),
+        vec![1, 2, 1, 2],
+        "source preserved, dest overwritten"
+    );
 }
 
 #[test]
@@ -215,7 +247,13 @@ fn dry_run_leaves_the_file_untouched_and_prints_report() {
     let text = cart(&["00000000"]);
     let path = temp_cart("edit-dry-run", &text);
 
-    let code = cli_edit(&args(&[path.to_str().unwrap(), "fill", "0,0,4,1", "9", "--dry-run"]));
+    let code = cli_edit(&args(&[
+        path.to_str().unwrap(),
+        "fill",
+        "0,0,4,1",
+        "9",
+        "--dry-run",
+    ]));
     assert_eq!(code, 0);
     assert_eq!(read(&path), text, "dry-run must not write the file");
 }

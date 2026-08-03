@@ -349,12 +349,8 @@ mod tests {
 
     #[test]
     fn screenshot_zoom_defaults_to_one() {
-        let args = parse_run_args(&[
-            "cart.cart".into(),
-            "--screenshot".into(),
-            "out.png".into(),
-        ])
-        .unwrap();
+        let args =
+            parse_run_args(&["cart.cart".into(), "--screenshot".into(), "out.png".into()]).unwrap();
         assert_eq!(args.screenshot_zoom, 1);
     }
 

@@ -34,7 +34,11 @@ pub struct MapRenderOpts {
 
 impl Default for MapRenderOpts {
     fn default() -> MapRenderOpts {
-        MapRenderOpts { zoom: DEFAULT_ZOOM, grid: false, ids: false }
+        MapRenderOpts {
+            zoom: DEFAULT_ZOOM,
+            grid: false,
+            ids: false,
+        }
     }
 }
 
@@ -58,7 +62,11 @@ fn tile_rect(t: u8) -> (u32, u32, u32, u32) {
 /// sprite's own color-0 pixels are still individually transparent (the
 /// ordinary `spr()` pixel path), so a tile whose art has "holes" shows the
 /// checkerboard through those holes too.
-pub fn render(cart: &Cart, region: (u32, u32, u32, u32), opts: &MapRenderOpts) -> Result<Image, String> {
+pub fn render(
+    cart: &Cart,
+    region: (u32, u32, u32, u32),
+    opts: &MapRenderOpts,
+) -> Result<Image, String> {
     let zoom = view::check_zoom(opts.zoom)?;
     let (cx, cy, cw, ch) = region;
     super::validate_region(cx, cy, cw, ch)?;
@@ -78,7 +86,12 @@ pub fn render(cart: &Cart, region: (u32, u32, u32, u32), opts: &MapRenderOpts) -
         }
     }
     if opts.grid {
-        let cell = view::Rect { x: 0, y: 0, w: cw * 8 * zoom, h: ch * 8 * zoom };
+        let cell = view::Rect {
+            x: 0,
+            y: 0,
+            w: cw * 8 * zoom,
+            h: ch * 8 * zoom,
+        };
         view::draw_grid(&mut canvas, cell, zoom);
     }
     if opts.ids {
@@ -91,7 +104,12 @@ pub fn render(cart: &Cart, region: (u32, u32, u32, u32), opts: &MapRenderOpts) -
 /// the sprite tools' 3x5 `--indices` glyph font), scaled with `zoom` so the
 /// label stays legible without ever outgrowing its 8x8 cell, and inked by
 /// the same background-luminance rule `--indices` uses.
-fn draw_cell_ids(canvas: &mut view::Canvas, tiles: &TileMap, region: (u32, u32, u32, u32), zoom: u32) {
+fn draw_cell_ids(
+    canvas: &mut view::Canvas,
+    tiles: &TileMap,
+    region: (u32, u32, u32, u32),
+    zoom: u32,
+) {
     let (cx, cy, cw, ch) = region;
     let cell_px = 8 * zoom;
     // Two 3-wide glyphs plus a 1-unit gap must fit in an 8*zoom cell; scaling
@@ -109,7 +127,11 @@ fn draw_cell_ids(canvas: &mut view::Canvas, tiles: &TileMap, region: (u32, u32, 
             let ox = i * cell_px;
             let oy = j * cell_px;
             let bg = canvas.get(ox + cell_px / 2, oy + cell_px / 2);
-            let ink = if view::luminance(bg) < 128.0 { view::INK_LIGHT } else { view::INK_DARK };
+            let ink = if view::luminance(bg) < 128.0 {
+                view::INK_LIGHT
+            } else {
+                view::INK_DARK
+            };
             let gx = ox + cell_px.saturating_sub(glyph_w) / 2;
             let gy = oy + cell_px.saturating_sub(glyph_h) / 2;
             draw_hex_glyph(canvas, gx, gy, (t >> 4) & 0xF, scale, ink);
@@ -125,7 +147,12 @@ fn draw_hex_glyph(canvas: &mut view::Canvas, x: u32, y: u32, digit: u8, scale: u
         for bit in 0..3u32 {
             if bits & (1 << (2 - bit)) != 0 {
                 canvas.fill(
-                    view::Rect { x: x + bit * scale, y: y + row as u32 * scale, w: scale, h: scale },
+                    view::Rect {
+                        x: x + bit * scale,
+                        y: y + row as u32 * scale,
+                        w: scale,
+                        h: scale,
+                    },
                     ink,
                 );
             }
@@ -189,8 +216,11 @@ pub fn lint(cart: &Cart) -> Value {
     let mut counts: Vec<(u8, u32)> = hist.into_iter().collect();
     counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
-    let top: Vec<Value> =
-        counts.iter().take(TOP_N).map(|&(t, c)| json!({"tile": t, "count": c})).collect();
+    let top: Vec<Value> = counts
+        .iter()
+        .take(TOP_N)
+        .map(|&(t, c)| json!({"tile": t, "count": c}))
+        .collect();
 
     let blank: Vec<Value> = counts
         .iter()
@@ -220,7 +250,8 @@ pub fn lint(cart: &Cart) -> Value {
 /// always a typo'd id (transposed digits, off-by-one).
 fn sprite_region_is_blank(sheet: &SpriteSheet, t: u8) -> bool {
     let (x0, y0, w, h) = tile_rect(t);
-    (0..h).all(|dy| (0..w).all(|dx| sheet[((y0 + dy) as usize) * SHEET_W + (x0 + dx) as usize] == 0))
+    (0..h)
+        .all(|dy| (0..w).all(|dx| sheet[((y0 + dy) as usize) * SHEET_W + (x0 + dx) as usize] == 0))
 }
 
 fn round2(v: f64) -> f64 {
@@ -254,7 +285,13 @@ struct Flags {
 }
 
 fn parse_flags(args: &[String]) -> Result<Flags, String> {
-    let mut f = Flags { zoom: DEFAULT_ZOOM, grid: false, ids: false, out: None, positional: Vec::new() };
+    let mut f = Flags {
+        zoom: DEFAULT_ZOOM,
+        grid: false,
+        ids: false,
+        out: None,
+        positional: Vec::new(),
+    };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -274,28 +311,44 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
 }
 
 fn next_u32<'a>(it: &mut impl Iterator<Item = &'a String>, what: &str) -> Result<u32, String> {
-    let v = it.next().ok_or_else(|| format!("{what} requires a value"))?;
-    v.parse().map_err(|_| format!("invalid {what} value {v:?} (want a non-negative integer)"))
+    let v = it
+        .next()
+        .ok_or_else(|| format!("{what} requires a value"))?;
+    v.parse()
+        .map_err(|_| format!("invalid {what} value {v:?} (want a non-negative integer)"))
 }
 
 fn run_view(args: &[String]) -> Result<(), String> {
     let cmd = args.first().map(String::as_str).unwrap_or_default();
     let flags = parse_flags(&args[1..])?;
-    let cart_path = flags.positional.first().ok_or_else(|| format!("map {cmd} requires a cart path"))?;
-    let text = std::fs::read_to_string(cart_path).map_err(|e| format!("cannot read {cart_path:?}: {e}"))?;
+    let cart_path = flags
+        .positional
+        .first()
+        .ok_or_else(|| format!("map {cmd} requires a cart path"))?;
+    let text = std::fs::read_to_string(cart_path)
+        .map_err(|e| format!("cannot read {cart_path:?}: {e}"))?;
     let cart = Cart::parse(&text).map_err(|e| e.to_string())?;
 
     if cmd == "lint" {
         if flags.positional.len() > 1 {
-            return Err(format!("map lint takes no region argument, got {:?}", &flags.positional[1..]));
+            return Err(format!(
+                "map lint takes no region argument, got {:?}",
+                &flags.positional[1..]
+            ));
         }
         let value = lint(&cart);
-        println!("{}", serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
 
     if flags.positional.len() > 2 {
-        return Err(format!("map {cmd}: unexpected extra arguments: {:?}", &flags.positional[2..]));
+        return Err(format!(
+            "map {cmd}: unexpected extra arguments: {:?}",
+            &flags.positional[2..]
+        ));
     }
     let region_arg = flags.positional.get(1).map(String::as_str);
     let region = super::parse_region(region_arg, cart.map())?;
@@ -306,8 +359,15 @@ fn run_view(args: &[String]) -> Result<(), String> {
     }
 
     if cmd == "render" {
-        let out = flags.out.as_deref().ok_or("map render requires -o <out.png>")?;
-        let opts = MapRenderOpts { zoom: flags.zoom, grid: flags.grid, ids: flags.ids };
+        let out = flags
+            .out
+            .as_deref()
+            .ok_or("map render requires -o <out.png>")?;
+        let opts = MapRenderOpts {
+            zoom: flags.zoom,
+            grid: flags.grid,
+            ids: flags.ids,
+        };
         let image = render(&cart, region, &opts)?;
         std::fs::write(out, &image.png).map_err(|e| format!("cannot write {out:?}: {e}"))?;
         println!(
