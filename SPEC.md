@@ -22,9 +22,14 @@ Cargo workspace:
 
 ## Display
 
-- **192×320 logical pixels** (3:5 portrait), fixed. Letterbox/integer-scale to fit.
+- **192×320 logical pixels** (3:5 portrait), fixed and retained as the platform
+  resolution. There is no legacy-resolution or runtime resolution mode.
+  Hosts preserve the aspect ratio and may letterbox to fit. The web shell defaults
+  to fractional **FIT** scaling; optional **SHARP** mode uses integer scaling.
 - **60 fps fixed timestep.** Each frame: `_update()` then `_draw()`.
 - Framebuffer: 192*320 bytes, one palette index (0–63) per pixel, row-major.
+- With 8×8 map cells the visible canvas is 24×40 cells. Carts may scroll a
+  larger map, but fixed-screen compositions should author the full viewport.
 
 ## Palette (fixed 64 colors — Apollo64)
 
@@ -310,6 +315,14 @@ __sprites__
 `0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_`.
 Sprite sheet is 128×128 px = 16×16 sprites of 8×8 px.
 Sprite n occupies pixels (n%16*8, n//16*8)..+8. Missing/short section = all zeros.
+
+The 8×8 sprite is the addressable art unit, not a maximum actor size. A cart
+can compose larger figures from adjacent tiles or declare multi-tile sprites
+through `__gfx_meta__`; 16–24px primary actors are a useful phone-readability
+baseline, not a runtime requirement. Display resolution and asset capacity are
+independent: retaining the 192×320 framebuffer does not change the current
+128×128 sheet or its 256 tile IDs. Any future sheet/banking expansion requires
+a separate spec revision.
 
 __map__
 Up to 64 lines × up to 128 cells, **2 hex chars per cell** = a tile id 00-ff

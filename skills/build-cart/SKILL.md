@@ -23,7 +23,26 @@ format; this skill is the working knowledge.
 
 192×320 portrait, fixed 64-color Apollo64 palette (indices 0–63), 60fps
 fixed timestep, 7 buttons (d-pad, A, B, menu), 6 audio channels, Lua 5.4 in
-a sandbox. `_update()` then `_draw()` every frame.
+a sandbox. `_update()` then `_draw()` every frame. The display is a retained
+platform constraint, not an optional high-resolution mode.
+
+## Compose for the retained display
+
+- The full viewport is **24×40 map cells** at the 8×8 tile unit. Use that
+  space deliberately; do not compose into an older or narrower safe area.
+- An 8×8 sprite is an addressable sheet tile, not the ideal size of every
+  finished object. Favor clear silhouettes and assemble prominent actors,
+  hazards, and interactables as roughly **16–24px forms** when the game calls
+  for them. Small particles, pickups, and detail tiles can stay 8×8.
+- More visible pixels do not create more source art. The sheet remains
+  **128×128 pixels / 256 tile IDs**, so reuse tiles, share animation parts,
+  and reserve large multi-tile frames for visually important objects. Sheet
+  expansion or banking is separate future platform work.
+- A taller viewport can expose more of a scrolling level than intended.
+  Retune camera look-ahead and room framing for pacing instead of merely
+  increasing the visible bounds.
+- Validate at 1× for pixel clarity and in the packed phone shell for physical
+  readability; a technically crisp sprite can still be too small on-device.
 
 ## The dev loop
 

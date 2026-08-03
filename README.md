@@ -33,11 +33,20 @@ orientation, not the spec.
 | | |
 |---|---|
 | Display | 192×320 logical pixels (3:5 portrait), 60 fps fixed timestep |
+| Art | 8×8 tile unit; 128×128 sprite sheet; 24×40 visible tile cells |
 | Palette | fixed 64-color Apollo64 palette, one byte-sized index per pixel |
 | Input | 7 buttons: d-pad, A, B, menu |
 | Audio | 6 channels, waveforms: pulse 12.5%/25%, square, triangle, saw, noise, plus 8 cart-defined 32×4-bit wavetables |
 | Script | Lua 5.4 (mlua, vendored), sandboxed — no `io`/`os`/`debug`/`require` |
 | Cart | one plain-text file: Lua + sprites (64-character grid) + tile map + sfx/music (tracker text) |
+
+192×320 is the retained platform resolution, not a transitional or optional
+high-resolution mode. Carts should compose for the full canvas. The 8×8 sprite
+is a storage and map unit rather than a target size for every object: prominent
+actors and interactables will usually read better on a phone when assembled as
+16–24px forms. The current 128×128 sprite sheet remains an intentional,
+independent capacity limit; changing asset storage is a separate platform
+decision from changing the display.
 
 Draw state (`camera`, `clip`, `pal`, `palt`, `fillp`, `mosaic`, `rshift`)
 persists across frames like PICO-8's, and there's a runtime-mutable tile map
@@ -56,7 +65,7 @@ see SPEC.md for exact semantics.
 | `crates/console-web` | emscripten build exposing a small C ABI over the core |
 | `crates/console-pack` | packs a cart + the engine build into one self-contained `game.html` |
 | `web/` | the device-chassis HTML/JS shell and the engine build recipe ([web/BUILD.md](web/BUILD.md)) |
-| `carts/` | example carts: `demo.cart` (a small platformer-ish demo) and `soundtest.cart` (a synth listening session) |
+| `carts/` | example carts: `demo.cart`, `soundtest.cart`, and the full `lantern-leap.cart` platformer |
 | `skills/build-cart` | a publishable skill for authoring carts — the thing to hand an agent |
 | `SPEC.md` | the authoritative platform contract |
 
