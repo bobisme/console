@@ -39,9 +39,10 @@ orientation, not the spec.
 | Script | Lua 5.4 (mlua, vendored), sandboxed — no `io`/`os`/`debug`/`require` |
 | Cart | one plain-text file: Lua + sprites (hex grid) + tile map + sfx/music (tracker text) |
 
-Draw state (`camera`, `clip`, `pal`, `palt`) persists across frames like
-PICO-8's, and there's a runtime-mutable tile map (`map()`, `mget`, `mset`)
-as part of the core drawing API — see SPEC.md for exact semantics.
+Draw state (`camera`, `clip`, `pal`, `palt`, `fillp`, `mosaic`) persists across
+frames like PICO-8's, and there's a runtime-mutable tile map (`map()`, `mget`,
+`mset`) plus scaled blits (`sspr`) as part of the core drawing API — see
+SPEC.md for exact semantics.
 
 ## Repo layout
 

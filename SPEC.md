@@ -71,6 +71,7 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `rect(x0, y0, x1, y1, c)` / `rectfill(...)` | outline / filled rectangle (inclusive coords) |
 | `circ(x, y, r, c)` / `circfill(...)` | midpoint circle outline / filled |
 | `spr(n, x, y, [w=1], [h=1], [flip_x=false], [flip_y=false])` | draw sprite n (w×h sprites); color 0 transparent |
+| `sspr(sx, sy, sw, sh, dx, dy, [dw=sw], [dh=sh], [flip_x=false], [flip_y=false])` | blit the sheet rect (sx, sy, sw, sh) into the screen rect (dx, dy, dw, dh), nearest-neighbor scaled; same camera/clip/`pal`/`palt` rules as `spr`. Any size ≤ 0 draws nothing (negative sizes do **not** mirror) |
 | `map([cel_x=0], [cel_y=0], [sx=0], [sy=0], [cel_w=128], [cel_h=64])` | draw a cel_w×cel_h block of map cells from cell (cel_x, cel_y) to (sx, sy); **tile 0 is skipped**. `map()` draws the whole map at 0,0 |
 | `mget(cx, cy)` | tile id at map cell (cx, cy); off the map reads 0 |
 | `mset(cx, cy, [v=0])` | write a tile id (0–255, masked); off the map is a no-op |
@@ -79,6 +80,8 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `clip([x, y, w, h])` | clip rectangle in **screen** space; no args resets to full screen |
 | `pal([c0], [c1], [p=0])` | p=0 draw-palette remap (rewrites pixels), p=1 display-palette remap (scanout only); no args resets both maps **and** `palt` |
 | `palt([c], [flag])` | mark color c transparent in `spr()`; no args resets to "only color 0" |
+| `fillp([p=0])` | 4×4 dither pattern for the **shape** primitives; 16-bit, bit 15 = top-left, row-major. Clear bit = the color's low nibble, set bit = its high nibble (or nothing when that nibble is 0). No args (or 0) = solid |
+| `mosaic([f=1])` | end-of-frame pixelation: every f×f block of the finished frame becomes its top-left pixel. f clamped to 1–32; 1 (or no args) = off |
 | `btn(i)` / `btnp(i)` | button held / just-pressed this frame |
 | `rnd([n=1])` | deterministic float in [0, n) — PCG32 or xoshiro seeded PRNG in Rust |
 | `srand(seed)` | reseed PRNG (reset seeds it to 0 unless overridden) |
@@ -90,7 +93,8 @@ All draw coordinates are floats, truncated toward negative infinity (`flr`) befo
 
 ### Draw state
 
-`camera`, `clip`, `pal` and `palt` form one block of **persistent** draw state.
+`camera`, `clip`, `pal`, `palt`, `fillp` and `mosaic` form one block of
+**persistent** draw state.
 It is **never auto-reset at a frame boundary** (PICO-8 semantics): a cart that
 calls `camera(0, -8)` once keeps that offset until it changes it. Only a cart
 call — or a fresh console / `reset` — moves it. Every default is a no-op, so
@@ -118,6 +122,61 @@ carts that ignore all of this render exactly as before.
   color 0). Transparency is tested on the sprite's **source** color, *before*
   the draw palette remaps it, so `pal(1, 0)` draws color-1 pixels as color 0
   rather than making them vanish.
+- **fillp(p)** — a 4×4 dither pattern applied to the **shape** primitives:
+  `pset`, `line`, `rect`, `rectfill`, `circ`, `circfill`. `p` is a 16-bit
+  number; bit 15 is the top-left cell and the rows read left to right, top to
+  bottom (`fillp(0x5a5a)` is a checkerboard, `fillp(0x8000)` punches one hole
+  per 4×4 cell). `fillp()` or `fillp(0)` is solid again; the argument is masked
+  to 16 bits.
+  - **Two colors.** Shape color arguments are `c0 + c1*16`: a *clear* pattern
+    bit draws the low nibble `c0`, a *set* bit draws the high nibble `c1`. When
+    the high nibble is 0 — i.e. an ordinary `0–15` color — a set bit draws
+    **nothing at all** and the framebuffer keeps what was underneath, which is
+    what makes `fillp` a transparency stencil. (Consequence: "secondary =
+    color 0, opaque" has no encoding. Draw it as `c1 = 0` primary with the
+    pattern inverted.) Both nibbles go through the draw palette. With the
+    default solid pattern the high nibble is never read, so an old cart that
+    passes a color ≥ 16 gets exactly the color it always got.
+  - **Screen-anchored.** The grid is `(x % 4, y % 4)` in **screen** space,
+    after the camera. A shape that scrolls under a moving camera therefore
+    shimmers through the pattern — that is the classic look, not a bug.
+  - `pal()` does **not** reset `fillp` (nor does anything else): the palette
+    maps, `palt` and the fill pattern are separate state, as in PICO-8. `cls`,
+    `spr`, `sspr`, `map` and `print` all ignore the pattern entirely.
+- **mosaic(f)** — see [Frame pipeline](#frame-pipeline) below. It is draw state
+  in that it persists and lives beside the rest, but it is applied once per
+  frame rather than per drawing op.
+
+`sspr()` shares the sprite pixel path with `spr()`: the camera offsets the
+destination rectangle, the clip rect bounds it, `palt` decides transparency on
+the source color and the draw palette remaps what lands in the framebuffer.
+Sampling is nearest-neighbor with the source stepped in u32.16 fixed point
+(`step = (sw << 16) / dw`), so the pixel loop is integer-only and
+bit-identical on every target. At `dw == sw, dh == sh` the step is exactly 1.0
+and the result is byte-identical to the equivalent `spr()`, flips included.
+Source pixels outside the 128×128 sheet are skipped, never wrapped.
+
+### Frame pipeline
+
+Each frame: `_update()`, `_draw()`, then **`mosaic`**, then the frame is
+presented (screenshot, `screen_text`, web canvas) with the **display palette**
+applied by the host at scanout. The two post-effects sit on opposite sides of
+the ground truth:
+
+- **mosaic(f)** rewrites the pixels. Every f×f block of the finished frame is
+  replaced by its **top-left** pixel (top-left, not an average: the framebuffer
+  holds palette indices, and averaging indices is meaningless). Blocks are
+  anchored at screen (0, 0) and ignore the camera and the clip rect; a factor
+  that does not divide 144 or 256 leaves a narrower block at the right/bottom
+  edge. `f` is clamped to 1–32, and `mosaic()`/`mosaic(1)` turns it off.
+  Because it is a framebuffer effect it **is** in `screen_text`, in PNG
+  screenshots and in framebuffer goldens — that is the point: two lines of Lua
+  (`mosaic(f)` ramping up, then down) give the classic pixelate-in/out scene
+  transition, and it is as deterministic as everything else.
+  The effect is computed from the pristine draw buffer every frame and never
+  fed back: `pget` and the next frame's drawing still see full-resolution
+  pixels, so a mosaicked screen does not compound frame after frame.
+- **pal(c0, c1, 1)** never touches the framebuffer at all (see above).
 
 `map()` is defined as a sequence of `spr()` calls and shares their pixel path
 exactly: the camera offsets its destination, the clip rect bounds it, `palt`
@@ -129,7 +188,9 @@ what lands in the framebuffer. Only the per-**cell** tile-0 skip is map-specific
 Host surfaces: `Console::display_palette() -> &[u8; 16]` (identity by default)
 and `Console::draw_state()`. `console-agent` applies the display palette when
 it renders PNG screenshots; `screen_text` stays raw. The web shell composes
-`palette[dpal[idx]]`.
+`palette[dpal[idx]]`. `DrawState::fillp()` and `DrawState::mosaic()` expose the
+two new fields; hosts need no code for either, because `mosaic` is already
+folded into `Console::framebuffer()`.
 
 ## Cart format (`.cart`, UTF-8 text)
 

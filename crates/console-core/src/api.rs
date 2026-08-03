@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use mlua::{Lua, Result as LuaResult, Table, Value, Variadic};
 
-use crate::gfx::{self, MAP_H, MAP_W, col, fl};
+use crate::gfx::{self, MAP_H, MAP_W, col, fl, pat_col};
 use crate::state::State;
 
 /// Number of buttons in the input mask.
@@ -131,7 +131,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         lua.create_function(move |_, (x, y, c): (f64, f64, Option<f64>)| {
             let mut s = st.borrow_mut();
             let State { fb, draw, .. } = &mut *s;
-            gfx::pset(fb, draw, fl(x), fl(y), col(c.unwrap_or(0.0)));
+            gfx::pset(fb, draw, fl(x), fl(y), pat_col(c.unwrap_or(0.0)));
             Ok(())
         })?,
     )?;
@@ -158,7 +158,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     fl(y0),
                     fl(x1),
                     fl(y1),
-                    col(c.unwrap_or(0.0)),
+                    pat_col(c.unwrap_or(0.0)),
                 );
                 Ok(())
             },
@@ -179,7 +179,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     fl(y0),
                     fl(x1),
                     fl(y1),
-                    col(c.unwrap_or(0.0)),
+                    pat_col(c.unwrap_or(0.0)),
                 );
                 Ok(())
             },
@@ -200,7 +200,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     fl(y0),
                     fl(x1),
                     fl(y1),
-                    col(c.unwrap_or(0.0)),
+                    pat_col(c.unwrap_or(0.0)),
                 );
                 Ok(())
             },
@@ -220,7 +220,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     fl(x),
                     fl(y),
                     fl(r.unwrap_or(4.0)),
-                    col(c.unwrap_or(0.0)),
+                    pat_col(c.unwrap_or(0.0)),
                 );
                 Ok(())
             },
@@ -240,7 +240,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     fl(x),
                     fl(y),
                     fl(r.unwrap_or(4.0)),
-                    col(c.unwrap_or(0.0)),
+                    pat_col(c.unwrap_or(0.0)),
                 );
                 Ok(())
             },
@@ -272,6 +272,44 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                 fl(x),
                 fl(y),
                 (fl(w.unwrap_or(1.0)), fl(h.unwrap_or(1.0))),
+                (truthy(fx.as_ref()), truthy(fy.as_ref())),
+            );
+            Ok(())
+        })?,
+    )?;
+
+    // `sspr(sx, sy, sw, sh, dx, dy, [dw=sw], [dh=sh], [flip_x], [flip_y])`:
+    // blit an arbitrary sheet rectangle into an arbitrary screen rectangle,
+    // scaled with nearest-neighbour sampling. Same pixel rules as `spr`
+    // (camera, clip, `pal`, `palt`); a zero or negative size draws nothing.
+    type SsprArgs = (
+        f64,
+        f64,
+        f64,
+        f64,
+        f64,
+        f64,
+        Option<f64>,
+        Option<f64>,
+        Option<Value>,
+        Option<Value>,
+    );
+    let st = state.clone();
+    g.set(
+        "sspr",
+        lua.create_function(move |_, args: SsprArgs| {
+            let (sx, sy, sw, sh, dx, dy, dw, dh, fx, fy) = args;
+            let (sw, sh) = (fl(sw), fl(sh));
+            let mut s = st.borrow_mut();
+            let State {
+                fb, draw, sheet, ..
+            } = &mut *s;
+            gfx::sspr(
+                fb,
+                draw,
+                sheet,
+                (fl(sx), fl(sy), sw, sh),
+                (fl(dx), fl(dy), dw.map_or(sw, fl), dh.map_or(sh, fl)),
                 (truthy(fx.as_ref()), truthy(fy.as_ref())),
             );
             Ok(())
@@ -445,6 +483,41 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                 None => s.draw.reset_palt(),
                 Some(c) => s.draw.set_palt(col(c), truthy(flag.as_ref())),
             }
+            Ok(())
+        })?,
+    )?;
+
+    // `fillp([p])`: the 4x4 dither pattern used by the shape primitives. `p` is
+    // a 16-bit number, bit 15 = top-left, rows read left to right, top to
+    // bottom. A clear bit draws the colour's low nibble; a set bit draws the
+    // high nibble, or nothing at all when the high nibble is 0. No arguments
+    // (or 0) is solid. `pal()` deliberately does NOT reset it.
+    let st = state.clone();
+    g.set(
+        "fillp",
+        lua.create_function(move |_, p: Option<f64>| {
+            let mut s = st.borrow_mut();
+            match p {
+                None => s.draw.reset_fillp(),
+                Some(p) => {
+                    let f = p.floor();
+                    let i = if f.is_nan() { 0i64 } else { f as i64 };
+                    s.draw.set_fillp((i & 0xffff) as u16);
+                }
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // `mosaic([f=1])`: end-of-frame pixelation. Every f x f block of the
+    // FINISHED frame becomes its top-left pixel, so unlike the display palette
+    // this really is what `screen_text` and the goldens show. Clamped to
+    // 1..=MAX_MOSAIC; 1 (or no arguments) is off.
+    let st = state.clone();
+    g.set(
+        "mosaic",
+        lua.create_function(move |_, f: Option<f64>| {
+            st.borrow_mut().draw.set_mosaic(fl(f.unwrap_or(1.0)));
             Ok(())
         })?,
     )?;

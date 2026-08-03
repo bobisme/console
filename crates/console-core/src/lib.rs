@@ -47,8 +47,8 @@ pub use crate::audio::{
 pub use crate::cart::Cart;
 pub use crate::error::Error;
 pub use crate::gfx::{
-    DrawState, FB_LEN, Framebuffer, IDENTITY_PAL, MAP_H, MAP_LEN, MAP_W, PALETTE, SCREEN_H,
-    SCREEN_W, SHEET_LEN, SHEET_W, SPRITE_SIZE, SpriteSheet, TileMap,
+    DrawState, FB_LEN, FILLP_SIZE, Framebuffer, IDENTITY_PAL, MAP_H, MAP_LEN, MAP_W, MAX_MOSAIC,
+    PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN, SHEET_W, SPRITE_SIZE, SpriteSheet, TileMap,
 };
 pub use crate::gfx_meta::{AnimDef, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
@@ -345,10 +345,19 @@ impl Console {
         &self.lua
     }
 
+    /// Refresh the presented frame from the draw framebuffer.
+    ///
+    /// This is where `mosaic(f)` happens: the cart draws at full resolution and
+    /// the finished frame is pixelated on the way out, so the effect is part of
+    /// the deterministic framebuffer (screenshots, `screen_text`, goldens) but
+    /// never feeds back into the next frame's drawing or into `pget`.
     fn sync_framebuffer(&mut self) {
         let s = self.state.borrow();
         self.fb.copy_from_slice(&s.fb[..]);
         self.dpal = *s.draw.display_palette();
+        let mosaic = s.draw.mosaic();
+        drop(s);
+        gfx::apply_mosaic(&mut self.fb, mosaic);
     }
 }
 

@@ -75,11 +75,15 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
 - Draw: `cls([c]) pset pget line rect rectfill circ circfill
   spr(n,x,y,[w,h,flip_x,flip_y]) print(s,x,y,[c])`. Color 0 is transparent
   in `spr()`.
+  - `sspr(sx,sy,sw,sh,dx,dy,[dw,dh],[flip_x,flip_y])` — blit any sheet
+    rectangle into any screen rectangle, nearest-neighbor scaled (`dw,dh`
+    default to `sw,sh`; any size <= 0 draws nothing, negatives do NOT mirror).
+    Same camera/clip/pal/palt rules as `spr`; at 1:1 it *is* `spr`.
 - Tile map: `map([cel_x,cel_y,sx,sy,cel_w,cel_h])` draws a block of map cells as
   sprites (bare `map()` = the whole 128x64 map at 0,0; tile 0 cells are skipped;
   camera/clip/pal/palt apply exactly as to `spr`), `mget(cx,cy)` reads a tile id
   (0 off the map), `mset(cx,cy,v)` writes one.
-- Draw state (all four PERSIST across frames — nothing auto-resets them):
+- Draw state (all of it PERSISTS across frames — nothing auto-resets it):
   - `camera([x],[y])` — offset every later draw by `-(x,y)`; no args resets.
     `pget` and `cls` are unaffected.
   - `clip([x,y,w,h])` — clip rect in SCREEN space (after the camera); no args
@@ -92,6 +96,15 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
     AND `palt`.
   - `palt(c,flag)` — which colors `spr()` skips (default: only 0). Tested on
     the sprite's SOURCE color, before `pal()` remaps it. `palt()` resets.
+  - `fillp(p)` — 16-bit 4x4 dither pattern for SHAPES only (pset/line/rect/
+    rectfill/circ/circfill; never spr/sspr/map/print/cls). Bit 15 = top-left,
+    row-major; a set bit draws the color's high nibble (`c0 + c1*16`) or
+    nothing at all when that nibble is 0. Anchored to SCREEN space, so shapes
+    shimmer as the camera scrolls. `fillp()` = solid; `pal()` does NOT reset it.
+  - `mosaic(f)` — end-of-frame pixelation: each f x f block of the finished
+    frame becomes its top-left pixel (f 1-32, `mosaic()` = off). Unlike the
+    display palette this really rewrites the framebuffer, so `screen_text` and
+    screenshots show it.
 - Input: `btn(i)` held / `btnp(i)` pressed-this-frame. 0=L 1=R 2=U 3=D
   4=A 5=B 6=menu (start/select-style; the web shell's triangle button).
 - Audio: `sfx(n,[ch])` with `ch` 0–5 (`sfx(-1,ch)` stops a channel),
@@ -102,6 +115,27 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
   `sin/cos` take TURNS, not radians (`sin(x)` = `math.sin(x*2π)`), standard
   sign — NOT PICO-8's inverted sin. `t()` = frames/60, exact.
 - `printh(s)` logs to the host; never draws.
+
+### Effects worth reaching for
+
+- **Scene transitions cost two lines.** `mosaic(f)` with `f` ramping
+  `1,2,4,8,16,32` pixelates the screen out and the reverse pixelates the next
+  scene in — no extra draw code, no shader, and it is in `screen_text` so you
+  can assert on it. Pair it with a display-palette fade (`pal(i,0,1)`) for a
+  dissolve to black that costs nothing either.
+- **Dither shading with `fillp`.** With only 16 fixed colors, the way to get a
+  third shade between two palette entries is a pattern, not a color:
+  `fillp(0x5a5a) rectfill(x0,y0,x1,y1, dark + light*16)` is a 50% blend of two
+  colors; `0x8888` is 25% secondary, `0xeeee` 75%, `0x0f0f` horizontal stripes,
+  `0x3333` vertical ones. Leave the high
+  nibble off and the pattern becomes a stencil instead — great for fog, water
+  surfaces, damage flashes and "half-there" ghosts over whatever is behind.
+  Remember it is anchored to the screen: a full-screen `rectfill` under a
+  scrolling `camera` shimmers, which usually looks right.
+- **`sspr` for zoom.** Title logos, boss intros, screen-shake punch-in and
+  scaling pickups are all one `sspr` with a computed `dw,dh`. Integer scales
+  (2x, 3x) stay crisp; fractional ones drop or repeat rows, which is the
+  expected fantasy-console look.
 
 ## Determinism rules (non-negotiable)
 
