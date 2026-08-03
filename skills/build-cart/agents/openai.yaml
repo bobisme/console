@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Console Cart"
+  short_description: "Author and ship deterministic fantasy-console games"
+  default_prompt: "Use $build-cart to create, test, and package a polished fantasy-console game."

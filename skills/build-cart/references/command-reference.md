@@ -1,0 +1,423 @@
+# Command and JSON-RPC reference
+
+Use this reference for exact `console-agent`, `console-pack`, or `serve` syntax.
+Run the relevant `--help` in the active checkout if a locally installed binary
+may be newer than this skill.
+
+## Contents
+
+- [`console-agent` inventory](#console-agent-inventory)
+- [`run`](#run)
+- [`playtest`](#playtest)
+- [`serve`](#serve)
+- [`sprite` commands](#sprite-commands)
+- [`map` commands](#map-commands)
+- [`music` commands](#music-commands)
+- [`console-pack`](#console-pack)
+- [JSON-RPC protocol](#json-rpc-protocol)
+- [Session RPC methods](#session-rpc-methods)
+- [Sprite RPC methods](#sprite-rpc-methods)
+- [Map RPC methods](#map-rpc-methods)
+- [Music RPC methods](#music-rpc-methods)
+- [CLI-only operations](#cli-only-operations)
+
+## `console-agent` inventory
+
+```text
+console-agent --help
+console-agent run ...
+console-agent playtest ...
+console-agent serve
+console-agent sprite <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke> ...
+console-agent map <render|dump|lint|edit|poke> ...
+console-agent music <score|lint|piano-roll|render|edit|import-abc> ...
+```
+
+`-h` and `--help` are accepted at the top level or anywhere after a top-level
+subcommand. They print the relevant usage and exit 0; for `sprite`, `map`, and
+`music`, that usage covers the entire command family. Every image/audio render
+command below accepts equivalent `-o` and `--out` output-path forms.
+
+Top-level/family help exits 0. Invalid CLI syntax generally exits 2; cart load,
+runtime, assertion, or artifact failures generally exit 1.
+
+## `run`
+
+```text
+console-agent run <cart>
+  [--frames N]
+  [--input SPEC]
+  [--screenshot out.png] [--screenshot-zoom N]
+  [--screen-text]
+  [--eval CODE]
+  [--seed N]
+  [--wav out.wav]
+  [--spectrogram out.png]
+  [--audio-events]
+  [--audio-stats]
+```
+
+`SPEC` is comma-separated `COUNT:BUTTONS`, for example
+`30:,10:R,5:RA,60:`. Letters are `L R U D A B M`; separators/whitespace inside
+button strings are accepted. If `--frames` is omitted, the command runs the
+sum of input-segment counts. If it exceeds the input length, remaining frames
+are idle. An empty spec plus `--frames N` is an idle run.
+
+| Option | Result |
+|---|---|
+| `--frames N` | Total fixed frames to step. |
+| `--input SPEC` | Per-frame button masks. |
+| `--screenshot FILE` | Final PNG after stepping and `--eval`. |
+| `--screenshot-zoom N` | Integer nearest-neighbor PNG scale, at least 1; default 1. |
+| `--screen-text` | Print 320 framebuffer rows of 192 palette characters. |
+| `--eval CODE` | Evaluate after stepping; JSON-serialize the result to stdout. |
+| `--seed N` | Initial deterministic seed; default 0. |
+| `--wav FILE` | Write all retained audio as 16-bit mono PCM WAV. |
+| `--spectrogram FILE` | Write the retained audio as a PNG, default cell 4. |
+| `--audio-events` | Print one JSON sequencer event per line. |
+| `--audio-stats` | Print JSON mix windows using 6 frames/window. |
+
+`printh` lines go to stderr as `[log] ...`. A halted cart or failed eval exits
+1 after reporting the error.
+
+## `playtest`
+
+```text
+console-agent playtest <cart> --scenario <scenario.json>
+  [--artifacts DIR]
+  [--seed N]
+  [--format text|pretty|json | --json]
+```
+
+- `--artifacts` is required if a stage writes files.
+- `--seed` overrides the scenario seed.
+- `--format` defaults to terminal-sensitive auto selection.
+- `--json` is an alias for `--format json`.
+- Exit 0: every stage passed. Exit 1: assertion/execution/capture failed.
+  Exit 2: CLI or strict scenario schema invalid.
+
+Version 1 schema:
+
+```json
+{
+  "version": 1,
+  "seed": 0,
+  "stages": [
+    {"op":"eval", "name":"setup", "code":"dev_warp(48,200)"},
+    {"op":"input", "name":"jump", "frames":12, "buttons":"RA"},
+    {"op":"assert", "code":"return dev_status().grounded", "equals":false},
+    {
+      "op":"capture",
+      "screenshot":"jump.png",
+      "zoom":2,
+      "screen_text":"jump.txt",
+      "wav":"jump.wav",
+      "spectrogram":"jump-spectrum.png",
+      "audio_events":"jump-events.json",
+      "audio_stats":"jump-stats.json",
+      "from_frame":0,
+      "to_frame":120,
+      "window_frames":6,
+      "cell":4
+    }
+  ]
+}
+```
+
+Every stage permits an optional unique `name`. `input.frames` must be at least
+1; total input frames may not exceed 36,000. Capture paths must be unique,
+relative descendants of `--artifacts`, and cannot traverse `.`/`..`, absolute
+paths, or symlinks. Screenshot zoom is 1–16. Spectrogram cell is 1–8 and its
+range at most 3,600 frames. Audio-stat windows are 1–36,000 frames.
+
+## `serve`
+
+```text
+console-agent serve
+```
+
+Read one JSON-RPC 2.0 object per stdin line and emit one response per stdout
+line, flushed immediately. Blank input lines are ignored. Keep the process alive
+to load/step/inspect one session incrementally.
+
+## `sprite` commands
+
+Targets are a declared sprite name, declared animation name, or raw tile rect
+`tx,ty,w,h`. View zoom defaults to 8. `--grid` shows 8×8 boundaries;
+`--indices` labels palette indices; `--anchor` draws the declared anchor.
+
+### Inspect and render
+
+```text
+console-agent sprite render <cart> <target> [--frame N] [--zoom Z]
+  [--grid] [--indices] [--anchor] (-o|--out) out.png
+
+console-agent sprite strip <cart> <anim> [--zoom Z] [--anchor]
+  (-o|--out) out.png
+
+console-agent sprite onion <cart> <anim> --frame N [--zoom Z]
+  [--grid] [--anchor] (-o|--out) out.png
+console-agent sprite onion <cart> <anim> --all [--zoom Z]
+  [--grid] [--anchor] (-o|--out) out.png
+
+console-agent sprite diff <cart> <anim> <frameA> <frameB>
+  [--zoom Z] (-o|--out) out.png
+
+console-agent sprite ghost <cart> <anim> [--zoom Z]
+  [--grid] [--anchor] (-o|--out) out.png
+
+console-agent sprite gif <cart> <anim> [--zoom Z]
+  [--grid] [--anchor] (-o|--out) out.gif
+
+console-agent sprite dump <cart> <target> [--frame N]
+```
+
+- `render`: one resolved frame/rect.
+- `strip`: all frames side by side and anchor/baseline aligned.
+- `onion --frame`: current full opacity, previous red, next green; loop-aware.
+- `onion --all`: contact sheet centered on every frame.
+- `diff`: later frame dimmed with changed pixels magenta.
+- `ghost`: motion accumulation over every frame.
+- `gif`: declared animation timing in an animated GIF.
+- `dump`: palette-character rows with a `#` header suitable for `poke --stdin`.
+
+### Lint
+
+```text
+console-agent sprite lint <cart> [anim ...]
+  [--max-drift PX]
+  [--max-area-var PCT]
+  [--max-changed PX]
+  [--no-unique-colors]
+  [--summary]
+```
+
+With no thresholds, emit a report and exit 0. Any threshold turns lint into a
+gate: violations produce exit 1 and a `violations` array. `--summary` prints one
+compact line per animation while preserving gate behavior.
+
+### Write pixels and transform regions
+
+```text
+console-agent sprite poke <cart> <target> [--frame N]
+  --rows <pixels,pixels,...> [--dry-run]
+console-agent sprite poke <cart> <target> [--frame N]
+  --stdin [--dry-run]
+
+console-agent sprite edit <cart> shift <target> [--frame N]
+  [--dx N] [--dy N] [--wrap] [--dry-run]
+console-agent sprite edit <cart> flip <target> [--frame N]
+  --horizontal|--vertical [--dry-run]
+console-agent sprite edit <cart> rotate <target> [--frame N]
+  --cw|--ccw [--dry-run]
+console-agent sprite edit <cart> copy <src> <dst> [--dry-run]
+console-agent sprite edit <cart> clear <target> [--frame N] [--dry-run]
+```
+
+`poke` requires exact height/width and valid palette characters; `--stdin`
+skips `#` comment lines. Edit targets accept sprite/anim/raw rect; copy endpoints
+accept `sprite[:frame]` or raw rect and must match size. Rotate requires a square
+region. Shift fills vacated pixels with color 0 unless `--wrap`.
+
+## `map` commands
+
+Regions use cell coordinates `cx,cy,cw,ch`. Render/dump/poke default to the
+used nonzero extent (or one origin cell on an empty map). Edit operations always
+require an explicit region.
+
+```text
+console-agent map render <cart> [cx,cy,cw,ch] [--zoom Z]
+  [--grid] [--ids] (-o|--out) out.png
+console-agent map dump <cart> [cx,cy,cw,ch]
+console-agent map lint <cart>
+
+console-agent map poke <cart> [cx,cy,cw,ch]
+  --rows <hex,hex,...> [--dry-run]
+console-agent map poke <cart> [cx,cy,cw,ch]
+  --stdin [--dry-run]
+
+console-agent map edit <cart> copy <cx,cy,cw,ch> <dest_cx,dest_cy>
+  [--dry-run]
+console-agent map edit <cart> shift <cx,cy,cw,ch>
+  [--dx N] [--dy N] [--dry-run]
+console-agent map edit <cart> fill <cx,cy,cw,ch> <tile-hex> [--dry-run]
+console-agent map edit <cart> clear <cx,cy,cw,ch> [--dry-run]
+```
+
+`render --ids` labels nonempty cells. `dump` emits two hex digits/cell with a
+pipeable comment header. `lint` reports extent, counts, fill, and map IDs whose
+8×8 sheet tiles are blank. Poke rows must be exactly `2*cw` hex characters.
+Shift drops cells leaving the named region and zero-fills the vacancy; it does
+not wrap.
+
+## `music` commands
+
+### Inspect and render
+
+```text
+console-agent music score <cart> [--song N]
+console-agent music lint <cart> [--strict]
+console-agent music piano-roll <cart>
+  [--song N | --patterns a,b,c] [--cell N] [--row-h N]
+  (-o|--out) out.png
+console-agent music render <cart>
+  [--song N] [--loops K | --frames F] [--seed N]
+  (-o|--out) out.wav
+```
+
+`--song N` follows the same pattern chain as `music(N)`; default is the lowest
+defined pattern. `lint` emits JSON and exits 0 unless `--strict`. Piano-roll
+renders pitch vs frame and may select an explicit pattern list. `render` boots
+the cart and renders the intro plus 2 loop-body passes by default; `--frames`
+overrides loop detection.
+
+### Edit SFX rows
+
+```text
+console-agent music edit <cart> transpose <sfx-ids> <semitones>
+  [--clamp] [--dry-run]
+console-agent music edit <cart> copy <src-sfx> <dst-sfx>
+  [--force] [--dry-run]
+console-agent music edit <cart> shift-rows <sfx-id> <n> [--dry-run]
+console-agent music edit <cart> set-vol <sfx-id> <0-7|+n|-n> [--dry-run]
+console-agent music edit <cart> set-inst <sfx-id> <inst|0-5|w0-w7>
+  [--where old] [--dry-run]
+console-agent music edit <cart> stretch <sfx-id> <2|0.5>
+  [--force] [--dry-run]
+```
+
+`<sfx-ids>` accepts one ID, an inclusive range, or comma combinations such as
+`0,2,5-7`. Signed values like `-12` are operands. `transpose` errors before
+leaving C0–B7 unless `--clamp`. `copy --force` may replace a destination.
+`shift-rows` rotates. `set-vol` preserves rests and clamps relative changes.
+`set-inst --where` rewrites only matching voices. `stretch 2` inserts rests and
+reduces speed; `stretch 0.5` drops odd rows (requires `--force` if they contain
+notes) and increases speed.
+
+Only `transpose` accepts the range/list form `<sfx-ids>`. `copy`, `shift-rows`,
+`set-vol`, `set-inst`, and `stretch` take the single IDs shown in their syntax;
+invoke them once per target ID when changing several entries.
+
+### Import ABC
+
+```text
+console-agent music import-abc <cart> <file.abc|-> --sfx <start-id>
+  [--inst <name|0-5|w0-w7>]
+  [--vol 0-7]
+  [--speed 1-255]
+  [--transpose N]
+  [--force]
+  [--dry-run]
+```
+
+Import a monophonic tune into consecutive SFX IDs; `-` reads stdin. The command
+prints grid/tempo decisions, split points, warnings, and suggested pattern lines.
+
+## `console-pack`
+
+```text
+console-pack <cart> -o <out.html>
+  [--engine FILE]
+  [--template FILE]
+```
+
+| Option | Meaning |
+|---|---|
+| `-o`, `--out`, `--output` | Required destination. |
+| `--engine FILE` | Emscripten single-file engine JS; default `web/engine.js`. |
+| `--template FILE` | Template containing `{{TITLE}}`, `{{CART_TEXT}}`, `{{ENGINE_JS}}`; default `web/template.html`. |
+| `-h`, `--help` | Print full help. |
+
+Default engine/template lookup checks the current directory, its ancestors,
+then executable ancestors. The packer validates the cart before writing and
+produces a zero-request HTML file that works from `file://`.
+
+## JSON-RPC protocol
+
+Request and success/error envelopes:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"info","params":{}}
+{"jsonrpc":"2.0","id":1,"result":{}}
+{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"..."}}
+```
+
+One line is one request. Important error codes: `-32700` parse error,
+`-32601` unknown method, `-32602` bad params, `-32002` no cart loaded, and
+`-32000` cart/runtime/halted errors (often with detail in `data`).
+
+## Session RPC methods
+
+| Method | Params | Result / behavior |
+|---|---|---|
+| `load_cart` | `{path, seed?}` or `{text, seed?}` | Load and run `_init`; `{ok,title,seed}`. `text` wins if both are supplied. |
+| `reset` | `{seed?}` | Reload current cart, optionally replacing seed; clear input/audio/event logs while named save states survive. |
+| `step` | `{frames?=1,input?=""}` | Input string or integer mask; return `{frame_count,halted,message}`. |
+| `screenshot` | `{path,zoom?=1}` | Write PNG; zoom integer ≥1; return path/dimensions. |
+| `screen_text` | `{}` | `{lines}`: 320 strings × 192 palette characters, raw draw-space indices. |
+| `eval` | `{code}` | Execute chunk; `{result}` JSON conversion. |
+| `get_global` | `{name}` | Return one global as `{result}`. |
+| `logs` | `{}` | Drain `printh` lines as `{logs}`. |
+| `save_state` | `{name}` | Save a replay checkpoint by name. |
+| `load_state` | `{name}` | Reset/replay it; return frame/halt state. |
+| `info` | `{}` | Frame, seed, halt, title/meta, input-log length, saved-state names. |
+| `wav` | `{path,from_frame?,to_frame?}` | Write retained range; return frames/samples/duration. |
+| `audio_state` | `{}` | Current music pattern and per-channel sequencer state. |
+| `audio_events` | `{from_frame?}` | Sequencer events at/after the bound. |
+| `audio_stats` | `{window_frames?=6}` | RMS/peak/clipped counts over mix windows. |
+| `spectrogram` | `{path,from_frame?,to_frame?,cell?=4}` | Write PNG; return windows/dimensions. |
+
+Saved states are reset-plus-replay, so they reproduce pixels, map mutations,
+audio samples, and events rather than serializing opaque VM memory.
+
+## Sprite RPC methods
+
+All operate on the loaded cart and do not step it.
+
+| Method | Params |
+|---|---|
+| `sprite_render` | `{target,path,frame?,zoom?,grid?,indices?,anchor?}` |
+| `sprite_strip` | `{anim,path,zoom?,anchor?}` |
+| `sprite_onion` | `{anim,path,frame?=0,all?,zoom?,grid?,anchor?}` |
+| `sprite_diff` | `{anim,path,frame_a,frame_b,zoom?}` |
+| `sprite_ghost` | `{anim,path,zoom?,grid?,anchor?}` |
+| `sprite_lint` | `{anims?:[string],max_drift?,max_area_var?,max_changed?,no_unique_colors?,summary?}` |
+
+Image methods return `{ok,path,width,height,frames}`. `sprite_lint` returns
+`violated` because RPC has no process exit code; `violations` appears when
+thresholds are active. There is no RPC GIF, dump, poke, or edit method.
+
+## Map RPC methods
+
+| Method | Params | Result |
+|---|---|---|
+| `map_render` | `{path,region?:"cx,cy,cw,ch",zoom?,grid?,ids?}` | Image result. |
+| `map_dump` | `{region?:"cx,cy,cw,ch"}` | `{text}` hex rows. |
+| `map_lint` | `{}` | Whole-map JSON lint object. |
+
+The optional region defaults to used extent. There is no RPC poke/edit method.
+
+## Music RPC methods
+
+| Method | Params | Result |
+|---|---|---|
+| `music_score` | `{song?}` | `{text}` song chain and score. |
+| `music_lint` | `{}` | JSON diagnostics. |
+| `music_piano_roll` | `{path,song?,patterns?,cell?,row_h?}` | Image result plus pattern order/loop pattern. |
+
+There is no `music_render` RPC: use `eval` to call `music(n)`, then `step` and
+`wav`. There is no RPC edit/import operation.
+
+## CLI-only operations
+
+Every operation that rewrites cart text is intentionally CLI-only:
+
+```text
+sprite edit, sprite poke
+map edit, map poke
+music edit, music import-abc
+```
+
+Run them between RPC sessions and reload the cart. Static `sprite gif` and raw
+`sprite dump` are also CLI-only. This boundary prevents a running session from
+silently disagreeing with a rewritten file.
