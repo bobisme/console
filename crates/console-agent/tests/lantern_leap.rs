@@ -181,3 +181,51 @@ fn gameplay_uses_the_authored_night_scene_color_roles() {
         );
     }
 }
+
+#[test]
+fn deluxe_scene_uses_authored_variants_and_ambient_animation_metadata() {
+    let mut session = Session::new();
+    session.load_cart(&cart_text(), 0).unwrap();
+    session.step(1, console_core::input::A).unwrap();
+
+    let detail = request(
+        &mut session,
+        1,
+        "eval",
+        json!({"code": r#"
+            local counts = {chip=0, rune=0, tuft=0, bloom=0, bubble=0}
+            for cy=0,63 do
+              for cx=0,17 do
+                local tile=mget(cx,cy)
+                if tile==75 then counts.chip=counts.chip+1
+                elseif tile==76 then counts.rune=counts.rune+1
+                elseif tile==77 then counts.tuft=counts.tuft+1
+                elseif tile==78 then counts.bloom=counts.bloom+1
+                elseif tile==79 then counts.bubble=counts.bubble+1 end
+              end
+            end
+            return {counts=counts,
+              flame=anim_len("flame.flicker"), moth=anim_len("moth.flap"),
+              grass=anim_len("grass.sway"), spark=anim_len("spark.twinkle"),
+              rise=anim_len("player.rise"), apex=anim_len("player.apex"),
+              fall=anim_len("player.fall"), climb=anim_len("player.climb"),
+              stomp=anim_len("player.stomp")}
+        "#}),
+    );
+    let result = &detail["result"];
+    assert_eq!(result["flame"], 4);
+    assert_eq!(result["moth"], 4);
+    assert_eq!(result["grass"], 4);
+    assert_eq!(result["spark"], 4);
+    assert_eq!(result["rise"], 1);
+    assert_eq!(result["apex"], 1);
+    assert_eq!(result["fall"], 1);
+    assert_eq!(result["climb"], 4);
+    assert_eq!(result["stomp"], 3);
+    for role in ["chip", "rune", "tuft", "bloom", "bubble"] {
+        assert!(
+            result["counts"][role].as_u64().unwrap() > 0,
+            "runtime map omitted the {role} variant: {result}"
+        );
+    }
+}

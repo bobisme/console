@@ -1,7 +1,7 @@
 __meta__
 title=Lantern Leap
 author=OpenAI Codex
-version=1
+version=2
 
 __lua__
 -- LANTERN LEAP
@@ -11,6 +11,9 @@ __lua__
 local STONE, MOSS, CRUMBLE = 64, 65, 66
 local SPIKE, EMBER, GATE = 67, 36, 69
 local EXIT, SPRING, VINE, LAVA = 70, 71, 72, 73
+local SHRINE = 74
+local STONE_CHIP, STONE_RUNE = 75, 76
+local MOSS_TUFT, MOSS_BLOOM, LAVA_BUBBLE = 77, 78, 79
 local PW, PH = 7, 15
 local GRAVITY, MAX_FALL = 0.24, 4.8
 
@@ -36,21 +39,51 @@ local coyote, jump_buffer = 0, 0
 local dash_ready, dash_timer, dash_t0 = true, 0, 0
 local hurt_timer, hurt_t0 = 0, 0
 local checkpoint_x, checkpoint_y = 104, 480
-local transition, flash, shake = 0, 0, 0
+local transition, flash, shake, land_pulse = 0, 0, 0, 0
 local paused, show_help = false, true
 local particles, stars = {}, {}
 local frame_now = 0
 
 local ember_cells = {{6,57}, {14,45}, {3,17}}
 local crumble_cells = {{6,50}, {7,50}, {7,30}, {8,30}, {9,30}, {12,14}, {13,14}}
+local shrine_cells = {{2,9}, {13,41}, {3,55}}
+local moths = {{20,433,0}, {116,372,19}, {31,276,37}, {108,205,11}, {28,92,53}}
 
 local function frame_count()
   return flr(t() * 60)
 end
 
+local function stone_tile(tile)
+  return tile == STONE or tile == STONE_CHIP or tile == STONE_RUNE
+end
+
+local function moss_tile(tile)
+  return tile == MOSS or tile == MOSS_TUFT or tile == MOSS_BLOOM
+end
+
+local function lava_tile(tile)
+  return tile == LAVA or tile == LAVA_BUBBLE
+end
+
 local function solid(tile)
-  return tile == STONE or tile == MOSS or tile == CRUMBLE
+  return stone_tile(tile) or moss_tile(tile) or tile == CRUMBLE
       or tile == GATE or tile == SPRING
+end
+
+local function apply_tile_variants()
+  for cy = 0, 63 do
+    for cx = 0, 17 do
+      local tile = mget(cx, cy)
+      local h = (cx*17 + cy*29 + cx*cy*3) % 17
+      if stone_tile(tile) then
+        mset(cx, cy, h == 0 and STONE_RUNE or h < 5 and STONE_CHIP or STONE)
+      elseif moss_tile(tile) then
+        mset(cx, cy, h == 0 and MOSS_BLOOM or h < 6 and MOSS_TUFT or MOSS)
+      elseif lava_tile(tile) then
+        mset(cx, cy, h < 6 and LAVA_BUBBLE or LAVA)
+      end
+    end
+  end
 end
 
 local function tile_at(x, y)
@@ -132,6 +165,7 @@ local function start_game()
   for i = 1, #crumble_cells do
     mset(crumble_cells[i][1], crumble_cells[i][2], CRUMBLE)
   end
+  apply_tile_variants()
   music(0)
   master(1, 1, 0)
   echo(12, 4, 3)
@@ -226,11 +260,12 @@ local function move_y(amount)
   end
 end
 
-local function wisp_position(index)
+local function wisp_position(index, lag)
+  local tt = t() - (lag or 0)
   if index == 1 then
-    return 24 + sin(t()*0.17)*34, 283 + sin(t()*0.31)*10
+    return 24 + sin(tt*0.17)*34, 283 + sin(tt*0.31)*10
   end
-  return 76 + sin(t()*0.11+0.3)*42, 126 + cos(t()*0.23)*12
+  return 76 + sin(tt*0.11+0.3)*42, 126 + cos(tt*0.23)*12
 end
 
 local function update_particles()
@@ -249,6 +284,8 @@ local function update_play()
     printh(paused and "paused" or "resumed")
   end
   if paused then return end
+
+  local was_airborne = not grounded
 
   if player_mode == "hurt" then
     hurt_timer = hurt_timer - 1
@@ -320,6 +357,13 @@ local function update_play()
     move_y(vy)
   end
 
+  if was_airborne and grounded then
+    land_pulse = 8
+    spawn_sparks(player_x+3, player_y+PH, 13, 5, 0.55)
+  elseif grounded and abs(vx) > 1 and frame_now%7 == 0 then
+    spawn_sparks(player_x+3-(face_left and -2 or 2), player_y+PH, 13, 1, 0.25)
+  end
+
   -- Collect authored map objects by mutating the live tile map.
   local got, cx, cy = touches(EMBER)
   if got then
@@ -337,7 +381,7 @@ local function update_play()
   if at_exit and gate_open then win_game() end
 
   local spike = touches(SPIKE)
-  local lava = touches(LAVA)
+  local lava = touches(LAVA) or touches(LAVA_BUBBLE)
   if spike or lava or player_y > 506 then begin_hurt(spike and "spike" or "lava") end
   for i = 1, 2 do
     local wx, wy = wisp_position(i)
@@ -364,6 +408,7 @@ function _update()
   if flash > 0 then flash = flash - 1 end
   if shake > 0 then shake = shake - 1 end
   if transition > 0 then transition = transition - 1 end
+  if land_pulse > 0 then land_pulse = land_pulse - 1 end
   update_particles()
 
   if game_scene == "title" then
@@ -401,8 +446,45 @@ local function draw_stars(cam)
       -- pget is screen-space: copy the real rendered palette index into a tiny glint.
       local sampled = pget(s.x, sy)
       if i%7 == 0 then pset(s.x+1, sy, sampled) end
+      if (frame_now+s.phase)%70 < 4 and i%5 == 0 then
+        pset(s.x-1, sy, s.c)
+        pset(s.x, sy-1, s.c+1)
+        pset(s.x, sy+1, s.c+1)
+      end
     end
   end
+end
+
+local function draw_distant_ruins(cam)
+  local drift = flr(cam/11)
+  for i = 0, 5 do
+    local x = (i*37-drift) % 196 - 25
+    local h = 20 + (i*13)%31
+    local base = 244 - (i%2)*9
+    rectfill(x, base-h, x+17, base, 50)
+    rect(x+2, base-h+3, x+14, base, 52)
+    circfill(x+8, base-h+8, 4, 49)
+    rectfill(x+5, base-h+8, x+11, base, 49)
+    if (frame_now/30+i)%4 < 2 then pset(x+4, base-h+6, 31) end
+  end
+  for i = 0, 3 do
+    local x = (i*53+21-flr(cam/7)) % 202 - 29
+    line(x, 230, x+18, 196, 54)
+    line(x+18, 196, x+36, 230, 54)
+  end
+end
+
+local function draw_cloud_banks(cam)
+  if cam > 220 then return end
+  fillp(0x8888, 49)
+  for i = 0, 4 do
+    local x = (i*47-flr(t()*3)-flr(cam/9)) % 196 - 26
+    local y = 27 + i*31 + flr(cam/18)
+    circfill(x, y, 8+(i%2)*3, 52)
+    circfill(x+10, y-3, 6, 52)
+    rectfill(x, y, x+23, y+5, 52)
+  end
+  fillp()
 end
 
 local function draw_backdrop()
@@ -413,13 +495,22 @@ local function draw_backdrop()
   fillp(0x8888, 49)
   rectfill(0, 176, 143, 255, 1)
   fillp()
+  draw_distant_ruins(game_camera)
+  draw_cloud_banks(game_camera)
+  draw_stars(game_camera)
+  fillp(0xeeee)
+  circfill(112, 42 + flr(game_camera/20), 22, 30)
+  fillp()
   circfill(112, 42 + flr(game_camera/20), 18, 4)
   circfill(105, 36 + flr(game_camera/20), 14, 15)
   circ(112, 42 + flr(game_camera/20), 18, 12)
-  draw_stars(game_camera)
+  circfill(124, 42 + flr(game_camera/20), 2, 29)
+  pset(119, 51 + flr(game_camera/20), 29)
+  pset(128, 35 + flr(game_camera/20), 31)
   for i = 0, 5 do
     local x = (i*31 - flr(game_camera/7)) % 174 - 15
     line(x, 116+i*13, x+22, 112+i*13, 13)
+    if i%2 == 0 then line(x+7, 114+i*13, x+17, 110+i*13, 14) end
   end
 end
 
@@ -434,31 +525,125 @@ local function draw_particles()
   end
 end
 
+local function draw_world_details()
+  local cy0 = max(0, flr((game_camera-20)/8))
+  local cy1 = min(63, cy0+35)
+  for cy = cy0, cy1 do
+    for cx = 0, 17 do
+      local tile = mget(cx, cy)
+      local x, y = cx*8, cy*8
+      local h = (cx*19 + cy*23 + cx*cy*5) % 31
+      if stone_tile(tile) then
+        if h%7 == 0 then pset(x+2+h%4, y+2+(h/3)%4, 13) end
+        if h%11 == 0 then line(x+1, y+6, x+3, y+4, 15) end
+      elseif moss_tile(tile) and mget(cx, cy-1) == 0 and h%3 == 0 then
+        aspr("grass.sway", x+4, y+2, -h*3)
+      elseif tile == CRUMBLE then
+        if (frame_now+h*7)%43 < 2 then pset(x+2+h%5, y+7, 13) end
+      elseif tile == SPIKE and (frame_now+h)%50 < 4 then
+        pset(x+3, y+2, 12)
+      elseif tile == VINE then
+        local sway = flr(sin(t()*0.6+cy/7)*2)
+        if cy%2 == 0 then line(x+4, y+3, x+1+sway, y+1, 5) end
+        if cy%3 == 0 then line(x+4, y+5, x+7+sway, y+3, 6) end
+      elseif lava_tile(tile) then
+        line(x, y+1, x+7, y+1, 4)
+        if (frame_now+h*5)%37 < 3 then circ(x+2+h%4, y-1, 1, 3) end
+      elseif tile == GATE then
+        if (frame_now/12+cy)%4 < 2 then pset(x+4, y+3, 11) end
+      elseif tile == SPRING then
+        local bounce = flr((sin(t()*2)+1)*0.5)
+        line(x+1, y+1-bounce, x+6, y+1-bounce, 5)
+      end
+    end
+  end
+
+  for i = 1, #shrine_cells do
+    local cx, cy = shrine_cells[i][1], shrine_cells[i][2]
+    local x, y = cx*8+4, cy*8+1
+    fillp(0xeeee)
+    circfill(x, y-2, 5+flr((sin(t()*0.7+i/5)+1)*0.5), 30)
+    fillp()
+    aspr("flame.flicker", x, y+2, -i*9)
+  end
+
+  for i = 1, #moths do
+    local m = moths[i]
+    local mx = m[1] + sin(t()*0.16+m[3]/60)*7
+    local my = m[2] + cos(t()*0.23+m[3]/45)*4
+    aspr("moth.flap", mx, my, -m[3], i%2 == 0, false)
+  end
+
+  for i = 0, 11 do
+    local wy = (i*47-flr(frame_now/(3+i%3))) % 512
+    local wx = (i*31+flr(sin(t()*0.1+i/9)*9)) % 140 + 2
+    if wy > game_camera-16 and wy < game_camera+244 then
+      pset(wx, wy, i%4 == 0 and 4 or 10)
+    end
+  end
+end
+
 local function draw_world()
   local shake_x = shake > 0 and flr(rnd(3))-1 or 0
   local shake_y = shake > 0 and flr(rnd(3))-1 or 0
   clip(0, 12, 144, 244)
   camera(-shake_x, game_camera-12-shake_y)
   map()
+  draw_world_details()
 
   for i = 1, #ember_cells do
     local cx, cy = ember_cells[i][1], ember_cells[i][2]
-    if mget(cx, cy) == EMBER then aspr("ember.spin", cx*8+4, cy*8+4) end
+    if mget(cx, cy) == EMBER then
+      local ex, ey = cx*8+4, cy*8+4
+      fillp(0xeeee)
+      circfill(ex, ey, 7+flr((sin(t()*1.2+i/3)+1)*0.5), 30)
+      fillp()
+      circ(ex+flr(sin(t()+i/4)*6), ey+flr(cos(t()+i/4)*5), 1, 4)
+      aspr("ember.spin", ex, ey)
+    end
   end
 
   for i = 1, 2 do
     local wx, wy = wisp_position(i)
+    fillp(0xeeee)
+    circfill(wx, wy, 7, 5)
+    fillp()
+    for trail = 3, 1, -1 do
+      local tx, ty = wisp_position(i, trail/45)
+      circfill(tx, ty, 1, 10-trail)
+    end
     aspr("wisp.float", wx, wy, i*13)
   end
 
   -- A scaled portal core exercises sspr in the actual playfield.
   if gate_open then
     local pulse = 10 + flr((sin(t()*0.8)+1)*2)
+    for ring = 1, 3 do circ(120, 40, pulse+ring*4, 4+ring) end
+    for i = 0, 5 do
+      local a = t()*0.25+i/6
+      pset(120+cos(a)*(pulse+7), 40+sin(a)*(pulse+7), 11)
+    end
     aspr("portal.bloom", 124, 40)
     sspr(48, 32, 8, 8, 116-pulse/2, 36-pulse/2, pulse, pulse)
   end
 
+  if land_pulse > 0 then
+    local r = 9-land_pulse
+    fillp(0x5a5a)
+    circ(player_x+3, player_y+PH, r+2, 13)
+    fillp()
+  end
+
+  fillp(0xeeee)
+  circfill(player_x+3, player_y+6, 5+flr((sin(t()*1.4)+1)*0.5), 30)
+  fillp()
   if player_mode == "dash" then
+    local ghost_colors = {1, 2, 4}
+    for trail = 3, 1, -1 do
+      for ink = 1, 15 do pal(ink, ghost_colors[trail]) end
+      aspr("player.dash", player_x+4-vx*trail, player_y+15-vy*trail, dash_t0, face_left, false)
+    end
+    for ink = 0, 15 do pal(ink, INK_MAP[ink+1]) end
     -- Push the player's sky-blue highlight to luminous cyan during a dash.
     pal(10, 7)
     aspr("player.dash", player_x+4, player_y+15, dash_t0, face_left, false)
@@ -466,14 +651,26 @@ local function draw_world()
   elseif player_mode == "hurt" then
     aspr("player.hurt", player_x+4, player_y+15, hurt_t0, face_left, false)
   elseif player_mode == "stomp" then
-    aspr("player.jump", player_x+4, player_y+15, 0, face_left, true)
+    aspr("player.stomp", player_x+4, player_y+15, 0, face_left, false)
+  elseif on_vine then
+    aspr("player.climb", player_x+4, player_y+15, 0, face_left, false)
   elseif not grounded then
-    aspr("player.jump", player_x+4, player_y+15, 0, face_left, false)
+    if vy < -1.2 then
+      aspr("player.rise", player_x+4, player_y+15, 0, face_left, false)
+    elseif vy < 1.2 then
+      aspr("player.apex", player_x+4, player_y+15, 0, face_left, false)
+    else
+      aspr("player.fall", player_x+4, player_y+15, 0, face_left, false)
+    end
   elseif abs(vx) > 0.18 then
     aspr("player.run", player_x+4, player_y+15, 0, face_left, false)
   else
-    aspr("player.idle", player_x+4, player_y+15, 0, face_left, false)
+    local idle_bob = flr((sin(t()*0.45)+1)*0.5)
+    aspr("player.idle", player_x+4, player_y+15-idle_bob, 0, face_left, false)
   end
+  local flame_y = player_y + (frame_now%10 < 5 and 1 or 2)
+  pset(player_x+3, flame_y, 4)
+  pset(player_x+4, flame_y+1, 12)
   camera()
   clip()
   draw_particles()
@@ -483,9 +680,17 @@ local function draw_hud()
   clip(0, 0, 144, 12)
   cls(48)
   clip()
+  line(1, 10, 142, 10, 52)
   spr(EMBER, 3, 2)
-  print("X" .. embers .. "/" .. #ember_cells, 12, 3, 4)
-  print(dash_ready and "DASH+" or "DASH-", 50, 3, dash_ready and 5 or 14)
+  print("X" .. embers, 12, 3, 4)
+  for i = 1, #ember_cells do
+    circfill(27+(i-1)*5, 5, 1, i <= embers and 4 or 15)
+    if i <= embers then pset(27+(i-1)*5, 4, 12) end
+  end
+  print("DASH", 47, 3, dash_ready and 5 or 14)
+  rect(68, 3, 96, 7, 15)
+  if dash_ready then rectfill(70, 5, 94, 5, 5)
+  else rectfill(70, 5, 76, 5, 14) end
   print("F" .. deaths, 109, 3, 13)
   rect(1, 1, 142, 10, 15)
 end
@@ -493,10 +698,18 @@ end
 local function draw_pause()
   clip(18, 78, 108, 96)
   cls(40)
+  fillp(0x8888, 41)
+  rectfill(18, 78, 125, 173, 48)
+  fillp()
   clip()
   rect(18, 78, 125, 173, 4)
   rect(20, 80, 123, 171, 15)
+  for i = 0, 3 do
+    pset(24+i*31, 85, i%2 == 0 and 4 or 11)
+    pset(24+i*31, 166, i%2 == 0 and 11 or 4)
+  end
   print("LANTERN PAUSED", 36, 90, 4)
+  line(29, 100, 114, 100, 52)
   print("A  JUMP / HOLD HIGH", 27, 108, 12)
   print("B  AIR DASH", 27, 119, 12)
   print("DOWN  STOMP", 27, 130, 12)
@@ -513,15 +726,30 @@ local function draw_title()
     local x = (i*19 + flr(t()*7)) % 160 - 8
     line(x, 0, x-28, 255, i%2 == 0 and 8 or 15)
   end
+  local pulse = flr((sin(t()*0.55)+1)*2)
+  fillp(0xeeee)
+  circfill(72, 65, 46+pulse, 30)
+  fillp()
   circfill(72, 65, 40, 8)
   circ(72, 65, 40, 10)
+  line(68, 0, 68, 29, 52)
+  line(76, 0, 76, 29, 52)
+  for y = 4, 28, 8 do
+    line(68, y, 76, y+4, 55)
+    line(76, y+4, 68, y+8, 55)
+  end
   palt(12, true)
-  sspr(32, 16, 8, 8, 48, 37, 48, 48)
+  local logo = 46+pulse
+  sspr(32, 16, 8, 8, 72-logo/2, 61-logo/2, logo, logo)
   palt()
+  for i = 0, 7 do
+    local a = t()*0.12+i/8
+    aspr("spark.twinkle", 72+cos(a)*46, 65+sin(a)*38, -i*5)
+  end
   print("LANTERN", 45, 92, 4)
   print("L E A P", 52, 103, 11)
   rect(24, 116, 119, 119, 10)
-  print("A/B  LIGHT THE TOWER", 26, 137, 12)
+  print(frame_now%80 < 58 and "A/B  LIGHT THE TOWER" or "    PRESS TO BEGIN", 26, 137, 12)
   print("MENU  TOGGLE GUIDE", 29, 149, 13)
   if show_help then
     fillp(0x8888, 51)
@@ -532,6 +760,8 @@ local function draw_title()
     print("D-PAD MOVE + VINE CLIMB", 20, 192, 11)
     print("A JUMP  B AIR DASH", 27, 204, 3)
     print("DOWN STOMP CRACKED STONE", 18, 214, 4)
+    aspr("flame.flicker", 20, 221, 0)
+    aspr("flame.flicker", 124, 221, -7, true, false)
   end
   print("AGENT-AUTHORED CART 01", 25, 242, 14)
 end
@@ -544,9 +774,18 @@ local function draw_win()
   fillp()
   rect(10, 67, 133, 181, 4)
   rect(12, 69, 131, 179, 12)
+  for i = 0, 15 do
+    local a = i/16
+    line(72, 112, 72+cos(a)*(37+i%4), 112+sin(a)*(37+i%4), i%2 == 0 and 30 or 11)
+  end
   print("TOWER LIT!", 47, 82, 4)
   circfill(72, 111, 24 + flr(sin(t())*2), 8)
   sspr(48, 32, 8, 8, 48, 87, 48, 48)
+  for i = 0, 9 do
+    local sx = 24+(i*19+frame_now)%96
+    local sy = 75+(i*23+frame_now*(1+i%2))%98
+    aspr("spark.twinkle", sx, sy, -i*4)
+  end
   print("FRAMES " .. frame_now, 43, 145, 11)
   print("FALLS  " .. deaths, 43, 156, 13)
   print("A/B  AGAIN", 48, 170, 5)
@@ -586,13 +825,16 @@ end
 function dev_status()
   return {scene=game_scene, x=player_x, y=player_y, embers=embers,
     gate=gate_open, deaths=deaths, mode=player_mode, paused=paused,
-    camera=game_camera, dash=dash_ready}
+    camera=game_camera, dash=dash_ready, vx=vx, vy=vy,
+    grounded=grounded, vine=on_vine, land=land_pulse}
 end
 
 function dev_warp(x, y)
   player_x, player_y, vx, vy = x, y, 0, 0
   grounded, on_vine = false, false
-  player_mode = "normal"
+  player_mode, paused = "normal", false
+  game_camera = mid(0, y-112, 256)
+  transition, flash, shake = 0, 0, 0
 end
 
 function dev_unlock()
@@ -634,14 +876,37 @@ __sprites__
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a9bb9a0aa9bb9aaa99bb99a00000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a99a000aa99aa0aa9999aa00000000
 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aa00000aaaa000aaaaaa000000000
-eeeeeeee55655655eeeeeeee000000000000000049494949000aa000000000000006000022222222000000000000000000000000000000000000000000000000
-eefeeeee66666666ee3eeeee00000000000000004c4c4c4c00a99a00000000000065600033333333000000000000000000000000000000000000000000000000
-eefdddeeeeeeeeeeeed3deee0000000000000000494949490a9bb9a0055555500006600043434343000dd0000000000000000000000000000000000000000000
-eeeeeeeeeefdeeeeeee3eeee00030000000000004c4c4c4ca9b44b9a00666600006560003333333300ddddd00000000000000000000000000000000000000000
-dddeeeeeeeeeeeeedd333eee003330000000000049494949a9b44b9a0034430006566000222222220ddddddd0000000000000000000000000000000000000000
-eeeeefeedeeefeeeeee3efee03030300000000004c4c4c4c0a9bb9a0034444300065600023322332000dd0000000000000000000000000000000000000000000
-eeeddddeeeeeeeeeeed3ddde33333330000000004949494900a99a00eeeeeeee0006600022222222000000000000000000000000000000000000000000000000
-eeeeeeeeeeedeeeeeeeeeeeeeeeeeeee000000004c4c4c4c000aa000eeeeeeee0065600022222222000000000000000000000000000000000000000000000000
+eeeeeeee55655655eeeeeeee000000000000000049494949000aa00000000000000600002222222200044000eeeeeeeeeeeeeeee505655050554550033333333
+eefeeeee66666666ee3eeeee00000000000000004c4c4c4c00a99a00000000000065600033333333004c4000eefeeeeeeefeeeee056656505566565523232323
+eefdddeeeeeeeeeeeed3deee0000000000000000494949490a9bb9a005555550000660004343434300343000eeeeeeeeee4eeeee556556555665566522222222
+eeeeeeeeeefdeeeeeee3eeee00030000000000004c4c4c4ca9b44b9a006666000065600033333333004c4000dddeeeeee444eeee666666666666666622333222
+dddeeeeeeeeeeeeedd333eee003330000000000049494949a9b44b9a00344300065660002222222200040000eeeeefeeee4eeeee656665656566656523222322
+eeeeefeedeeefeeeeee3efee03030300000000004c4c4c4c0a9bb9a003444430006560002332233200040000eeeeeeeeeeefeeee666666666666666622333222
+eeeddddeeeeeeeeeeed3ddde33333330000000004949494900a99a00eeeeeeee000660002222222200eee000eeeddddeeeedddde666666666666666622222222
+eeeeeeeeeeedeeeeeeeeeeeeeeeeeeee000000004c4c4c4c000aa000eeeeeeee00656000222222220eeeee00eeeeeeeeeeeeeeee666666666666666623223222
+00040000000040000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000400000004400000044000000400000b0000b0000000000000000000000000000000000000000000000000000000000000000000000000000c000000000000
+004c4000000c4000004c0000000c40000bb00bb0bb0000bb000cc0000bb00bb00000000000000000000000000000000000000000000c000000c4c000000c0000
+004c4000004c4000004c4000004c400000b44b000bb44bb000b44b0000b44b0000060000006000000000600000000000000c000000c4c0000c444c0000c4c000
+00343000004340000034300000343000000cc000000cc0000bb00bb0000cc0000060600006060000000606000066600000000000000c000000c4c000000c0000
+0004000000040000000400000004000000044000000440000b0000b000044000065650000656500006565000065650000000000000000000000c000000000000
+00000000000000000000000000000000000000000000000000044000000000000565600005656000056560000565600000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00044000000440000004400000044000000440000004400000044000000440000004400000044000000000000000000000000000000000000000000000000000
+004cc400004cc400004cc400004cc400004cc400004cc400004cc400004cc400004cc400004cc400000000000000000000000000000000000000000000000000
+00444400004444000044440000444400004444000044440000444400004444000044440000444400000000000000000000000000000000000000000000000000
+30244203302442030024420000244200002442003024420300244200002442003024420300244200000000000000000000000000000000000000000000000000
+03044030030440303004400303044000000440300304403000044000300440030304403000044000000000000000000000000000000000000000000000000000
+00344300003443000334433000344300003443000034430000344300033443300034430000344300000000000000000000000000000000000000000000000000
+00344300003443000034430000344300003443000034430000344300003443000034430000344300000000000000000000000000000000000000000000000000
+00044000000440000004400000044030030440000004400000044000000440000004400000044000000000000000000000000000000000000000000000000000
+00444400004444000044440000444400004444000044440003444430004444000044440000444400000000000000000000000000000000000000000000000000
+00444400004444000044440000444400004444000044440000444400004444000044440000444400000000000000000000000000000000000000000000000000
+00044000000440000004400000044000000440000004400000044000000440000034430000044000000000000000000000000000000000000000000000000000
+00044000000440000004400000044000000440000004400000044000000440000034430000044000000000000000000000000000000000000000000000000000
+00300300004004000040040000400400000404000030030000040400004004000030030000044000000000000000000000000000000000000000000000000000
+00400400003003000040040000044000000440000040040000044000004004000000000000344300000000000000000000000000000000000000000000000000
+00000000000000000030030000300300003003000000000000300300003003000000000000300300000000000000000000000000000000000000000000000000
 __map__
 4000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 
@@ -713,6 +978,11 @@ sprite player rect=1,0 size=1x2 anchor=4,15
 anim player.idle frames=0,1 fps=3 loop
 anim player.run frames=0,1,2,3 frames_rect=3,0 fps=10 loop
 anim player.jump frames=0 frames_rect=7,0 fps=1 loop
+anim player.rise frames=0 frames_rect=0,6 fps=1 loop
+anim player.apex frames=0 frames_rect=1,6 fps=1 loop
+anim player.fall frames=0 frames_rect=2,6 fps=1 loop
+anim player.climb frames=0,1,2,3 frames_rect=3,6 fps=7 loop
+anim player.stomp frames=0,1,2 frames_rect=7,6 fps=15 loop
 anim player.dash frames=0,1,2 frames_rect=8,0 fps=20
 anim player.hurt frames=0,1,2 frames_rect=11,0 fps=12
 
@@ -724,6 +994,18 @@ anim wisp.float frames=0,1,2,3 fps=8 loop
 
 sprite portal rect=12,2 size=1x2 anchor=4,8
 anim portal.bloom frames=0,1,2 fps=8 loop
+
+sprite flame rect=0,5 size=1x1 anchor=4,7
+anim flame.flicker frames=0,1,2,3 fps=12 loop
+
+sprite moth rect=4,5 size=1x1 anchor=4,4
+anim moth.flap frames=0,1,2,3 fps=9 loop
+
+sprite grass rect=8,5 size=1x1 anchor=4,7
+anim grass.sway frames=0,1,2,3 fps=4 loop
+
+sprite spark rect=12,5 size=1x1 anchor=4,4
+anim spark.twinkle frames=0,1,2,3 fps=10 loop
 
 __instruments__
 wavetable 0 89acdeef ffeedca9 76532110 00112356
