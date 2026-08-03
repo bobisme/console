@@ -28,7 +28,7 @@
       "buttons": ""
     },
     {
-      "name": "lick_first_hook",
+      "name": "lick_first_surface",
       "op": "input",
       "frames": 14,
       "buttons": "UA"
@@ -213,6 +213,30 @@
       "screen_text": "03-fire-breath.txt"
     },
     {
+      "name": "enter_optional_ventilation_branch",
+      "op": "eval",
+      "code": "dev_warp(424,294)"
+    },
+    {
+      "name": "collect_executive_golden_fly",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "secret_branch_rewarded",
+      "op": "assert",
+      "code": "return dev_status().secrets == 1",
+      "equals": true
+    },
+    {
+      "name": "vertical_branch_artifacts",
+      "op": "capture",
+      "screenshot": "04-vertical-branch.png",
+      "zoom": 4,
+      "screen_text": "04-vertical-branch.txt"
+    },
+    {
       "name": "enter_boss_arena",
       "op": "eval",
       "code": "dev_warp(790,392)"
@@ -237,20 +261,20 @@
     {
       "name": "boss_active",
       "op": "assert",
-      "code": "return dev_status().boss_started and dev_status().boss_hp == 16",
+      "code": "return dev_status().boss_started and dev_status().boss_hp == 8 and dev_status().boss_phase == 1",
       "equals": true
     },
     {
       "name": "boss_intro_artifacts",
       "op": "capture",
-      "screenshot": "04-colonel-buzzkill.png",
+      "screenshot": "05-colonel-buzzkill.png",
       "zoom": 4,
-      "screen_text": "04-colonel-buzzkill.txt"
+      "screen_text": "05-colonel-buzzkill.txt"
     },
     {
       "name": "apply_boss_accountability",
       "op": "eval",
-      "code": "dev_damage_boss(16)"
+      "code": "dev_damage_boss(8)"
     },
     {
       "name": "boss_defeated",
@@ -267,9 +291,9 @@
     {
       "name": "boss_death_artifacts",
       "op": "capture",
-      "screenshot": "05-boss-explosions.png",
+      "screenshot": "06-boss-explosions.png",
       "zoom": 4,
-      "screen_text": "05-boss-explosions.txt",
+      "screen_text": "06-boss-explosions.txt",
       "wav": "ribbit-recoil-playthrough.wav",
       "spectrogram": "ribbit-recoil-spectrum.png",
       "audio_events": "ribbit-recoil-events.json",
@@ -315,9 +339,9 @@
     {
       "name": "victory_artifacts",
       "op": "capture",
-      "screenshot": "06-victory.png",
+      "screenshot": "07-victory.png",
       "zoom": 4,
-      "screen_text": "06-victory.txt"
+      "screen_text": "07-victory.txt"
     }
   ]
 }

@@ -32,26 +32,35 @@ local LEVELS = {{
   start={32,472},
   platforms={
     {0,61,28,3,STEEL}, {8,55,10,1,GIRDER}, {18,49,10,1,STEEL},
+    {4,48,5,1,GIRDER}, {13,40,6,1,STEEL}, {23,33,6,1,GIRDER},
     {28,43,11,1,MUD}, {38,58,20,6,STEEL}, {38,49,14,1,GIRDER},
     {50,52,12,1,MUD}, {60,46,13,1,STEEL}, {68,55,15,1,GIRDER},
     {58,59,24,1,GIRDER},
     {82,59,38,5,STEEL}, {90,51,8,1,GIRDER}, {105,49,8,1,MUD},
     {114,55,6,1,GIRDER}, {28,62,10,2,ACID}, {58,62,24,2,ACID},
-    {44,54,3,4,BREAKABLE}, {79,56,3,3,BREAKABLE}
-  },
-  hooks={
-    {44,380}, {124,330}, {204,278}, {344,352}, {438,350},
-    {513,390}, {520,300}, {600,350}, {700,330}, {790,300}, {900,330}
+    {44,54,3,4,BREAKABLE}, {79,56,3,3,BREAKABLE},
+    -- Optional vertical "executive ventilation shaft". Every ledge is tongueable.
+    {40,43,7,1,GIRDER}, {49,44,6,1,GIRDER}, {55,39,6,1,MUD},
+    {49,35,6,1,GIRDER},
+    {61,34,7,1,STEEL}, {68,39,5,1,GIRDER}, {74,42,7,1,STEEL},
+    {85,39,7,1,GIRDER}, {97,36,7,1,MUD}, {109,40,7,1,GIRDER}
   },
   enemy_defs={
     {E_GNAT,126,414,42}, {E_BEETLE,310,300,30}, {E_WASP,282,290,46},
     {E_GNAT,420,290,46}, {E_BEETLE,470,320,36}, {E_WASP,560,250,44},
     {E_GNAT,620,310,48}, {E_BEETLE,690,448,46}, {E_WASP,742,356,38}
   },
-  pickups={{P_LASER,272,320}, {P_FIRE,600,449}},
+  pickups={{P_LASER,272,336}, {P_FIRE,600,449}},
   bombs={{368,416}, {514,344}, {660,440}, {824,446}},
+  secrets={{430,302,1500}},
+  props={
+    {"pipe",24,468,70}, {"fence",104,472,88}, {"sign",184,438,0},
+    {"vent",244,456,0}, {"tank",404,432,0}, {"pipe",462,466,92},
+    {"sign",574,430,1}, {"fence",674,450,74}, {"vent",736,440,0},
+    {"tank",846,438,0}, {"pipe",886,470,54}
+  },
   checkpoints={{330,444}, {650,432}},
-  boss={x=870,y=438,range_x=50,range_y=0,hp=16},
+  boss={x=854,y=438,range_x=30,range_y=34,hp=8},
   boss_trigger=760,
   boss_gate={x=816,y=432,h=56},
   exit={x=932,y=448,hitbox={x=920,y=426,w=24,h=34}}
@@ -74,15 +83,17 @@ local camera_x, camera_y = 0, WORLD_H-(SH-HUD_H)
 local frame_now, paused, show_guide = 0, false, true
 local transition, flash, shake, hitstop = 0, 0, 0, 0
 local banner, banner_timer = "", 0
-local boss_intro, boss_death_timer = 0, 0
+local boss_intro, boss_death_timer, boss_clock = 0, 0, 0
 local combo_timer, weapon_cooldown = 0, 0
 local laser_timer, laser_x2, laser_y2 = 0, 0, 0
 local fire_timer, fire_aim_x, fire_aim_y = 0, 1, 0
 local tongue_state, tongue_x, tongue_y = "idle", 0, 0
 local tongue_dx, tongue_dy, tongue_len = 0, 0, 0
-local tongue_hook, rope_len, tongue_t0 = 0, 0, 0
-local level, enemies, hooks, pickups, bombs = nil, {}, {}, {}, {}
+local tongue_tile_x, tongue_tile_y, rope_len, tongue_t0 = -1, -1, 0, 0
+local level, enemies, pickups, bombs, secrets = nil, {}, {}, {}, {}
 local particles, explosions, bullets, stars = {}, {}, {}, {}
+local run_frames, bugs_defeated, max_combo, secrets_found = 0, 0, 0, 0
+local tutorial_step = 0
 
 local function frame_count()
   return flr(t()*60)
@@ -214,7 +225,7 @@ local function make_enemy(def)
   if kind==E_WASP then hp,w,h=2,16,14 end
   return {kind=kind,x=x,y=y,home_x=x,home_y=y,range=range,dir=-1,
     hp=hp,max_hp=hp,w=w,h=h,alive=true,phase=flr(rnd(120)),
-    hurt=0,last_fire=-99,pending_damage=0}
+    hurt=0,last_fire=-99,pending_damage=0,stun=0,burning=0,telegraph=0}
 end
 
 local function build_level(index)
@@ -233,19 +244,22 @@ local function build_level(index)
   enemies[#enemies+1]={kind=E_BOSS,x=bd.x,y=bd.y,home_x=bd.x,home_y=bd.y,
     range=bd.range_x,range_y=bd.range_y,dir=-1,hp=bd.hp,max_hp=bd.hp,
     w=24,h=24,alive=true,dormant=true,
-    phase=0,hurt=0,last_fire=-99,pending_damage=0}
-  hooks={}
-  for i=1,#level.hooks do hooks[i]={x=level.hooks[i][1],y=level.hooks[i][2],active=true} end
+    phase=0,hurt=0,last_fire=-99,pending_damage=0,attack_clock=0,
+    phase_id=1,phase_salvos={0,0,0},vulnerable=false,telegraph=0,stun=0,burning=0}
   pickups={}
   for i=1,#level.pickups do
     pickups[i]={kind=level.pickups[i][1],x=level.pickups[i][2],y=level.pickups[i][3],alive=true}
   end
   bombs={}
   for i=1,#level.bombs do bombs[i]={x=level.bombs[i][1],y=level.bombs[i][2],alive=true,hurt=0} end
+  secrets={}
+  for i=1,#level.secrets do
+    secrets[i]={x=level.secrets[i][1],y=level.secrets[i][2],value=level.secrets[i][3],alive=true}
+  end
 end
 
 local function reset_tongue()
-  tongue_state,tongue_hook,tongue_len="idle",0,0
+  tongue_state,tongue_tile_x,tongue_tile_y,tongue_len="idle",-1,-1,0
 end
 
 local function reset_player(full)
@@ -263,9 +277,11 @@ local function start_game()
   player_x,player_y=st[1],st[2]
   checkpoint_x,checkpoint_y,checkpoint_index=st[1],st[2],0
   player_hp,score,combo,deaths=player_max_hp,0,0,0
+  run_frames,bugs_defeated,max_combo,secrets_found=0,0,0,0
+  tutorial_step=0
   laser_unlocked,fire_unlocked,mutation=false,false,"NONE"
   boss_started,boss_defeated,exit_open=false,false,false
-  boss_intro,boss_death_timer=0,0
+  boss_intro,boss_death_timer,boss_clock=0,0,0
   vx,vy,face_left,grounded=0,0,false,false
   invuln,hurt_timer,respawn_timer=0,0,0
   camera_x,camera_y=0,WORLD_H-(SH-HUD_H)
@@ -278,11 +294,14 @@ local function start_game()
   music(0)
   master(2,1,0)
   echo(12,4,3)
+  set_banner("HOLD A + AIM: STICK TO TERRAIN",180)
   printh("ribbit recoil level 1 start")
 end
 
 local function score_kill(e)
   combo=min(8,combo+1)
+  max_combo=max(max_combo,combo)
+  bugs_defeated=bugs_defeated+1
   combo_timer=180
   local base=e.kind==E_GNAT and 100 or e.kind==E_BEETLE and 175 or 250
   score=score+base*combo
@@ -301,7 +320,35 @@ end
 local function damage_enemy(e,amount,source)
   if not e.alive or e.dormant or e.hurt>0
       or (e.kind==E_BOSS and boss_defeated) then return false end
+  if e.kind==E_BOSS and not e.vulnerable and source~="headless accountability"
+      and source~="reflected stinger" and source~="tongue" then
+    e.hurt=2
+    burst(e.x+e.w/2,e.y+e.h/2,10,5,0.8,4)
+    sfx(18,4)
+    return false
+  end
+  if e.kind==E_BOSS and source=="tongue" then
+    e.stun=max(e.stun or 0,42)
+    e.vulnerable=true
+  end
+  if e.kind==E_BOSS and source=="tongue" then amount=max(amount,2) end
+  if e.kind==E_BOSS and source=="laser eyes" then amount=max(amount,3) end
+  if e.kind==E_BOSS then invuln=max(invuln,16) end
+  local old_phase=e.kind==E_BOSS and e.phase_id or 0
   e.hp=e.hp-amount
+  if e.kind==E_BOSS and e.hp>0 then
+    local new_phase=e.hp>5 and 1 or e.hp>2 and 2 or 3
+    if new_phase>old_phase then
+      e.phase_id=new_phase
+      e.attack_clock=0
+      e.vulnerable=false
+      e.telegraph=30
+      e.stun=0
+      bullets={}
+      set_banner("BUZZKILL PHASE "..new_phase..": NEW BAD IDEA",70)
+      sfx(27,5)
+    end
+  end
   e.hurt=e.kind==E_BOSS and 5 or 3
   shake=max(shake,e.kind==E_BOSS and 4 or 2)
   burst(e.x+e.w/2,e.y+e.h/2,5,5,0.9,1)
@@ -312,6 +359,8 @@ local function damage_enemy(e,amount,source)
       boss_death_timer=150
       e.hp=0
       reset_tongue()
+      bullets={}
+      invuln=max(invuln,190)
       music(-1)
       master(5,2,0)
       echo(18,6,6)
@@ -334,7 +383,7 @@ local function destroy_bomb(b)
 end
 
 local function hurt_player(reason,from_x)
-  if invuln>0 or respawn_timer>0 or game_scene~="play" then return end
+  if invuln>0 or respawn_timer>0 or game_scene~="play" or boss_defeated then return end
   player_hp=player_hp-1
   invuln,hurt_timer=70,24
   vx=(player_x<from_x and -2.8 or 2.8)
@@ -399,7 +448,7 @@ end
 
 local function begin_retract()
   if tongue_state~="idle" then
-    tongue_state,tongue_hook="retract",0
+    tongue_state,tongue_tile_x,tongue_tile_y="retract",-1,-1
     sfx(17,4)
   end
 end
@@ -413,6 +462,7 @@ local function tongue_hit_enemy()
       if e.kind~=E_BOSS and e.alive then
         e.x=e.x+(player_x-e.x)*0.28
         e.y=e.y+(player_y-e.y)*0.28
+        e.stun=max(e.stun or 0,45)
       end
       begin_retract()
       return true
@@ -426,35 +476,80 @@ local function tongue_hit_enemy()
       return true
     end
   end
+  for i=#bullets,1,-1 do
+    local b=bullets[i]
+    if dist(tongue_x,tongue_y,b.x,b.y)<8 then
+      table.remove(bullets,i)
+      burst(b.x,b.y,10,10,1.1,4)
+      local boss=enemies[#enemies]
+      if b.kind==B_STINGER and boss and boss.alive and not boss.dormant
+          and not boss_defeated then
+        boss.stun=max(boss.stun or 0,42)
+        boss.vulnerable=true
+        damage_enemy(boss,2,"reflected stinger")
+        burst(boss.x+12,boss.y+12,10,12,1.4,4)
+      elseif b.kind==B_BOMB then
+        add_explosion(b.x,b.y,3,true)
+      end
+      sfx(18,5)
+      begin_retract()
+      return true
+    end
+  end
   return false
+end
+
+local function latch_terrain(mx,my,last_x,last_y,cx,cy)
+  tongue_state="latched"
+  tongue_x,tongue_y=last_x,last_y
+  tongue_tile_x,tongue_tile_y=cx,cy
+  rope_len=mid(20,dist(mx,my,tongue_x,tongue_y),MAX_TONGUE)
+  sfx(18,4)
+  burst(tongue_x,tongue_y,10,9,1.0,1)
+  shake=max(shake,3)
+  if tutorial_step==0 then
+    tutorial_step=1
+    set_banner("REEL UP/DOWN - RELEASE A TO LAUNCH",150)
+  end
+end
+
+local function grapple_point()
+  local mx,my=player_mouth()
+  local ax,ay=aim_vector(true)
+  local x,y=mx,my
+  for step=1,flr(MAX_TONGUE/3) do
+    local last_x,last_y=x,y
+    x,y=x+ax*3,y+ay*3
+    local cx,cy=flr(x/8),flr(y/8)
+    if solid(mget(cx,cy)) then return last_x,last_y,cx,cy end
+  end
+  return nil,nil,nil,nil
 end
 
 local function update_tongue()
   local mx,my=player_mouth()
   if tongue_state=="idle" then return end
   if tongue_state=="extend" then
-    tongue_x,tongue_y=tongue_x+tongue_dx,tongue_y+tongue_dy
-    tongue_len=dist(mx,my,tongue_x,tongue_y)
-    if tongue_hit_enemy() then return end
-    for i=1,#hooks do
-      local h=hooks[i]
-      if h.active and dist(tongue_x,tongue_y,h.x,h.y)<12 then
-        tongue_state,tongue_hook="latched",i
-        tongue_x,tongue_y=h.x,h.y
-        rope_len=mid(28,dist(mx,my,h.x,h.y),MAX_TONGUE)
-        sfx(18,4)
-        burst(h.x,h.y,10,8,0.9,1)
-        shake=max(shake,3)
+    local steps=max(1,ceil(max(abs(tongue_dx),abs(tongue_dy))))
+    local sx,sy=tongue_dx/steps,tongue_dy/steps
+    for step=1,steps do
+      local last_x,last_y=tongue_x,tongue_y
+      tongue_x,tongue_y=tongue_x+sx,tongue_y+sy
+      tongue_len=dist(mx,my,tongue_x,tongue_y)
+      if tongue_hit_enemy() then return end
+      local cx,cy=flr(tongue_x/8),flr(tongue_y/8)
+      if solid(mget(cx,cy)) then
+        latch_terrain(mx,my,last_x,last_y,cx,cy)
+        return
+      end
+      if tongue_len>MAX_TONGUE or tongue_x<0 or tongue_x>WORLD_W
+          or tongue_y<0 or tongue_y>WORLD_H then
+        begin_retract()
         return
       end
     end
-    if tongue_len>MAX_TONGUE or tongue_x<0 or tongue_x>WORLD_W
-        or tongue_y<0 or tongue_y>WORLD_H
-        or solid(mget(flr(tongue_x/8),flr(tongue_y/8))) then begin_retract() end
   elseif tongue_state=="latched" then
-    local h=hooks[tongue_hook]
-    if not h or not h.active then begin_retract() return end
-    tongue_x,tongue_y=h.x,h.y
+    if not solid(mget(tongue_tile_x,tongue_tile_y)) then begin_retract() return end
     if not btn(4) then
       vx,vy=vx*1.12,vy*1.08-0.65
       begin_retract()
@@ -475,16 +570,14 @@ end
 
 local function constrain_rope()
   if tongue_state~="latched" then return end
-  local h=hooks[tongue_hook]
-  if not h then return end
   local cx,cy=player_center()
-  local dx,dy=cx-h.x,cy-h.y
+  local dx,dy=cx-tongue_x,cy-tongue_y
   local d=math.sqrt(dx*dx+dy*dy)
   if d>rope_len then
     local nx,ny=dx/d,dy/d
     local oldx,oldy=player_x,player_y
-    player_x=h.x+nx*rope_len-7
-    player_y=h.y+ny*rope_len-8
+    player_x=tongue_x+nx*rope_len-7
+    player_y=tongue_y+ny*rope_len-8
     if solid_box(player_x,player_y,PLAYER_W,PLAYER_H) then
       player_x,player_y=oldx,oldy
       rope_len=min(MAX_TONGUE,rope_len+1)
@@ -505,7 +598,15 @@ local function laser_attack()
   local hit_stamp=frame_now
   for step=1,52 do
     x,y=x+ax*3,y+ay*3
-    if solid(mget(flr(x/8),flr(y/8))) then break end
+    local tcx,tcy=flr(x/8),flr(y/8)
+    local tile=mget(tcx,tcy)
+    if tile==BREAKABLE then
+      mset(tcx,tcy,0)
+      burst(tcx*8+4,tcy*8+4,10,8,1.0,4)
+      score=score+25
+      laser_x2,laser_y2=x,y
+      break
+    elseif solid(tile) then break end
     laser_x2,laser_y2=x,y
     for i=1,#enemies do
       local e=enemies[i]
@@ -518,6 +619,18 @@ local function laser_attack()
     for i=1,#bombs do
       local b=bombs[i]
       if b.alive and dist(x,y,b.x,b.y)<8 then destroy_bomb(b) end
+    end
+  end
+  local boss=enemies[#enemies]
+  if boss and boss.kind==E_BOSS and boss.alive and not boss.dormant
+      and boss.vulnerable and boss.laser_stamp~=hit_stamp then
+    local bx,by=boss.x+boss.w/2,boss.y+boss.h/2
+    local dx,dy=bx-mx,by-my
+    local d=math.sqrt(dx*dx+dy*dy)
+    if d<170 and d>0 and (dx/d)*ax+(dy/d)*ay>0.76 then
+      boss.laser_stamp=hit_stamp
+      laser_x2,laser_y2=bx,by
+      damage_enemy(boss,1,"laser eyes")
     end
   end
   laser_timer,weapon_cooldown=6,12
@@ -548,6 +661,7 @@ local function fire_damage()
       local d=math.sqrt(dx*dx+dy*dy)
       if d<58 and d>0 and (dx/d)*ax+(dy/d)*ay>0.62 then
         e.last_fire=frame_now
+        e.burning=max(e.burning or 0,e.kind==E_BOSS and 36 or 90)
         damage_enemy(e,1,"fire breath")
       end
     end
@@ -558,6 +672,15 @@ local function fire_damage()
       local dx,dy=b.x-mx,b.y-my
       local d=math.sqrt(dx*dx+dy*dy)
       if d<55 and d>0 and (dx/d)*ax+(dy/d)*ay>0.58 then destroy_bomb(b) end
+    end
+  end
+  for i=#bullets,1,-1 do
+    local b=bullets[i]
+    local dx,dy=b.x-mx,b.y-my
+    local d=math.sqrt(dx*dx+dy*dy)
+    if b.kind==B_BOMB and d<62 and d>0 and (dx/d)*ax+(dy/d)*ay>0.55 then
+      table.remove(bullets,i)
+      add_explosion(b.x,b.y,3,true)
     end
   end
 end
@@ -592,10 +715,10 @@ local function collect_pickups()
       p.alive=false
       if p.kind==P_LASER then
         laser_unlocked,mutation=true,"LASER EYES"
-        set_banner("MUTATION ACQUIRED: LASER EYES",115)
+        set_banner("LASER EYES: PRECISION + WALL CUTTING",120)
       else
         fire_unlocked,mutation=true,"FIRE BREATH"
-        set_banner("MUTATION ACQUIRED: FIRE BREATH",115)
+        set_banner("FIRE BREATH: IGNITE BUGS + BOMBS",120)
       end
       score=score+750
       flash,shake,transition=5,7,7
@@ -603,6 +726,26 @@ local function collect_pickups()
       sfx(26,5)
       burst(p.x,p.y,10,30,2.5,4)
       printh("mutation acquired "..mutation)
+      if laser_unlocked and fire_unlocked then
+        tutorial_step=2
+        set_banner("DOWN+B SWAPS YOUR BAD DECISIONS",150)
+      end
+    end
+  end
+end
+
+local function collect_secrets()
+  for i=1,#secrets do
+    local s=secrets[i]
+    if s.alive and player_hits(s.x-7,s.y-7,14,14) then
+      s.alive=false
+      secrets_found=secrets_found+1
+      score=score+s.value
+      max_combo=max(max_combo,combo)
+      set_banner("SECRET: EXECUTIVE GOLDEN FLY",120)
+      master(4,1,0)
+      sfx(26,5)
+      burst(s.x,s.y,31,36,2.8,4)
     end
   end
 end
@@ -633,6 +776,18 @@ local function shoot_at_player(e,kind,speed)
   sfx(kind==B_BOMB and 29 or 28,4)
 end
 
+local function shoot_fan(e,count,speed,spread)
+  local px,py=player_center()
+  local nx,ny=norm(px-(e.x+e.w/2),py-(e.y+e.h/2))
+  for i=1,count do
+    local offset=(i-(count+1)/2)*spread
+    local cs,sn=cos(offset),sin(offset)
+    add_bullet(B_STINGER,e.x+12,e.y+12,
+      (nx*cs-ny*sn)*speed,(nx*sn+ny*cs)*speed,180)
+  end
+  sfx(28,4)
+end
+
 local function update_bullets()
   for i=#bullets,1,-1 do
     local b=bullets[i]
@@ -658,36 +813,77 @@ local function update_enemies()
     local e=enemies[i]
     if e.alive then
       if e.hurt>0 then e.hurt=e.hurt-1 end
+      if (e.stun or 0)>0 then e.stun=e.stun-1 end
+      if (e.burning or 0)>0 then
+        e.burning=e.burning-1
+        if e.burning%15==0 and e.hurt<=0 then damage_enemy(e,1,"ignition") end
+        if e.burning%5==0 then
+          add_particle(e.x+rnd(e.w),e.y+rnd(e.h),rnd(0.6)-0.3,-0.8-rnd(0.6),
+            12,4,1,-0.01,5)
+        end
+      end
       if (e.pending_damage or 0)>0 then
         local d=e.pending_damage
         e.pending_damage=0
         damage_enemy(e,d,"explosion")
       end
       if e.kind==E_GNAT then
-        e.x=e.home_x+sin((frame_now+e.phase)*0.009)*e.range
-        e.y=e.home_y+sin((frame_now+e.phase)*0.017)*12
+        local cycle=(frame_now+e.phase)%112
+        e.telegraph=abs(player_x-e.x)<130 and cycle>=92 and 112-cycle or 0
+        if (e.stun or 0)<=0 then
+          e.x=e.home_x+sin((frame_now+e.phase)*0.009)*e.range
+          e.y=e.home_y+sin((frame_now+e.phase)*0.017)*12
+          if cycle==0 and abs(player_x-e.x)<130 then
+            local nx,ny=norm(player_x-e.x,player_y-e.y)
+            e.x,e.y=e.x+nx*12,e.y+ny*12
+          end
+        end
       elseif e.kind==E_BEETLE then
-        e.x=e.x+e.dir*0.48
-        if e.x<e.home_x-e.range or e.x>e.home_x+e.range then e.dir=-e.dir end
+        local cycle=(frame_now+e.phase)%96
+        e.telegraph=abs(player_x-e.x)<120 and cycle>=76 and 96-cycle or 0
+        if (e.stun or 0)<=0 then
+          local speed=cycle<14 and abs(player_x-e.x)<120 and 1.45 or 0.48
+          e.x=e.x+e.dir*speed
+          if e.x<e.home_x-e.range or e.x>e.home_x+e.range then e.dir=-e.dir end
+        end
       elseif e.kind==E_WASP then
-        e.x=e.home_x+sin((frame_now+e.phase)*0.006)*e.range
-        e.y=e.home_y+cos((frame_now+e.phase)*0.011)*18
-        if abs(player_x-e.x)<210 and (frame_now+e.phase)%118==0 then shoot_at_player(e,B_STINGER,2.1) end
+        local cycle=(frame_now+e.phase)%118
+        e.telegraph=abs(player_x-e.x)<210 and cycle>=98 and 118-cycle or 0
+        if (e.stun or 0)<=0 then
+          e.x=e.home_x+sin((frame_now+e.phase)*0.006)*e.range
+          e.y=e.home_y+cos((frame_now+e.phase)*0.011)*18
+          if abs(player_x-e.x)<210 and cycle==0 then shoot_at_player(e,B_STINGER,2.1) end
+        end
       elseif e.kind==E_BOSS and not e.dormant and not boss_defeated then
-        e.x=e.home_x+sin(frame_now*0.0065)*e.range
-        e.y=e.home_y+sin(frame_now*0.011)*e.range_y
-        e.dir=player_x<e.x and -1 or 1
-        if boss_intro<=0 then
-          local phase=e.hp>16 and 118 or e.hp>8 and 86 or 62
-          if frame_now%phase==0 then shoot_at_player(e,B_BOMB,1.7) end
-          if frame_now%phase==flr(phase/2) then
-            shoot_at_player(e,B_STINGER,2.65)
-            if e.hp<=8 then
-              add_bullet(B_STINGER,e.x+12,e.y+12,-2.4,0.6,150)
-              add_bullet(B_STINGER,e.x+12,e.y+12,-2.4,-0.6,150)
+        e.phase_id=e.hp>5 and 1 or e.hp>2 and 2 or 3
+        local cycle=e.phase_id==1 and 132 or e.phase_id==2 and 110 or 92
+        if boss_intro>0 then
+          e.vulnerable=false
+          e.telegraph=0
+        elseif (e.stun or 0)>0 then
+          e.vulnerable=true
+          e.telegraph=0
+        else
+          e.attack_clock=(e.attack_clock or 0)+1
+          local tick=e.attack_clock%cycle
+          e.telegraph=tick<30 and 30-tick or 0
+          e.vulnerable=tick>=30 and tick<78
+          if tick==30 then
+            e.phase_salvos[e.phase_id]=e.phase_salvos[e.phase_id]+1
+            if e.phase_id==1 then
+              shoot_fan(e,3,2.25,0.035)
+            elseif e.phase_id==2 then
+              shoot_at_player(e,B_BOMB,1.55)
+              shoot_fan(e,3,2.55,0.055)
+            else
+              shoot_fan(e,5,2.9,0.07)
+              add_bullet(B_STINGER,e.x+12,e.y+12,-3.1,0,150)
             end
           end
         end
+        e.x=e.home_x+sin(boss_clock*(e.phase_id==3 and 0.014 or 0.007))*e.range
+        e.y=e.home_y+sin(boss_clock*0.012)*(e.phase_id==1 and 8 or e.phase_id==2 and 24 or 34)
+        e.dir=player_x<e.x and -1 or 1
       end
       if e.alive and not e.dormant and not boss_defeated
           and player_hits(e.x+2,e.y+2,e.w-4,e.h-4) then
@@ -700,9 +896,12 @@ end
 local function start_boss()
   if boss_started then return end
   boss_started=true
+  boss_clock=0
   boss_intro=105
   local e=enemies[#enemies]
   e.dormant=false
+  e.attack_clock=0
+  e.phase_salvos={0,0,0}
   music(8)
   master(3,1,0)
   echo(9,5,4)
@@ -758,6 +957,25 @@ local function finish_level()
   printh("level complete score "..score.." deaths "..deaths)
 end
 
+local function run_rank()
+  local combat=bugs_defeated>=6 and 2 or bugs_defeated>=3 and 1 or 0
+  local bonus=combat+(secrets_found>0 and 2 or 0)+(deaths==0 and 2 or 0)
+    +(max_combo>=5 and 1 or 0)+(run_frames<60*75 and 1 or 0)
+  -- Pacifism is admirable, but it is not pest control.
+  if bugs_defeated==0 then return bonus>0 and "B" or "C" end
+  if bonus>=7 then return "S" end
+  if bonus>=4 then return "A" end
+  if bonus>=1 then return "B" end
+  return "C"
+end
+
+local function run_time()
+  local total=flr(run_frames/60)
+  local minutes=flr(total/60)
+  local seconds=total%60
+  return minutes..":"..(seconds<10 and "0" or "")..seconds
+end
+
 local function update_play()
   if btnp(6) then
     paused=not paused
@@ -765,6 +983,8 @@ local function update_play()
   end
   if paused then return end
   if boss_intro>0 then boss_intro=boss_intro-1 end
+  run_frames=run_frames+1
+  if boss_started and not boss_defeated and boss_intro<=0 then boss_clock=boss_clock+1 end
   if respawn_timer>0 then
     respawn_timer=respawn_timer-1
     if respawn_timer==1 then
@@ -809,6 +1029,7 @@ local function update_play()
   end
 
   collect_pickups()
+  collect_secrets()
   update_checkpoints()
   update_enemies()
   update_bullets()
@@ -879,20 +1100,20 @@ end
 
 local function draw_backdrop()
   cls(49)
-  rectfill(0,HUD_H,SW-1,88,41)
-  fillp(0x5a5a,40)
-  rectfill(0,82,SW-1,184,1)
-  fillp(0x8888,49)
-  rectfill(0,180,SW-1,SH-1,8)
-  fillp()
-  local moon_x=152-flr(camera_x/18)
-  local moon_y=54+flr(camera_y/25)
-  fillp(0xeeee)
-  circfill(moon_x,moon_y,25,31)
-  fillp()
-  circfill(moon_x,moon_y,20,14)
-  circfill(moon_x-7,moon_y-6,5,12)
-  circ(moon_x,moon_y,21,63)
+  rectfill(0,HUD_H,SW-1,SH-1,49)
+  rectfill(0,HUD_H,SW-1,116,41)
+  rectfill(0,116,SW-1,196,1)
+  -- A cratered moon with a quiet halo; detail stays low-contrast behind play.
+  local moon_x=151-flr(camera_x/22)
+  local moon_y=64+flr(camera_y/30)
+  fillp(0xaaaa,40) circfill(moon_x,moon_y,34,14) fillp()
+  circfill(moon_x,moon_y,27,59)
+  circ(moon_x,moon_y,28,63)
+  circfill(moon_x-8,moon_y-7,6,55)
+  circ(moon_x+9,moon_y+5,5,55)
+  circfill(moon_x+6,moon_y-12,3,52)
+  circ(moon_x-11,moon_y+10,4,52)
+  pset(moon_x-1,moon_y-17,63) pset(moon_x+15,moon_y-2,63)
   for i=1,#stars do
     local s=stars[i]
     local sx=(s.x-flr(camera_x*0.12))%(SW+30)-15
@@ -904,36 +1125,74 @@ local function draw_backdrop()
       end
     end
   end
-  for i=0,8 do
-    local x=(i*39-flr(camera_x*0.28))%(SW+70)-35
-    local h=34+(i*17)%68
-    rectfill(x,SH-h-18,x+18,SH,50)
-    rect(x+2,SH-h-16,x+15,SH,52)
-    rectfill(x+6,SH-h-30,x+11,SH-h-16,52)
-    if i%2==0 then
-      fillp(0xeeee)
-      circfill(x+9,SH-h-35-flr((frame_now+i*8)%31/4),5,55)
-      fillp()
+  -- Three cloud ribbons keep the upper half from becoming empty wallpaper.
+  for band=0,2 do
+    local cy=102+band*35+flr(camera_y*(0.025+band*0.015))
+    local drift=flr(camera_x*(0.10+band*0.05))
+    for i=0,4 do
+      local x=(i*58+band*23-drift)%(SW+80)-40
+      local c=band==0 and 52 or band==1 and 50 or 8
+      line(x,cy,x+36,cy,c)
+      line(x+8,cy-3,x+27,cy-3,c)
+      line(x+18,cy-6,x+31,cy-6,c)
+      pset(x+39,cy,c+1)
+    end
+  end
+  -- Far city: staggered roofs, antennas, water towers, and tiny windows.
+  for i=0,11 do
+    local x=(i*25-flr(camera_x*0.12))%(SW+44)-22
+    local w=16+(i*7)%13
+    local h=36+(i*19)%78
+    local top=SH-h
+    rectfill(x,top,x+w,SH,50)
+    rect(x+2,top+2,x+w-2,SH,52)
+    if i%3==0 then
+      rectfill(x+5,top-11,x+w-5,top,50)
+      line(x+w/2,top-11,x+w/2,top-19,55)
+      pset(x+w/2,top-20,36)
+    elseif i%3==1 then
+      rectfill(x+w-7,top-15,x+w-3,top,52)
+      line(x+w-5,top-15,x+w-5,top-24,55)
+    end
+    for wy=top+10,SH-8,12 do
+      for wx=x+5,x+w-4,8 do
+        if (i+wx+wy)%5<2 then pset(wx,wy,(i+wy)%4==0 and 31 or 13) end
+      end
+    end
+  end
+  -- Near roofline and utility clutter frame the playable geometry.
+  for i=0,6 do
+    local x=(i*43-flr(camera_x*0.27))%(SW+70)-35
+    local y=222+(i*17)%48+flr(camera_y/18)
+    rectfill(x,y,x+28,SH,8)
+    rect(x+3,y+3,x+25,SH,52)
+    line(x-8,y+10,x+36,y+10,55)
+    line(x+7,y,x+7,y-18,52)
+    line(x+21,y,x+21,y-11,52)
+    for wy=y+18,SH-8,14 do
+      rectfill(x+8,wy,x+10,wy+2,(wy+i)%3==0 and 31 or 13)
+      rectfill(x+18,wy,x+20,wy+2,13)
     end
   end
   for i=0,7 do
-    local y=132+i*21+flr(camera_y/14)
-    local x=(i*57-flr(camera_x*0.45))%(SW+80)-40
-    line(x,y,x+52,y-7,i%2==0 and 11 or 13)
-    line(x+11,y+2,x+65,y-4,10)
+    local y=154+i*19+flr(camera_y/17)
+    local x=(i*53-flr(camera_x*0.43))%(SW+90)-45
+    line(x,y,x+46,y-5,i%2==0 and 11 or 13)
+    line(x+10,y+2,x+58,y-2,10)
+    circfill(x+10,y+2,1,55) circfill(x+46,y-5,1,55)
   end
 end
 
-local function draw_hook(h,index)
+local function draw_secret(s,index)
+  if not s.alive then return end
   local pulse=2+flr((sin(t()*1.4+index/6)+1)*0.5)
   fillp(0xeeee)
-  circfill(h.x,h.y,7+pulse,8)
+  circfill(s.x,s.y,8+pulse,31)
   fillp()
-  circ(h.x,h.y,7,10)
-  circ(h.x,h.y,4,6)
-  pset(h.x,h.y,63)
-  line(h.x-2,h.y+7,h.x-5,h.y+12,7)
-  line(h.x+2,h.y+7,h.x+5,h.y+12,7)
+  rectfill(s.x-6,s.y-6,s.x+6,s.y+6,41)
+  rect(s.x-7,s.y-7,s.x+7,s.y+7,63)
+  aspr("gnat.fly",s.x,s.y,-index*9,false,false)
+  print("BONUS",s.x-10,s.y-18,31)
 end
 
 local function draw_pickup(p,index)
@@ -983,10 +1242,17 @@ local function draw_enemy(e,index)
   elseif e.kind==E_WASP then
     aspr("wasp.fly",e.x+8,e.y+8,-e.phase,e.x<player_x,false)
   else
+    local phase_color=e.phase_id==1 and 10 or e.phase_id==2 and 4 or 36
     fillp(0xeeee)
-    circfill(e.x+12,e.y+12,17+flr((sin(t()*0.7)+1)*2),35)
+    circfill(e.x+12,e.y+12,17+flr((sin(t()*0.7)+1)*2),
+      e.vulnerable and phase_color or 35)
     fillp()
     aspr("buzzkill.rage",e.x+12,e.y+22,0,e.dir>0,false)
+    if not boss_defeated and not e.vulnerable then circ(e.x+12,e.y+12,20,10) end
+    if e.vulnerable and frame_now%6<4 then
+      line(e.x+4,e.y+3,e.x+20,e.y+3,63)
+      print("HIT!",e.x+4,e.y-8,31)
+    end
     if boss_defeated then
       line(e.x-4,e.y-4,e.x+28,e.y+28,3)
       line(e.x+28,e.y-4,e.x-4,e.y+28,3)
@@ -994,6 +1260,11 @@ local function draw_enemy(e,index)
   end
   if e.hurt>0 and e.hurt%2==0 then
     for ink=0,15 do pal(ink,INK_MAP[ink+1]) end
+  end
+  if (e.telegraph or 0)>0 and not boss_defeated then
+    local pulse=frame_now%6<3 and 31 or 4
+    circ(e.x+e.w/2,e.y-5,4,pulse)
+    print("!",e.x+e.w/2-1,e.y-8,pulse)
   end
 end
 
@@ -1061,12 +1332,32 @@ local function draw_tongue()
   if tongue_state=="latched" then circ(tx,ty,4,5) end
 end
 
+local function draw_grapple_hint()
+  if tongue_state~="idle" or respawn_timer>0 or paused then return end
+  local x,y=grapple_point()
+  if not x then return end
+  local mx,my=player_mouth()
+  for i=1,5 do
+    local f=i/6
+    pset(mx+(x-mx)*f,my+(y-my)*f,i%2==0 and 10 or 7)
+  end
+  circ(x,y,4,10)
+  pset(x,y,63)
+end
+
 local function draw_player()
   local flicker=invuln>0 and invuln%6<3
   if flicker then
     for ink=1,15 do pal(ink,ink%2==0 and 63 or 14) end
   end
   if tongue_state=="latched" then
+    local speed=abs(vx)+abs(vy)
+    if speed>1.2 then
+      for i=1,3 do
+        line(player_x+7-vx*i*2,player_y+8-vy*i*2,
+          player_x+7-vx*(i+1)*3,player_y+8-vy*(i+1)*3,i==1 and 10 or 8)
+      end
+    end
     aspr("frog.swing",player_x+7,player_y+15,tongue_t0,face_left,false)
   elseif hurt_timer>0 or respawn_timer>0 then
     aspr("frog.hurt",player_x+7,player_y+15,frame_now-hurt_timer,face_left,false)
@@ -1111,13 +1402,83 @@ local function draw_boss_gate()
   end
 end
 
+local function draw_prop(p)
+  local kind,x,y,w=p[1],p[2],p[3],p[4]
+  if kind=="pipe" then
+    line(x,y,x+w,y,52) line(x,y+2,x+w,y+2,55)
+    line(x,y,x,y-22,52) line(x+3,y,x+3,y-22,55)
+    circ(x+2,y-22,4,13)
+    for px=x+12,x+w-4,20 do circfill(px,y+1,1,13) end
+  elseif kind=="fence" then
+    line(x,y-28,x+w,y-28,13) line(x,y,x+w,y,52)
+    for px=x,x+w,12 do
+      line(px,y,px,y-28,52)
+      line(px,y,px+12,y-28,50)
+    end
+  elseif kind=="sign" then
+    rectfill(x-11,y-25,x+11,y,50)
+    rect(x-12,y-26,x+12,y+1,55)
+    rect(x-8,y-21,x+8,y-6,p[4]==1 and 36 or 41)
+    if p[4]==1 then
+      line(x-5,y-18,x+5,y-9,4) line(x+5,y-18,x-5,y-9,4)
+    else
+      circfill(x,y-15,5,11) pset(x-2,y-16,63) pset(x+2,y-16,63)
+      line(x-4,y-9,x+4,y-9,14)
+    end
+  elseif kind=="vent" then
+    rectfill(x-13,y-20,x+13,y,50)
+    rect(x-14,y-21,x+14,y+1,55)
+    for vy=y-16,y-4,4 do line(x-9,vy,x+9,vy,13) end
+    line(x-10,y-24,x+10,y-24,52)
+  elseif kind=="tank" then
+    rectfill(x-12,y-26,x+12,y,50)
+    circfill(x,y-26,12,50)
+    circ(x,y-26,12,55)
+    line(x-8,y-20,x+8,y-20,13)
+    line(x,y-38,x,y-46,52)
+    pset(x,y-47,36)
+  end
+end
+
+local function draw_terrain_detail()
+  local x0=max(0,flr(camera_x/8)-1)
+  local x1=min(119,flr((camera_x+SW)/8)+1)
+  local y0=max(0,flr(camera_y/8)-1)
+  local y1=min(63,flr((camera_y+SH-HUD_H)/8)+1)
+  for cy=y0,y1 do
+    for cx=x0,x1 do
+      local tile=mget(cx,cy)
+      local x,y=cx*8,cy*8
+      if solid(tile) then
+        if not solid(mget(cx,cy-1)) then
+          line(x,y,x+7,y,tile==MUD and 14 or tile==BREAKABLE and 4 or 59)
+          pset(x+1,y+1,63) pset(x+6,y+1,13)
+        end
+        if tile==STEEL and (cx+cy)%3==0 then pset(x+4,y+5,13) end
+        if tile==GIRDER then
+          line(x+1,y+2,x+6,y+6,52) line(x+6,y+2,x+1,y+6,52)
+        elseif tile==MUD and (cx+cy)%2==0 then
+          line(x+2,y+1,x+2,y+4,6) pset(x+5,y+2,11)
+        elseif tile==BREAKABLE then
+          line(x+1,y+1,x+6,y+6,36) line(x+6,y+1,x+1,y+6,36)
+        end
+      elseif tile==ACID then
+        local bob=(frame_now+cx*7)%18
+        if bob<5 then circ(x+2+(cx%3)*2,y+2,1,bob<2 and 31 or 6) end
+      end
+    end
+  end
+end
+
 local function draw_world()
   local sx=shake>0 and flr(rnd(5))-2 or 0
   local sy=shake>0 and flr(rnd(5))-2 or 0
   clip(0,HUD_H,SW,SH-HUD_H)
   camera(camera_x-sx,camera_y-HUD_H-sy)
   map()
-  for i=1,#hooks do draw_hook(hooks[i],i) end
+  draw_terrain_detail()
+  for i=1,#level.props do draw_prop(level.props[i]) end
+  for i=1,#secrets do draw_secret(secrets[i],i) end
   for i=1,#pickups do draw_pickup(pickups[i],i) end
   for i=1,#bombs do draw_bomb(bombs[i],i) end
   for i=1,#level.checkpoints do
@@ -1131,6 +1492,7 @@ local function draw_world()
   draw_bullets()
   for i=1,#enemies do draw_enemy(enemies[i],i) end
   draw_particles_world()
+  draw_grapple_hint()
   draw_tongue()
   if laser_timer>0 then
     local mx,my=player_mouth()
@@ -1155,8 +1517,11 @@ local function draw_hud()
   print("HP",4,5,63)
   for i=1,player_max_hp do
     local x=17+(i-1)*7
-    circfill(x,7,2,i<=player_hp and 6 or 34)
-    pset(x,6,i<=player_hp and 15 or 52)
+    local alive=i<=player_hp
+    circfill(x,7,3,alive and 6 or 34)
+    pset(x-2,4,alive and 14 or 52) pset(x+2,4,alive and 14 or 52)
+    pset(x-1,6,alive and 48 or 52) pset(x+1,6,alive and 48 or 52)
+    line(x-1,9,x+1,9,alive and 11 or 52)
   end
   print(mutation,55,5,mutation=="LASER EYES" and 10 or mutation=="FIRE BREATH" and 4 or 58)
   print("$"..score,144,5,31)
@@ -1164,19 +1529,21 @@ local function draw_hud()
   if boss_started and not exit_open then
     rect(43,13,148,15,52)
     local boss=enemies[#enemies]
-    rectfill(44,14,44+flr(103*boss.hp/boss.max_hp),14,boss.hp>8 and 3 or 4)
+    rectfill(44,14,44+flr(103*boss.hp/boss.max_hp),14,
+      boss.phase_id==1 and 3 or boss.phase_id==2 and 4 or 36)
+    print("P"..(boss.phase_id or 1),151,12,boss.vulnerable and 31 or 10)
   end
 end
 
 local function draw_banner()
   if banner_timer<=0 then return end
-  local y=banner_timer>90 and 57 or 44
+  local y=SH-22
   fillp(0x5a5a,49)
-  rectfill(12,y,179,y+34,48)
+  rectfill(7,y,184,y+15,48)
   fillp()
-  rect(12,y,179,y+34,15)
-  line(15,y+3,176,y+3,4)
-  print(banner,20,y+13,banner_timer%10<7 and 63 or 31)
+  rect(7,y,184,y+15,15)
+  line(10,y+2,181,y+2,4)
+  print(banner,12,y+6,banner_timer%10<7 and 63 or 31)
 end
 
 local function draw_pause()
@@ -1195,69 +1562,73 @@ local function draw_pause()
 end
 
 local function draw_title()
-  cls(40)
-  fillp(0x5a5a,41)
-  rectfill(0,0,SW-1,SH-1,48)
-  fillp()
-  for i=0,16 do
-    local x=(i*17+flr(t()*12))%(SW+32)-16
-    line(x,0,x-48,SH-1,i%2==0 and 8 or 33)
-  end
-  fillp(0xeeee)
-  circfill(96,83,65+flr((sin(t()*0.5)+1)*2),14)
-  fillp()
-  circfill(96,83,57,8)
-  circ(96,83,58,63)
-  sspr(0,0,16,16,67,48,58,58,false,false)
-  local lick=110+sin(t()*0.65)*16
-  line(100,76,lick,54,46)
-  circfill(lick,54,3,46)
-  for i=0,4 do
-    local a=t()*0.3+i/5
-    aspr("gnat.fly",96+cos(a)*68,83+sin(a)*47,-i*8,i%2==0,false)
-  end
-  fillp(0x8888,24)
-  rectfill(17,121,174,179,48)
-  fillp()
-  rect(17,121,174,179,15)
-  print("R I B B I T",65,132,6)
-  print("R E C O I L",59,148,4)
-  print("TONGUE-BASED REGIME CHANGE",37,166,31)
+  local oldx,oldy=camera_x,camera_y
+  camera_x,camera_y=0,208
+  draw_backdrop()
+  camera_x,camera_y=oldx,oldy
+  rect(2,2,SW-3,SH-3,55)
+  line(5,5,26,5,13) line(5,5,5,26,13)
+  line(SW-6,5,SW-27,5,13) line(SW-6,5,SW-6,26,13)
+  -- Hero tableau echoes the in-game scale instead of a smooth logo blob.
+  rectfill(53,103,138,109,50)
+  line(53,102,138,102,59)
+  for x=57,134,12 do pset(x,105,13) end
+  sspr(0,0,16,16,75,54,44,44,false,false)
+  local lick=129+sin(t()*0.65)*8
+  line(112,72,lick,57,46)
+  circfill(lick,57,2,46)
+  aspr("gnat.fly",142,52,-8,true,false)
+  aspr("gnat.fly",46,80,-20,false,false)
+  rectfill(17,116,174,176,48)
+  rect(17,116,174,176,15)
+  rect(21,120,170,172,52)
+  print("R I B B I T",65,128,6)
+  print("R E C O I L",59,145,4)
+  line(39,160,152,160,41)
+  print("TONGUE-BASED REGIME CHANGE",37,165,31)
   if show_guide then
-    rect(26,197,165,271,52)
-    print("D-PAD  MOVE + AIM",54,208,63)
-    print("A  LICK / GRAPPLE / SWING",39,223,46)
-    print("B  UNETHICAL MUTATIONS",44,238,10)
-    print("DEFEAT ALL MANAGEMENT",45,253,4)
+    rectfill(18,188,173,276,49)
+    rect(18,188,173,276,55)
+    line(22,192,169,192,13)
+    print("D-PAD  MOVE + AIM",54,199,63)
+    print("HOLD A  STICK TO TERRAIN",42,214,46)
+    print("REEL UP/DOWN - RELEASE = LAUNCH",27,229,31)
+    print("B  MUTATION / DOWN+B SWAP",38,244,10)
+    print("DEFEAT UPPER MANAGEMENT",39,259,4)
+    print("NO JUMP. LICK THE CEILING.",38,270,59)
   end
   print(frame_now%80<58 and "A/B  DEPLOY FROG" or "   PRESS THE BAD IDEA",53,286,63)
   print("MENU  TOGGLE BRIEFING",55,304,58)
 end
 
 local function draw_win()
-  cls(49)
-  fillp(0x5a5a,41)
-  rectfill(0,0,SW-1,SH-1,1)
-  fillp()
+  local oldx,oldy=camera_x,camera_y
+  camera_x,camera_y=0,208
+  draw_backdrop()
+  camera_x,camera_y=oldx,oldy
   for i=0,17 do
     local a=i/18
-    line(96,114,96+cos(a)*120,114+sin(a)*120,i%2==0 and 4 or 14)
+    line(96,102,96+cos(a)*120,102+sin(a)*120,i%2==0 and 4 or 14)
   end
-  fillp(0x8888,48)
-  rectfill(17,39,174,279,63)
-  fillp()
-  rect(17,39,174,279,48)
-  rect(21,43,170,275,3)
-  print("THE DAILY CROAK",64,53,48)
-  line(30,64,161,64,48)
-  print("FROG BECOMES",62,78,36)
-  print("TOO POWERFUL",57,92,36)
-  sspr(0,0,16,16,66,108,60,60,false,false)
-  print("MOSQUITO ECONOMY IN TATTERS",34,180,48)
-  print("SCORE  "..score,57,202,41)
-  print("DE-FROGGINGS  "..deaths,48,216,41)
-  print("MAX COMBO  LEGALLY REDACTED",37,230,41)
-  print("LEVEL 2: CANOPY CONVEYOR",43,253,8)
+  rectfill(16,24,175,285,59)
+  rect(16,24,175,285,63)
+  rect(20,28,171,281,36)
+  print("THE DAILY CROAK",64,37,48)
+  line(28,49,163,49,48)
+  print("FROG BECOMES TOO POWERFUL",39,58,36)
+  sspr(0,0,16,16,76,72,40,40,false,false)
+  print("MOSQUITO ECONOMY IN TATTERS",34,119,48)
+  line(29,131,162,131,48)
+  print("SCORE         "..score,39,143,41)
+  print("TIME          "..run_time(),39,158,41)
+  print("BUGS          "..bugs_defeated,39,173,41)
+  print("MAX COMBO     X"..max_combo,39,188,41)
+  print("DE-FROGGINGS  "..deaths,39,203,41)
+  print("SECRET FLIES  "..secrets_found.."/"..#secrets,39,218,41)
+  rectfill(61,235,130,255,48)
+  rect(61,235,130,255,36)
+  print("RANK  "..run_rank(),78,243,31)
+  print("NEXT: CANOPY CONVEYOR",51,267,8)
   print("A/B  COMMIT ANOTHER INCIDENT",34,294,63)
 end
 
@@ -1271,8 +1642,6 @@ function _draw()
     draw_hud()
     draw_banner()
     if paused then draw_pause() end
-    local acid_y=flr(496-camera_y+HUD_H)
-    for y=max(HUD_H,acid_y),SH-1 do rshift(y,2*sin(t()*1.8+y/17)) end
     if fire_timer>0 then
       for y=HUD_H,SH-1,3 do rshift(y,sin(t()*4+y/13)) end
     end
@@ -1296,7 +1665,14 @@ function dev_status()
     mutation=mutation,laser=laser_unlocked,fire=fire_unlocked,
     bugs=alive,boss_started=boss_started,boss_hp=boss and boss.hp or 0,
     boss_defeated=boss_defeated,exit_open=exit_open,checkpoint=checkpoint_index,
-    camera_x=camera_x,camera_y=camera_y,particles=#particles,explosions=#explosions}
+    boss_phase=boss and boss.phase_id or 0,boss_vulnerable=boss and boss.vulnerable or false,
+    boss_attack=boss and boss.attack_clock or 0,boss_telegraph=boss and boss.telegraph or 0,
+    boss_salvo1=boss and boss.phase_salvos[1] or 0,
+    boss_salvo2=boss and boss.phase_salvos[2] or 0,
+    boss_salvo3=boss and boss.phase_salvos[3] or 0,
+    bullets=#bullets,camera_x=camera_x,camera_y=camera_y,
+    particles=#particles,explosions=#explosions,elapsed=run_frames,
+    kills=bugs_defeated,max_combo=max_combo,secrets=secrets_found,rank=run_rank()}
 end
 
 function dev_warp(x,y)
@@ -1325,6 +1701,12 @@ function dev_damage_boss(amount)
   damage_enemy(e,amount,"headless accountability")
 end
 
+function dev_boss_vulnerable()
+  local e=enemies[#enemies]
+  e.stun=90
+  e.vulnerable=true
+end
+
 function dev_explode(x,y,power)
   add_explosion(x,y,power or 4,true)
 end
@@ -1347,7 +1729,7 @@ sprite frog rect=0,0 size=2x2 anchor=7,15
 anim frog.idle frames=0,1,2 fps=4 loop
 anim frog.run frames=0,1,2,3 frames_rect=6,0 fps=11 loop
 anim frog.air frames=0,1 frames_rect=0,2 fps=6 loop
-anim frog.swing frames=0,1 frames_rect=4,2 fps=8 loop
+anim frog.swing frames=0,1,4,5 frames_rect=4,2 fps=10 loop
 anim frog.hurt frames=0,1 frames_rect=8,2 fps=12
 
 sprite gnat rect=0,4 size=2x2 anchor=8,8
@@ -1366,7 +1748,8 @@ __instruments__
 wavetable 0 89acdeef ffeedca9 76532110 00112356
 wavetable 1 8cefeede eedeefec 73101121 11211013
 wavetable 2 78899aab bccddeef 01122334 45566778
-inst croaklead wave=w1 env=0,8,3 vib=13,3,3 echo=3
+wavetable 3 fdb97531 02468ace fdb97531 02468ace
+inst croaklead wave=w1 vib=13,3,3 echo=3
 inst swampstab wave=w0 env=0,5,2 trem=3,4 echo=2
 inst mutantbass wave=6 fm=1,9,12 env=0,9,3
 inst kick wave=3 sweep=-19,5 env=0,6,0 duck=4,9
@@ -1386,6 +1769,11 @@ inst stinger wave=0 env=0,4,0 sweep=-8,6
 inst bomblob wave=7 env=0,5,0 sweep=-12,8
 inst bossroar wave=6 fm=1.5,14,3 env=2,30,2 trem=5,2 echo=6
 inst victory wave=w0 env=0,16,2 echo=7
+inst sewerkeys wave=w2 env=0,10,2 trem=2,3 echo=5
+inst bossbass wave=4 vib=10,5,2
+inst warbrass wave=w3 trem=3,4 echo=2
+inst siren wave=6 fm=2.5,13,8 vib=30,5,2 echo=5
+inst tom wave=3 sweep=-10,6 env=0,7,0 duck=2,7
 master drive=2 tone=1 hiss=0
 echo delay=12 feedback=4 level=3
 
@@ -1554,164 +1942,165 @@ F4 hat 2
 
 # boss variants
 sfx 8 speed=4
-A2 mutantbass 5
-A2 mutantbass 5
-C3 mutantbass 5
-E2 mutantbass 5
-G2 mutantbass 5
-E2 mutantbass 5
-C3 mutantbass 5
-B2 mutantbass 5
-A2 mutantbass 5
-G2 mutantbass 5
-E2 mutantbass 5
-C3 mutantbass 5
-B2 mutantbass 5
-G2 mutantbass 5
-E2 mutantbass 5
-D2 mutantbass 5
+F#2 bossbass 5
+F#2 bossbass 5
+---
+C3 bossbass 5
+F#2 bossbass 5
+G2 bossbass 5
+C#3 bossbass 5
+C3 bossbass 5
+F#2 bossbass 5
+---
+F#3 bossbass 4 sl-12
+C3 bossbass 5
+G2 bossbass 5
+F#2 bossbass 5
+C#3 bossbass 5
+C3 bossbass 5
 
 sfx 9 speed=4
-A4 croaklead 5 arp3,7
+C#5 siren 4 sl+7
 ---
-E5 croaklead 5
+G5 siren 4
 ---
-G5 croaklead 5 sl-5
+C#6 siren 5 sl-7
 ---
-E5 croaklead 5
+G5 siren 4
 ---
-A5 croaklead 5
+C5 siren 5 arp3,6
 ---
-G5 croaklead 5
-E5 croaklead 5
-D5 croaklead 5
-C5 croaklead 5
-B4 croaklead 5
+F#5 siren 4
+G5 siren 5
+C#5 siren 4
+C5 siren 5
+G4 siren 4
 ---
 
 sfx 10 speed=4
-A5 bugbass 3
+F#4 warbrass 4
 ---
-E6 bugbass 3
+C5 warbrass 4
 ---
-G5 bugbass 3
+G4 warbrass 4
 ---
-E6 bugbass 3
+F#4 warbrass 4
 ---
-A5 bugbass 3
+C#5 warbrass 5
 ---
-C6 bugbass 3
+C5 warbrass 4
+G4 warbrass 4
+F#4 warbrass 5
 ---
-G5 bugbass 3
+F#5 warbrass 4 sl-12
 ---
-E6 bugbass 3
 ---
 
 sfx 11 speed=2
-C2 kick 5
+F#2 tom 5
 F4 hat 2
 D3 snare 4
 F4 hat 2
 C2 kick 5
 F4 hat 2
-D3 snare 4
+F#2 tom 4
 F4 hat 2
 C2 kick 5
-C2 kick 4
+F#2 tom 4
 D3 snare 4
 F4 hat 2
-C2 kick 5
+F#2 tom 5
 F4 hat 2
 D3 snare 4
-F4 hat 2
+F#2 tom 4
 
 sfx 12 speed=4
-F2 mutantbass 5
-F2 mutantbass 5
-A2 mutantbass 5
-C3 mutantbass 5
-E2 mutantbass 5
-C3 mutantbass 5
-A2 mutantbass 5
-G2 mutantbass 5
-F2 mutantbass 5
-E2 mutantbass 5
-C3 mutantbass 5
-A2 mutantbass 5
-G2 mutantbass 5
-E2 mutantbass 5
-D2 mutantbass 5
-C2 mutantbass 5
+B2 bossbass 5
+B2 bossbass 5
+---
+F3 bossbass 5
+B2 bossbass 5
+C3 bossbass 5
+F#3 bossbass 5
+F3 bossbass 5
+B2 bossbass 5
+---
+B3 bossbass 4 sl-12
+F3 bossbass 5
+C3 bossbass 5
+B2 bossbass 5
+F#3 bossbass 5
+F3 bossbass 5
 
 sfx 13 speed=4
-C5 croaklead 5 arp3,7
+D5 siren 4 sl+6
 ---
-F5 croaklead 5
+G#5 siren 5
 ---
-A5 croaklead 5 sl-7
+D6 siren 5 sl-8
 ---
-G5 croaklead 5
+G#5 siren 4
 ---
-C6 croaklead 5
+C#5 siren 5 arp3,6
 ---
-A5 croaklead 5
-G5 croaklead 5
-F5 croaklead 5
-E5 croaklead 5
-C5 croaklead 5
+F#5 siren 4
+G#5 siren 5
+D5 siren 4
+C#5 siren 5
+G4 siren 4
 ---
 
 sfx 14 speed=4
-F5 bugbass 3
+B4 warbrass 4
 ---
-C6 bugbass 3
+D5 warbrass 4
 ---
-A5 bugbass 3
+F5 warbrass 4
 ---
-C6 bugbass 3
+B4 warbrass 4
 ---
-F5 bugbass 3
+F#5 warbrass 5
 ---
-E6 bugbass 3
+F5 warbrass 4
+D5 warbrass 4
+B4 warbrass 5
 ---
-C6 bugbass 3
+B5 warbrass 4 sl-12
 ---
-G5 bugbass 3
 ---
 
 sfx 15 speed=2
-C2 kick 5
+F#2 tom 5
 F4 hat 2
 D3 snare 4
 F4 hat 2
 C2 kick 5
-F4 hat 2
+F#2 tom 4
 D3 snare 4
 F4 hat 2
+F#2 tom 5
 C2 kick 5
-C2 kick 4
 D3 snare 4
 F4 hat 2
-C2 kick 5
+F#2 tom 5
 F4 hat 2
 D3 snare 4
-F4 hat 2
-C2 kick 5
-F4 hat 2
-D3 snare 4
-C2 kick 4
-F4 hat 2
-F4 hat 2
-D3 snare 4
-F4 hat 2
-C2 kick 5
-C2 kick 4
-D3 snare 4
-F4 hat 2
+F#2 tom 4
 C2 kick 5
 F4 hat 2
 D3 snare 4
+F#2 tom 4
 F4 hat 2
+D3 snare 4
+F4 hat 2
+F#2 tom 5
+C2 kick 5
+D3 snare 4
+F4 hat 2
+F#2 tom 4
+F4 hat 2
+D3 snare 4
+F#2 tom 5
 
 # action effects
 sfx 16 speed=1
@@ -1800,12 +2189,562 @@ E6 victory 6
 G6 victory 6
 C7 victory 6
 
+# gameplay B section: longer call-and-response swamp funk
+sfx 31 speed=6
+A2 mutantbass 4
+---
+A2 mutantbass 4
+C3 mutantbass 4
+E2 mutantbass 4
+---
+G2 mutantbass 4
+A2 mutantbass 4
+C3 mutantbass 4
+---
+B2 mutantbass 4
+G2 mutantbass 4
+E2 mutantbass 4
+---
+G2 mutantbass 4
+E2 mutantbass 4
+D2 mutantbass 4
+---
+D2 mutantbass 4
+F2 mutantbass 4
+A2 mutantbass 4
+---
+C3 mutantbass 4
+A2 mutantbass 4
+G2 mutantbass 4
+---
+E2 mutantbass 4
+G2 mutantbass 4
+B2 mutantbass 4
+C3 mutantbass 4
+B2 mutantbass 4
+G2 mutantbass 4
+
+sfx 32 speed=6
+---
+E5 croaklead 4
+G5 croaklead 4
+A5 croaklead 5
+---
+G5 croaklead 4
+E5 croaklead 4
+D5 croaklead 4
+---
+C5 croaklead 4
+E5 croaklead 4
+G5 croaklead 5
+---
+A5 croaklead 4 sl-5
+E5 croaklead 4
+---
+---
+D5 croaklead 4
+F5 croaklead 4
+A5 croaklead 5
+---
+C6 croaklead 4
+A5 croaklead 4
+G5 croaklead 4
+---
+E5 croaklead 5 arp3,7
+---
+D5 croaklead 4
+C5 croaklead 4
+B4 croaklead 4
+G4 croaklead 4
+---
+
+sfx 33 speed=6
+A3 sewerkeys 3 arp3,7
+---
+---
+E4 sewerkeys 3
+---
+---
+G3 sewerkeys 3 arp5,9
+---
+---
+E4 sewerkeys 3
+---
+---
+C4 sewerkeys 3 arp4,7
+---
+E4 sewerkeys 3
+---
+D4 sewerkeys 3 arp3,7
+---
+---
+A4 sewerkeys 3
+---
+---
+C4 sewerkeys 3 arp4,7
+---
+---
+B3 sewerkeys 3
+---
+G3 sewerkeys 3 arp4,9
+---
+E4 sewerkeys 3
+---
+---
+
+sfx 34 speed=6
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+---
+F4 hat 2
+C2 kick 4
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+---
+D3 snare 4
+F4 hat 2
+F4 hat 2
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+C2 kick 4
+F4 hat 2
+D3 snare 4
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+D3 snare 4
+F4 hat 2
+D3 snare 5
+
+sfx 35 speed=6
+F2 mutantbass 4
+---
+F2 mutantbass 4
+A2 mutantbass 4
+C3 mutantbass 4
+---
+E2 mutantbass 4
+F2 mutantbass 4
+A2 mutantbass 4
+C3 mutantbass 4
+---
+A2 mutantbass 4
+G2 mutantbass 4
+E2 mutantbass 4
+C3 mutantbass 4
+---
+E2 mutantbass 4
+---
+E2 mutantbass 4
+G#2 mutantbass 4
+B2 mutantbass 4
+---
+D3 mutantbass 4
+B2 mutantbass 4
+G#2 mutantbass 4
+---
+E2 mutantbass 4
+F2 mutantbass 4
+F#2 mutantbass 4
+G2 mutantbass 4
+G#2 mutantbass 4
+B2 mutantbass 4
+
+sfx 36 speed=6
+C5 croaklead 4
+---
+F5 croaklead 4
+A5 croaklead 5
+---
+C6 croaklead 4
+A5 croaklead 4
+G5 croaklead 4
+F5 croaklead 4
+---
+E5 croaklead 4
+C5 croaklead 4
+A4 croaklead 4
+C5 croaklead 5
+---
+---
+B4 croaklead 4
+---
+E5 croaklead 4
+G#5 croaklead 5
+---
+B5 croaklead 4
+D6 croaklead 4 sl-7
+B5 croaklead 4
+---
+G#5 croaklead 4
+E5 croaklead 4
+D5 croaklead 4
+B4 croaklead 4
+G#4 croaklead 4
+B4 croaklead 5
+---
+
+sfx 37 speed=6
+F3 sewerkeys 3 arp4,7
+---
+C4 sewerkeys 3
+---
+A3 sewerkeys 3 arp3,7
+---
+C4 sewerkeys 3
+---
+E3 sewerkeys 3 arp4,8
+---
+B3 sewerkeys 3
+---
+G#3 sewerkeys 3 arp4,7
+---
+B3 sewerkeys 3
+---
+E3 sewerkeys 3 arp4,7
+---
+G#3 sewerkeys 3
+---
+B3 sewerkeys 3 arp3,7
+---
+D4 sewerkeys 3
+---
+E4 sewerkeys 3 arp3,8
+---
+D4 sewerkeys 3
+C4 sewerkeys 3
+B3 sewerkeys 3
+---
+G#3 sewerkeys 3
+---
+
+sfx 38 speed=6
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+C2 kick 4
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 4
+D3 snare 4
+C2 kick 5
+F4 hat 2
+D3 snare 4
+C2 kick 4
+F4 hat 2
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+C2 kick 4
+D3 snare 4
+F4 hat 2
+D3 snare 5
+D3 snare 4
+D3 snare 5
+C2 kick 6
+
+# boss C/D sections: chromatic military panic, not swamp-funk acceleration
+sfx 39 speed=4
+F#2 bossbass 5
+---
+C3 bossbass 5
+F#2 bossbass 5
+G2 bossbass 5
+C#3 bossbass 5
+C3 bossbass 5
+F#2 bossbass 5
+---
+D3 bossbass 5
+C#3 bossbass 5
+C3 bossbass 5
+B2 bossbass 5
+A#2 bossbass 5
+A2 bossbass 5
+G#2 bossbass 5
+G2 bossbass 5
+F#2 bossbass 5
+C3 bossbass 5
+F#3 bossbass 4 sl-12
+F#2 bossbass 5
+---
+C3 bossbass 5
+G2 bossbass 5
+C#3 bossbass 5
+C3 bossbass 5
+B2 bossbass 5
+A#2 bossbass 5
+A2 bossbass 5
+G#2 bossbass 5
+G2 bossbass 5
+F#2 bossbass 6
+
+sfx 40 speed=4
+---
+C#5 siren 4 sl+12
+---
+G5 siren 4
+---
+C#6 siren 5
+---
+C6 siren 4 sl-6
+---
+G5 siren 4
+F#5 siren 4
+C5 siren 5 arp6,11
+---
+---
+G4 siren 4
+C#5 siren 5
+---
+D5 siren 4 sl+9
+---
+G#5 siren 5
+---
+D6 siren 5
+---
+C#6 siren 4 sl-7
+B5 siren 4
+G#5 siren 4
+F#5 siren 4
+D5 siren 4
+C#5 siren 4
+C5 siren 5
+G4 siren 5
+---
+
+sfx 41 speed=4
+F#4 warbrass 4
+---
+C5 warbrass 4
+---
+G4 warbrass 4
+---
+C#5 warbrass 5
+---
+F#4 warbrass 4
+C5 warbrass 4
+G4 warbrass 4
+---
+F#5 warbrass 4 sl-12
+---
+---
+C5 warbrass 5
+G4 warbrass 4
+---
+D5 warbrass 4
+---
+G#4 warbrass 4
+---
+D#5 warbrass 5
+---
+G#4 warbrass 4
+D5 warbrass 4
+G#4 warbrass 4
+---
+G#5 warbrass 4 sl-12
+---
+D5 warbrass 5
+---
+
+sfx 42 speed=2
+F#2 tom 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F#2 tom 4
+D3 snare 4
+F4 hat 2
+F#2 tom 5
+C2 kick 5
+D3 snare 4
+F4 hat 2
+F#2 tom 5
+F4 hat 2
+D3 snare 4
+F#2 tom 4
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F#2 tom 4
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+F#2 tom 5
+C2 kick 5
+D3 snare 4
+F4 hat 2
+F#2 tom 4
+D3 snare 4
+F4 hat 2
+F#2 tom 6
+
+sfx 43 speed=4
+B2 bossbass 5
+---
+F3 bossbass 5
+B2 bossbass 5
+C3 bossbass 5
+F#3 bossbass 5
+F3 bossbass 5
+B2 bossbass 5
+---
+G3 bossbass 4 sl-12
+F#3 bossbass 5
+F3 bossbass 5
+E3 bossbass 5
+D#3 bossbass 5
+D3 bossbass 5
+C#3 bossbass 5
+C3 bossbass 5
+B2 bossbass 5
+F3 bossbass 5
+B3 bossbass 4 sl-12
+B2 bossbass 5
+---
+F3 bossbass 5
+C3 bossbass 5
+F#3 bossbass 5
+F3 bossbass 5
+E3 bossbass 5
+D#3 bossbass 5
+D3 bossbass 5
+C#3 bossbass 5
+C3 bossbass 5
+B2 bossbass 6
+
+sfx 44 speed=4
+---
+D5 siren 4 sl+12
+---
+G#5 siren 4
+---
+D6 siren 5
+---
+C#6 siren 4 sl-6
+---
+G#5 siren 4
+F#5 siren 4
+C#5 siren 5 arp6,10
+---
+---
+G#4 siren 4
+D5 siren 5
+---
+E5 siren 4 sl+8
+---
+A5 siren 5
+---
+E6 siren 5
+---
+D6 siren 4 sl-7
+C6 siren 4
+A5 siren 4
+G#5 siren 4
+E5 siren 4
+D5 siren 4
+C#5 siren 5
+G#4 siren 5
+---
+
+sfx 45 speed=4
+B4 warbrass 4
+---
+D5 warbrass 4
+---
+F5 warbrass 4
+---
+F#5 warbrass 5
+---
+B4 warbrass 4
+D5 warbrass 4
+F5 warbrass 4
+---
+B5 warbrass 4 sl-12
+---
+---
+F5 warbrass 5
+C5 warbrass 4
+---
+E5 warbrass 4
+---
+A4 warbrass 4
+---
+E5 warbrass 5
+---
+A4 warbrass 4
+C5 warbrass 4
+E5 warbrass 4
+---
+A5 warbrass 4 sl-12
+---
+E5 warbrass 5
+---
+
+sfx 46 speed=2
+F#2 tom 5
+F4 hat 2
+D3 snare 4
+F#2 tom 4
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+F#2 tom 5
+C2 kick 5
+D3 snare 4
+F#2 tom 4
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F#2 tom 5
+C2 kick 5
+F4 hat 2
+D3 snare 4
+C2 kick 4
+F#2 tom 5
+F4 hat 2
+D3 snare 4
+F#2 tom 4
+C2 kick 5
+C2 kick 4
+D3 snare 4
+F4 hat 2
+F#2 tom 5
+D3 snare 4
+F#2 tom 5
+C2 kick 6
+
 __music__
 bpm=150 rows_per_beat=4
 pat 0 : 0 1 2 3
-pat 1 loop=0 : 4 5 6 7
+pat 1 : 4 5 6 7
+pat 2 : 31 32 33 34
+pat 3 loop=0 : 35 36 37 38
 pat 8 : 8 9 10 11
-pat 9 loop=8 : 12 13 14 15
+pat 9 : 12 13 14 15
+pat 10 : 39 40 41 42
+pat 11 loop=8 : 43 44 45 46
 pat 16 stop : 30 - - -
 __sprites__
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -1826,21 +2765,21 @@ __sprites__
 01110000000011100111000000001110011100000000111011100000000011100001110001110000111000000000111000011100011100000000000000000000
 
 000000000000000000000000000000000000000f0000000000000000f00000000000000000000000000000000000000000000000000000000000000000000000
-001111000011110000111100001111000011110f001111000011110f001111000011110000111100001111000011110000000000000000000000000000000000
-001b1111111b1100001b1111111b1100001b1111111b1100001b1111111b11000036631111366300003663111136630000000000000000000000000000000000
-00166166661661000016616666166100001661666616610000166166661661000013316666133100001331666613310000000000000000000000000000000000
-00166166661661000016616666166100001661666616610000166166661661000013316666133100501331666613310500000000000000000000000000000000
-00111e6666e1110000111e6666e1110000111e6666e1110000111e6666e111005031136666311305503113666631130500000000000000000000000000000000
-00166666666661000016666666666100001666666666610000166666666661005016666666666105501666666666610500000000000000000000000000000000
-00116111111611000011611111161100001161111116110000116111111611000511666ff66611500511666ff666115000000000000000000000000000000000
-0017111ff11171000017111ff11171000017111ff11171000017111ff11171000017111111117100001711111111710000000000000000000000000000000000
-00177767767771000017776776777100001777677677710000177767767771000017777777777100001777777777710000000000000000000000000000000000
-00017777777710000001777777771000000177777777100000017777777710000001777777771000000177777777100000000000000000000000000000000000
-00011777777110000001177777711000000117777771100000011777777110000001777777771000000177777777100000000000000000000000000000000000
-00111777777111000001177777711000000117777771100000011777777110001111177777711111111117777771111100000000000000000000000000000000
-16666111111666610001011111101000001001111110010000010111111010001111111111111111111111111111111100000000000000000000000000000000
-00000000000000000010000000000100001000000000010000100000000001001111100000011111111110000001111100000000000000000000000000000000
-00000000000000006666000000006666666660000006666606666600006666600000000000000000000000000000000000000000000000000000000000000000
+001111000011110000111100001111000011110f001111000011110f0011110000111100001111000011110000111100000000f0000000000011110f00111100
+001b1111111b1100001b1111111b1100001b1111111b1100001b1111111b110000366311113663000036631111366300011110f001111000001b1111111b1100
+00166166661661000016616666166100001661666616610000166166661661000013316666133100001331666613310001b1111111b110000016616666166100
+00166166661661000016616666166100001661666616610000166166661661000013316666133100501331666613310501661666616610000016616666166100
+00111e6666e1110000111e6666e1110000111e6666e1110000111e6666e1110050311366663113055031136666311305016616666166100000111e6666e11100
+0016666666666100001666666666610000166666666661000016666666666100501666666666610550166666666661050111e6666e1110000016666666666100
+00116111111611000011611111161100001161111116110000116111111611000511666ff66611500511666ff666115001666666666610000011611111161100
+0017111ff11171000017111ff11171000017111ff11171000017111ff11171000017111111117100001711111111710001161111116110000017111ff1117100
+001777677677710000177767767771000017776776777100001777677677710000177777777771000017777777777100017111ff111710000017776776777100
+00017777777710000001777777771000000177777777100000017777777710000001777777771000000177777777100001777677677710000001777777771000
+00011777777110000001177777711000000117777771100000011777777110000001777777771000000177777777100000177777777100000001177777711000
+00111777777111000001177777711000000117777771100000011777777110001111177777711111111117777771111100117777771100000001177777711000
+16666111111666610001011111101000001001111110010000010111111010001111111111111111111111111111111100117777771100000001011111101000
+00000000000000000010000000000100001000000000010000100000000001001111100000011111111110000001111101001111110010000010000000000100
+00000000000000006666000000006666666660000006666606666600006666600000000000000000000000000000000001000000000010000666660000666660
 00001000000100000011110000111100000010000001000000000000000000000000000000000000000000000000000000010000000110000001000000001000
 001111000011110001aaa110011aaa10000001000010000000000000000000000000000000000000000000000000000001aa110001a1a1000000100000010000
 01aaa110011aaa101aaaa1a11a1aaaa100000100001000000000000000000000000000000000000000000000000000001aaa1a4444a1aa100000104444010000

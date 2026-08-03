@@ -46,12 +46,26 @@ fn controller_only_replay_traverses_the_authored_level() {
         .expect("repeat controller-only traversal");
 
     assert_eq!(first.scenario.status, "passed");
-    assert_eq!(first.scenario.frame_count, 1_810);
-    assert_eq!(first.scenario.stage_count, 132);
+    assert_eq!(first.scenario.frame_count, 1_442);
+    assert_eq!(first.scenario.stage_count, 45);
     assert_eq!(
         serde_json::to_value(first).unwrap(),
         serde_json::to_value(second).unwrap(),
         "the no-warp controller replay report must be deterministic"
+    );
+
+    let secret_scenario = root.join("carts/ribbit-recoil-secret-traversal.playtest.json");
+    let secret_first = console_agent::playtest::run_scenario(&cart, &secret_scenario, None, None)
+        .expect("run controller-only secret route");
+    let secret_second = console_agent::playtest::run_scenario(&cart, &secret_scenario, None, None)
+        .expect("repeat controller-only secret route");
+    assert_eq!(secret_first.scenario.status, "passed");
+    assert_eq!(secret_first.scenario.frame_count, 631);
+    assert_eq!(secret_first.scenario.stage_count, 22);
+    assert_eq!(
+        serde_json::to_value(secret_first).unwrap(),
+        serde_json::to_value(secret_second).unwrap(),
+        "the controller-only branch replay must be deterministic"
     );
 }
 
@@ -71,7 +85,10 @@ fn tongue_latches_reels_and_releases_with_momentum() {
         json!({"code": "return dev_status()"}),
     );
     let latched = &latched_response["result"];
-    assert_eq!(latched["latched"], true, "first hook should be reachable");
+    assert_eq!(
+        latched["latched"], true,
+        "the first overhead girder should be reachable"
+    );
     assert_eq!(latched["tongue"], "latched");
 
     session
@@ -95,6 +112,59 @@ fn tongue_latches_reels_and_releases_with_momentum() {
         released["x"].as_f64().unwrap() > 75.0,
         "swing release should carry the frog right: {released}"
     );
+}
+
+#[test]
+fn tongue_latches_every_solid_material_and_retracts_from_destroyed_terrain() {
+    let cases = [
+        ("steel", 192),
+        ("girder", 193),
+        ("mud", 194),
+        ("breakable", 196),
+    ];
+
+    for (name, tile) in cases {
+        let mut session = Session::new();
+        session.load_cart(&cart_text(), 8_675_309).unwrap();
+        start_game(&mut session);
+        request(
+            &mut session,
+            1,
+            "eval",
+            json!({"code": format!(
+                "dev_warp(88,400); for x=10,13 do mset(x,48,{tile}) end"
+            )}),
+        );
+        let input = console_core::input::UP | console_core::input::A;
+        session.step(18, input).unwrap();
+        let latched = request(
+            &mut session,
+            2,
+            "eval",
+            json!({"code": "return dev_status().latched"}),
+        );
+        assert_eq!(latched["result"], true, "tongue should latch to {name}");
+
+        if name == "breakable" {
+            request(
+                &mut session,
+                3,
+                "eval",
+                json!({"code": "for x=10,13 do mset(x,48,0) end"}),
+            );
+            session.step(1, input).unwrap();
+            let detached = request(
+                &mut session,
+                4,
+                "eval",
+                json!({"code": "return dev_status().latched"}),
+            );
+            assert_eq!(
+                detached["result"], false,
+                "destroying an anchor cell must safely release the tongue"
+            );
+        }
+    }
 }
 
 #[test]
@@ -169,22 +239,116 @@ fn boss_explosion_chain_opens_evac_and_finishes_level() {
         &mut session,
         1,
         "eval",
-        json!({"code": "dev_warp(790,392); dev_start_boss(); dev_damage_boss(24)"}),
+        json!({"code": "dev_warp(790,392); dev_start_boss()"}),
+    );
+    session.step(30, 0).unwrap();
+    let phase_one = request(
+        &mut session,
+        2,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    assert_eq!(phase_one["result"]["boss_phase"], 1);
+    assert_eq!(phase_one["result"]["boss_hp"], 8);
+    assert!(phase_one["result"]["bullets"].as_u64().unwrap() >= 3);
+
+    request(
+        &mut session,
+        3,
+        "eval",
+        json!({"code": "dev_damage_boss(3)"}),
+    );
+    session.step(1, 0).unwrap();
+    let phase_two = request(
+        &mut session,
+        4,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    assert_eq!(phase_two["result"]["boss_phase"], 2);
+    assert_eq!(phase_two["result"]["boss_attack"], 1);
+    assert_eq!(phase_two["result"]["boss_vulnerable"], false);
+    assert_eq!(phase_two["result"]["boss_salvo2"], 0);
+    session.step(29, console_core::input::LEFT).unwrap();
+    let phase_two_pattern = request(
+        &mut session,
+        5,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    assert_eq!(phase_two_pattern["result"]["boss_vulnerable"], true);
+    assert_eq!(phase_two_pattern["result"]["boss_salvo2"], 1);
+
+    request(
+        &mut session,
+        6,
+        "eval",
+        json!({"code": "dev_damage_boss(3)"}),
+    );
+    session.step(1, 0).unwrap();
+    let phase_three = request(
+        &mut session,
+        7,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    assert_eq!(phase_three["result"]["boss_phase"], 3);
+    assert_eq!(phase_three["result"]["boss_attack"], 1);
+    assert_eq!(phase_three["result"]["boss_vulnerable"], false);
+    assert_eq!(phase_three["result"]["boss_salvo3"], 0);
+    session.step(29, console_core::input::RIGHT).unwrap();
+    let phase_three_pattern = request(
+        &mut session,
+        8,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    assert_eq!(phase_three_pattern["result"]["boss_vulnerable"], true);
+    assert_eq!(phase_three_pattern["result"]["boss_salvo3"], 1);
+
+    let hp_before = request(
+        &mut session,
+        9,
+        "eval",
+        json!({"code": "return dev_status().hp"}),
+    )["result"]
+        .as_i64()
+        .unwrap();
+    request(
+        &mut session,
+        10,
+        "eval",
+        json!({"code": "dev_damage_boss(2)"}),
     );
     let defeated_response = request(
         &mut session,
-        2,
+        11,
         "eval",
         json!({"code": "return dev_status()"}),
     );
     let defeated = &defeated_response["result"];
     assert_eq!(defeated["boss_defeated"], true);
     assert_eq!(defeated["boss_hp"], 0);
+    assert_eq!(
+        defeated["bullets"], 0,
+        "defeat must clear hostile projectiles"
+    );
 
-    session.step(225, 0).unwrap();
+    session.step(180, 0).unwrap();
+    let safe = request(
+        &mut session,
+        12,
+        "eval",
+        json!({"code": "return {open=dev_status().exit_open,hp=dev_status().hp}"}),
+    );
+    assert_eq!(
+        safe["result"]["hp"], hp_before,
+        "180 idle post-defeat frames must be safe"
+    );
+    session.step(80, 0).unwrap();
     let exit = request(
         &mut session,
-        3,
+        13,
         "eval",
         json!({"code": "return dev_status().exit_open"}),
     );
@@ -192,14 +356,14 @@ fn boss_explosion_chain_opens_evac_and_finishes_level() {
 
     request(
         &mut session,
-        4,
+        14,
         "eval",
         json!({"code": "dev_warp(918,430)"}),
     );
     session.step(1, 0).unwrap();
     let scene = request(
         &mut session,
-        5,
+        15,
         "eval",
         json!({"code": "return dev_status().scene"}),
     );
@@ -241,7 +405,7 @@ fn authored_level_and_animation_contracts_are_present() {
     assert_eq!(result["breakable"], 196);
     assert_eq!(result["bridge"], 193);
     assert_eq!(result["frog_run"], 4);
-    assert_eq!(result["frog_swing"], 2);
+    assert_eq!(result["frog_swing"], 4);
     assert_eq!(result["gnat"], 3);
     assert_eq!(result["beetle"], 3);
     assert_eq!(result["wasp"], 2);
@@ -269,6 +433,70 @@ fn authored_level_and_animation_contracts_are_present() {
             "missing {role} (palette {index}) in {colors:?}"
         );
     }
+}
+
+#[test]
+fn polish_contracts_cover_surface_grapple_branch_stats_and_separate_songs() {
+    let cart = cart_text();
+    assert!(
+        !cart.contains("hooks={"),
+        "floating grapple targets must stay removed"
+    );
+    assert!(
+        !cart.contains("draw_hook"),
+        "floating hook rendering must stay removed"
+    );
+    assert!(
+        !cart.contains("for y=max(HUD_H,acid_y)"),
+        "the full-width lower-screen wave distortion must stay removed"
+    );
+    for contract in [
+        "pat 3 loop=0 : 35 36 37 38",
+        "pat 11 loop=8 : 43 44 45 46",
+        "inst siren",
+        "inst warbrass",
+        "secrets={{430,302,1500}}",
+    ] {
+        assert!(
+            cart.contains(contract),
+            "missing polish contract: {contract}"
+        );
+    }
+
+    let mut session = Session::new();
+    session.load_cart(&cart, 8_675_309).unwrap();
+    start_game(&mut session);
+    request(
+        &mut session,
+        1,
+        "eval",
+        json!({"code": "dev_warp(424,294)"}),
+    );
+    session.step(1, 0).unwrap();
+    let stats = request(
+        &mut session,
+        2,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    assert_eq!(stats["result"]["secrets"], 1);
+    assert!(stats["result"]["score"].as_i64().unwrap() >= 1_500);
+    assert!(stats["result"]["elapsed"].as_i64().unwrap() > 0);
+    assert!(stats["result"]["rank"].as_str().is_some());
+
+    let mut pacifist = Session::new();
+    pacifist.load_cart(&cart, 8_675_309).unwrap();
+    start_game(&mut pacifist);
+    let pacifist_rank = request(
+        &mut pacifist,
+        3,
+        "eval",
+        json!({"code": "return dev_status().rank"}),
+    );
+    assert_eq!(
+        pacifist_rank["result"], "B",
+        "an enemy-free speed run must not receive an A rank"
+    );
 }
 
 #[test]
