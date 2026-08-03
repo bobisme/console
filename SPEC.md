@@ -300,6 +300,7 @@ __meta__
 title=Demo
 author=someone
 version=0
+preview_palette=48,41,36,38,31,14,11,4,1,2,5,7,63,59,55,52
 
 __lua__
 -- Lua 5.4 source until next section header
@@ -314,6 +315,17 @@ __map__
 Up to 64 lines × up to 128 cells, **2 hex chars per cell** = a tile id 00-ff
 indexing the sprite sheet. Map is a fixed 128×64 cells of 8×8 px.
 ```
+
+`preview_palette` is optional tooling metadata for carts whose sprite sheet
+uses compact source inks but whose runtime Lua remaps those inks to visual
+roles. It is an ordered, comma-separated source-index → display-index list:
+the first value maps source color 0, the second maps source color 1, and so on.
+It accepts 1–64 decimal integers in `0..63`; omitted tail entries map to
+themselves, and an absent key is the full identity map. Static sprite and map
+preview tools are its intended and only consumer; their application of the
+mapping is specified separately. The metadata itself has no effect on runtime
+drawing, `pal()`, framebuffer or `screen_text` output, nor on raw sprite/map
+dump, lint, poke, or edit operations.
 
 `__map__` follows the sprite grid's row conventions but keeps its own hex
 alphabet: `#` starts a comment line, blank lines and comments do not consume a row, and rows shorter

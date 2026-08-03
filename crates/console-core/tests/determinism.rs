@@ -57,6 +57,32 @@ fn demo_cart_is_reproducible_across_fresh_consoles() {
     assert!(!logs1.is_empty(), "demo should log on button presses");
 }
 
+#[test]
+fn preview_palette_metadata_has_no_runtime_effect() {
+    const LUA: &str = "\
+__lua__
+function _update()
+  pal(3, 9, 0)
+  pal(12, 1, 1)
+end
+function _draw()
+  cls(2)
+  rectfill(2, 3, 12, 14, 3)
+  pset(20, 21, 12)
+end
+";
+    let with_metadata = format!("__meta__\npreview_palette=63,62,61,60,59,58,57,56\n\n{LUA}");
+    let mut plain = Console::new(LUA, 77).unwrap();
+    let mut previewed = Console::new(&with_metadata, 77).unwrap();
+
+    for _ in 0..4 {
+        plain.step(0).unwrap();
+        previewed.step(0).unwrap();
+        assert_eq!(plain.framebuffer(), previewed.framebuffer());
+        assert_eq!(plain.display_palette(), previewed.display_palette());
+    }
+}
+
 /// FNV-1a, 32-bit — the hash `web/smoke.cjs` runs over the framebuffer.
 fn fnv1a32(bytes: &[u8]) -> u32 {
     let mut h: u32 = 0x811c_9dc5;

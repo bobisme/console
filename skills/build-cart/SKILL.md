@@ -76,7 +76,7 @@ the cart runs.
 ## Cart anatomy
 
 ```
-__meta__          title=... author=... version=...
+__meta__          title=... author=... version=... [preview_palette=48,41,...]
 __lua__           the game (Lua 5.4, sandboxed)
 __sprites__       128 lines x 128 palette chars (0-9a-zA-Z-_); 1 char = 1 pixel; sprite n at (n%16*8, n//16*8)
 __map__           up to 64 lines x up to 128 cells; 2 hex chars = 1 tile id (00-ff); tile 00 = empty
@@ -92,6 +92,12 @@ __sfx__           sfx <id> speed=<n|auto> [loop=start,end]  then rows: NOTE WAVE
 __music__         [bpm=N [rows_per_beat=R]]  then: pat <id> [stop|loop=<id>] : ch0 ch1 ch2 ch3 [ch4 ch5]
                   4 to 6 slots; a slot you leave off is silent, so old 4-slot lines still parse
 ```
+
+If Lua applies a stable semantic ink map, put the same ordered decimal mapping
+in optional `__meta__` key `preview_palette`. It maps source index 0 onward,
+allows 1–64 values in 0–63, and identity-fills the omitted tail. It is exposed
+only for static sprite/map preview tooling; the metadata itself does not alter
+runtime `pal()`, framebuffer output, raw dumps, lint, poke, or edit.
 
 Only `__lua__` is required. `#` starts a comment in the data sections.
 

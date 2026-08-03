@@ -47,7 +47,7 @@ pub use crate::audio::{
     Tempo, Trem, Vib, WAVE_COUNT, WAVE_FM, WAVE_PERIODIC, WAVE_TABLE_BASE, WAVETABLE_LEN,
     WAVETABLE_SLOTS, Wavetable, freq_at, parse_note,
 };
-pub use crate::cart::Cart;
+pub use crate::cart::{Cart, PreviewPalette};
 pub use crate::error::Error;
 pub use crate::gfx::{
     COLOR_ALPHABET, COLOR_COUNT, COLOR_MASK, DrawState, FB_LEN, FILLP_SIZE, Framebuffer,

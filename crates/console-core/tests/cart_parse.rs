@@ -1,4 +1,4 @@
-use console_core::{COLOR_ALPHABET, Cart, Error, SHEET_W};
+use console_core::{COLOR_ALPHABET, COLOR_COUNT, Cart, Error, SHEET_W};
 
 #[test]
 fn parses_all_sections() {
@@ -57,6 +57,58 @@ fn missing_optional_sections_are_defaults() {
     assert!(cart.meta().is_empty());
     assert!(cart.sprites().iter().all(|&p| p == 0));
     assert_eq!(cart.lua().trim(), "x = 1");
+    assert_eq!(
+        cart.preview_palette().indices().as_slice(),
+        &(0..COLOR_COUNT as u8).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn preview_palette_is_ordered_partial_and_identity_defaulted() {
+    let cart =
+        Cart::parse("__meta__\npreview_palette=48, 41,36,38\n\n__lua__\nfunction _draw() end\n")
+            .unwrap();
+    assert_eq!(
+        &cart.preview_palette().indices()[..6],
+        &[48, 41, 36, 38, 4, 5]
+    );
+    assert_eq!(cart.preview_palette().resolve(0), 48);
+    assert_eq!(cart.preview_palette().resolve(63), 63);
+}
+
+#[test]
+fn preview_palette_accepts_exactly_64_entries() {
+    let values = (0..COLOR_COUNT)
+        .rev()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let cart = Cart::parse(&format!("__meta__\npreview_palette={values}\n\n__lua__\n")).unwrap();
+    assert_eq!(cart.preview_palette().resolve(0), 63);
+    assert_eq!(cart.preview_palette().resolve(63), 0);
+}
+
+#[test]
+fn preview_palette_rejects_empty_malformed_out_of_range_and_overlong_values() {
+    for (value, expected) in [
+        (String::new(), "at least one index"),
+        ("1,,2".to_string(), "entry 1"),
+        ("1,nope".to_string(), "entry 1"),
+        ("64".to_string(), "expected 0..63"),
+        (
+            std::iter::repeat_n("0", COLOR_COUNT + 1)
+                .collect::<Vec<_>>()
+                .join(","),
+            "expected at most 64",
+        ),
+    ] {
+        let error =
+            Cart::parse(&format!("__meta__\npreview_palette={value}\n\n__lua__\n")).unwrap_err();
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {value:?}: {error}"
+        );
+    }
 }
 
 #[test]

@@ -6,9 +6,40 @@ use std::collections::BTreeMap;
 use crate::audio::{AudioBank, Echo, Instrument, Master, Pattern, Sfx, Wavetable};
 use crate::error::Error;
 use crate::gfx::{
-    MAP_H, MAP_LEN, MAP_W, SHEET_LEN, SHEET_W, SpriteSheet, TileMap, parse_color_char,
+    COLOR_COUNT, IDENTITY_PAL, MAP_H, MAP_LEN, MAP_W, SHEET_LEN, SHEET_W, SpriteSheet, TileMap,
+    parse_color_char,
 };
 use crate::gfx_meta::GfxMeta;
+
+/// Tooling-only source-index to display-index mapping for static art previews.
+///
+/// The runtime deliberately ignores this mapping: carts can keep a compact
+/// authored ink vocabulary while applying their actual draw palette in Lua.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewPalette {
+    indices: [u8; COLOR_COUNT],
+}
+
+impl PreviewPalette {
+    /// All 64 source-index mappings, in source-index order.
+    pub fn indices(&self) -> &[u8; COLOR_COUNT] {
+        &self.indices
+    }
+
+    /// Resolve one valid six-bit authored color index for a static preview.
+    pub fn resolve(&self, source: u8) -> u8 {
+        debug_assert!(usize::from(source) < COLOR_COUNT);
+        self.indices[usize::from(source)]
+    }
+}
+
+impl Default for PreviewPalette {
+    fn default() -> Self {
+        Self {
+            indices: IDENTITY_PAL,
+        }
+    }
+}
 
 /// A parsed cart.
 #[derive(Debug, Clone)]
@@ -19,6 +50,7 @@ pub struct Cart {
     map: Box<TileMap>,
     audio: AudioBank,
     gfx_meta: GfxMeta,
+    preview_palette: PreviewPalette,
     /// Raw text of every section, keyed by section name (without the `__`
     /// markers), including unknown ones so tools can round-trip them.
     sections: BTreeMap<String, String>,
@@ -59,6 +91,7 @@ impl Cart {
             Some(text) => parse_meta(text),
             None => BTreeMap::new(),
         };
+        let preview_palette = parse_preview_palette(meta.get("preview_palette"))?;
 
         let sprites = match sections.get("sprites") {
             Some(text) => parse_sprites(text)?,
@@ -85,6 +118,7 @@ impl Cart {
             map,
             audio,
             gfx_meta,
+            preview_palette,
             sections,
         })
     }
@@ -160,6 +194,13 @@ impl Cart {
         &self.gfx_meta
     }
 
+    /// Tooling-only source-to-display palette used by static sprite and map
+    /// previews. Missing entries, and carts without the metadata key, map to
+    /// themselves. The running console does not consume this value.
+    pub fn preview_palette(&self) -> &PreviewPalette {
+        &self.preview_palette
+    }
+
     /// All `key=value` pairs from `__meta__`.
     pub fn meta(&self) -> &BTreeMap<String, String> {
         &self.meta
@@ -213,6 +254,43 @@ fn parse_meta(text: &str) -> BTreeMap<String, String> {
         }
     }
     meta
+}
+
+fn parse_preview_palette(value: Option<&String>) -> Result<PreviewPalette, Error> {
+    let Some(value) = value else {
+        return Ok(PreviewPalette::default());
+    };
+    if value.trim().is_empty() {
+        return Err(Error::Cart(
+            "__meta__ preview_palette must contain at least one index".into(),
+        ));
+    }
+
+    let mut indices = IDENTITY_PAL;
+    let entries: Vec<&str> = value.split(',').collect();
+    if entries.len() > COLOR_COUNT {
+        return Err(Error::Cart(format!(
+            "__meta__ preview_palette has {} entries; expected at most {COLOR_COUNT}",
+            entries.len()
+        )));
+    }
+    for (source, raw) in entries.into_iter().enumerate() {
+        let raw = raw.trim();
+        let display = raw.parse::<u8>().map_err(|_| {
+            Error::Cart(format!(
+                "__meta__ preview_palette entry {source} must be an integer in 0..{}, found {raw:?}",
+                COLOR_COUNT - 1
+            ))
+        })?;
+        if usize::from(display) >= COLOR_COUNT {
+            return Err(Error::Cart(format!(
+                "__meta__ preview_palette entry {source} is {display}; expected 0..{}",
+                COLOR_COUNT - 1
+            )));
+        }
+        indices[source] = display;
+    }
+    Ok(PreviewPalette { indices })
 }
 
 fn parse_sprites(text: &str) -> Result<Box<SpriteSheet>, Error> {
