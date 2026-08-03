@@ -9,7 +9,7 @@
 //! bytes".
 
 use console_agent::sprite::view::{self, GifOpts};
-use console_core::Cart;
+use console_core::{Cart, PALETTE};
 
 fn demo_cart() -> Cart {
     let path = format!("{}/../../carts/demo.cart", env!("CARGO_MANIFEST_DIR"));
@@ -133,6 +133,30 @@ fn gif_grid_and_anchor_change_the_encoded_pixels() {
     // Overlays don't change the animation's shape, only its pixels.
     assert_eq!(plain.frames, grid.frames);
     assert_eq!((plain.width, plain.height), (grid.width, grid.height));
+}
+
+#[test]
+fn gif_uses_the_cart_preview_palette() {
+    let cart = Cart::parse(
+        "__meta__\npreview_palette=30,1,2,31\n\n__lua__\n\n__sprites__\n033\n033\n\n__gfx_meta__\nsprite p rect=0,0 size=1x1\nanim p.idle frames=0 fps=1 loop\n",
+    )
+    .unwrap();
+    let out = view::gif(
+        &cart,
+        "p.idle",
+        &GifOpts {
+            zoom: 1,
+            ..GifOpts::default()
+        },
+    )
+    .unwrap();
+
+    let mut opts = gif::DecodeOptions::new();
+    opts.set_color_output(gif::ColorOutput::RGBA);
+    let mut decoder = opts.read_info(std::io::Cursor::new(out.bytes)).unwrap();
+    let frame = decoder.read_next_frame().unwrap().unwrap();
+    assert_ne!(&frame.buffer[..3], &PALETTE[30]);
+    assert_eq!(&frame.buffer[4..7], &PALETTE[31]);
 }
 
 #[test]

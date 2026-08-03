@@ -322,8 +322,10 @@ roles. It is an ordered, comma-separated source-index → display-index list:
 the first value maps source color 0, the second maps source color 1, and so on.
 It accepts 1–64 decimal integers in `0..63`; omitted tail entries map to
 themselves, and an absent key is the full identity map. Static sprite and map
-preview tools are its intended and only consumer; their application of the
-mapping is specified separately. The metadata itself has no effect on runtime
+preview tools are its only consumer: `sprite render`, `strip`, `onion`, `diff`,
+`ghost`, and `gif`, plus `map render`, resolve nonzero source pixels through
+the mapping before RGB lookup. Source color 0 remains transparent even if its
+preview mapping is nonzero. The metadata itself has no effect on runtime
 drawing, `pal()`, framebuffer or `screen_text` output, nor on raw sprite/map
 dump, lint, poke, or edit operations.
 

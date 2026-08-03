@@ -53,6 +53,15 @@ fn cart() -> Cart {
     Cart::parse(&fixture_cart()).expect("fixture cart parses")
 }
 
+fn preview_cart() -> Cart {
+    Cart::parse(&fixture_cart().replacen(
+        "__lua__",
+        "__meta__\npreview_palette=30,1,2,31,4,14\n\n__lua__",
+        1,
+    ))
+    .expect("preview palette fixture parses")
+}
+
 fn args(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| (*s).to_string()).collect()
 }
@@ -114,6 +123,32 @@ fn render_paints_known_tiles_and_skips_tile_zero() {
         sample(0, 1),
         empty,
         "blank-sprite tile 3 looks like an empty cell"
+    );
+}
+
+#[test]
+fn render_uses_preview_palette_while_map_dump_stays_raw() {
+    let cart = preview_cart();
+    let img = view::render(&cart, (0, 0, 4, 2), &MapRenderOpts::default()).unwrap();
+    let sample = |cx: u32, cy: u32| {
+        let i = (((cy * 64 + 32) * img.width + cx * 64 + 32) * 4) as usize;
+        [img.rgba[i], img.rgba[i + 1], img.rgba[i + 2]]
+    };
+    assert_eq!(sample(0, 0), PALETTE[31]);
+    assert_ne!(
+        sample(2, 0),
+        PALETTE[30],
+        "tile/source zero stays transparent"
+    );
+    assert_eq!(sample(3, 0), PALETTE[14]);
+    assert_eq!(
+        sample(0, 1),
+        sample(2, 0),
+        "nonzero tile 3 contains source color 0, which must remain transparent"
+    );
+    assert_eq!(
+        view::dump(&cart, (0, 0, 4, 1)).unwrap(),
+        "# cx=0 cy=0 cw=4 ch=1\n01010002\n"
     );
 }
 

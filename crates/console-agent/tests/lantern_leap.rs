@@ -184,6 +184,12 @@ fn gameplay_uses_the_authored_night_scene_color_roles() {
 
 #[test]
 fn deluxe_scene_uses_authored_variants_and_ambient_animation_metadata() {
+    let parsed = console_core::Cart::parse(&cart_text()).unwrap();
+    assert_eq!(
+        &parsed.preview_palette().indices()[..16],
+        &[48, 41, 36, 38, 31, 14, 11, 4, 1, 2, 5, 7, 63, 59, 55, 52]
+    );
+
     let mut session = Session::new();
     session.load_cart(&cart_text(), 0).unwrap();
     session.step(1, console_core::input::A).unwrap();

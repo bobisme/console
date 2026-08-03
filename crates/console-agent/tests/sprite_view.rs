@@ -56,6 +56,15 @@ fn cart() -> Cart {
     Cart::parse(CART).expect("test cart parses")
 }
 
+fn preview_cart() -> Cart {
+    Cart::parse(&CART.replacen(
+        "title=Sprite View Test",
+        "title=Sprite View Test\npreview_palette=30,1,2,31,4,14,6,7,8,12",
+        1,
+    ))
+    .expect("preview palette test cart parses")
+}
+
 fn px(img: &Image, x: u32, y: u32) -> [u8; 3] {
     let i = ((y * img.width + x) * 4) as usize;
     [img.rgba[i], img.rgba[i + 1], img.rgba[i + 2]]
@@ -133,6 +142,40 @@ fn render_uses_the_upper_palette_indices_without_truncation() {
     assert_eq!(px(&img, 16, 0), PALETTE[61]);
     assert_eq!(px(&img, 24, 0), PALETTE[62]);
     assert_eq!(px(&img, 32, 0), PALETTE[63]);
+}
+
+#[test]
+fn preview_palette_colors_render_diff_and_ghost_but_not_source_indices() {
+    let cart = preview_cart();
+
+    let rendered = view::render(&cart, "dot", &RenderOpts::default()).unwrap();
+    assert_eq!(cell(&rendered, 8, 1, 1), PALETTE[31]);
+    assert_eq!(
+        px(&rendered, 0, 0),
+        CHECKER_A,
+        "source color 0 stays transparent"
+    );
+
+    let diff = view::diff(&cart, "dot.wave", 0, 1, 2).unwrap();
+    let dimmed =
+        PALETTE[31].map(|channel| (f32::from(channel) * 0.35).round().clamp(0.0, 255.0) as u8);
+    assert_eq!(cell(&diff, 2, 1, 1), dimmed);
+
+    let ghost = view::ghost(&cart, "dot.tri", &overlay(4)).unwrap();
+    let alpha = 0.85f32 / 3.0;
+    let mix =
+        |dst: u8, src: u8| (f32::from(dst) * (1.0 - alpha) + f32::from(src) * alpha).round() as u8;
+    let over = |dst: [u8; 3], src: [u8; 3]| {
+        [
+            mix(dst[0], src[0]),
+            mix(dst[1], src[1]),
+            mix(dst[2], src[2]),
+        ]
+    };
+    assert_eq!(cell(&ghost, 4, 3, 3), over(CHECKER_A, PALETTE[14]));
+
+    let dumped = view::dump(&cart, "dot", 0).unwrap();
+    assert!(dumped.contains("\n03300000\n"));
 }
 
 #[test]

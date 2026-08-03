@@ -27,7 +27,9 @@
 
 use std::collections::BTreeMap;
 
-use console_core::{AnimDef, COLOR_MASK, Cart, FrameSpec, PALETTE, SHEET_W, SpriteDef};
+use console_core::{
+    AnimDef, COLOR_MASK, Cart, FrameSpec, PALETTE, PreviewPalette, SHEET_W, SpriteDef,
+};
 use serde_json::{Value, json};
 
 use super::{Target, frame_pixel_rect, parse_target, resolve_rect, target_sprite};
@@ -148,7 +150,7 @@ pub fn render(cart: &Cart, target: &str, opts: &RenderOpts) -> Result<Image, Str
         w: frame.w * zoom,
         h: frame.h * zoom,
     };
-    draw_frame(&mut canvas, &frame, (0, 0), zoom);
+    draw_frame(&mut canvas, &frame, (0, 0), zoom, cart.preview_palette());
     if opts.indices {
         draw_indices(&mut canvas, &frame, (0, 0), zoom);
     }
@@ -191,7 +193,13 @@ pub fn strip(cart: &Cart, anim: &str, zoom: u32, anchor: bool) -> Result<Image, 
             );
         }
         let (ox, oy) = layout.offsets[i];
-        draw_frame(&mut canvas, frame, (cell_x + ox * zoom, oy * zoom), zoom);
+        draw_frame(
+            &mut canvas,
+            frame,
+            (cell_x + ox * zoom, oy * zoom),
+            zoom,
+            cart.preview_palette(),
+        );
         if anchor {
             let cell = Rect {
                 x: cell_x,
@@ -278,7 +286,13 @@ pub fn onion(cart: &Cart, anim: &str, pos: u32, opts: &OverlayOpts) -> Result<Im
     let (prev, next) = onion_neighbours(def.looped, pos, frames.len());
     paint_onion_ghosts(&mut canvas, &frames, &layout, prev, next, (0, 0), zoom);
     let (ox, oy) = layout.offsets[pos];
-    draw_frame(&mut canvas, &frames[pos], (ox * zoom, oy * zoom), zoom);
+    draw_frame(
+        &mut canvas,
+        &frames[pos],
+        (ox * zoom, oy * zoom),
+        zoom,
+        cart.preview_palette(),
+    );
 
     let cell = Rect {
         x: 0,
@@ -347,6 +361,7 @@ pub fn onion_all(cart: &Cart, anim: &str, opts: &OverlayOpts) -> Result<Image, S
             &frames[i],
             (cell_x + ox * zoom, oy * zoom),
             zoom,
+            cart.preview_palette(),
         );
 
         let cell = Rect {
@@ -402,7 +417,10 @@ pub fn diff(cart: &Cart, anim: &str, a: u32, b: u32, zoom: u32) -> Result<Image,
                 h: zoom,
             };
             if vb != 0 {
-                canvas.fill(block, dim(PALETTE[usize::from(vb & COLOR_MASK)], DIFF_DIM));
+                canvas.fill(
+                    block,
+                    dim(preview_rgb(cart.preview_palette(), vb), DIFF_DIM),
+                );
             }
             if fa.at(x, y) != vb {
                 canvas.fill(block, DIFF_MARK);
@@ -438,7 +456,7 @@ pub fn ghost(cart: &Cart, anim: &str, opts: &OverlayOpts) -> Result<Image, Strin
                         w: zoom,
                         h: zoom,
                     },
-                    PALETTE[usize::from(v & COLOR_MASK)],
+                    preview_rgb(cart.preview_palette(), v),
                     alpha,
                 );
             }
@@ -545,7 +563,13 @@ pub fn gif(cart: &Cart, anim: &str, opts: &GifOpts) -> Result<GifOutput, String>
         for (i, frame) in frames.iter().enumerate() {
             let (ox, oy) = layout.offsets[i];
             let mut canvas = Canvas::new(width, height, zoom);
-            draw_frame(&mut canvas, frame, (ox * zoom, oy * zoom), zoom);
+            draw_frame(
+                &mut canvas,
+                frame,
+                (ox * zoom, oy * zoom),
+                zoom,
+                cart.preview_palette(),
+            );
             if opts.grid {
                 draw_grid(&mut canvas, cell, zoom);
             }
@@ -1515,7 +1539,13 @@ fn encode_png_rgba(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 /// cell's 8x8 tile, so per-pixel color-0 transparency within a tile matches
 /// `spr()`'s rules exactly (only the whole-cell tile-0 skip is map-specific,
 /// and that check happens before this is ever called).
-pub(crate) fn draw_frame(canvas: &mut Canvas, frame: &Frame, origin: (u32, u32), zoom: u32) {
+pub(crate) fn draw_frame(
+    canvas: &mut Canvas,
+    frame: &Frame,
+    origin: (u32, u32),
+    zoom: u32,
+    palette: &PreviewPalette,
+) {
     for y in 0..frame.h {
         for x in 0..frame.w {
             let v = frame.at(x, y);
@@ -1529,10 +1559,14 @@ pub(crate) fn draw_frame(canvas: &mut Canvas, frame: &Frame, origin: (u32, u32),
                     w: zoom,
                     h: zoom,
                 },
-                PALETTE[usize::from(v & COLOR_MASK)],
+                preview_rgb(palette, v),
             );
         }
     }
+}
+
+fn preview_rgb(palette: &PreviewPalette, source: u8) -> [u8; 3] {
+    PALETTE[usize::from(palette.resolve(source & COLOR_MASK))]
 }
 
 /// A frame's silhouette painted in one flat tint at `alpha` (onion skins).

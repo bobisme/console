@@ -82,7 +82,13 @@ pub fn render(
                 continue;
             }
             let frame = view::read_rect(cart, tile_rect(t));
-            view::draw_frame(&mut canvas, &frame, (i * 8 * zoom, j * 8 * zoom), zoom);
+            view::draw_frame(
+                &mut canvas,
+                &frame,
+                (i * 8 * zoom, j * 8 * zoom),
+                zoom,
+                cart.preview_palette(),
+            );
         }
     }
     if opts.grid {

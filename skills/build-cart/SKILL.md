@@ -96,8 +96,10 @@ __music__         [bpm=N [rows_per_beat=R]]  then: pat <id> [stop|loop=<id>] : c
 If Lua applies a stable semantic ink map, put the same ordered decimal mapping
 in optional `__meta__` key `preview_palette`. It maps source index 0 onward,
 allows 1–64 values in 0–63, and identity-fills the omitted tail. It is exposed
-only for static sprite/map preview tooling; the metadata itself does not alter
-runtime `pal()`, framebuffer output, raw dumps, lint, poke, or edit.
+only for static sprite/map preview tooling: all sprite image/GIF views and
+`map render` honor it while source color 0 stays transparent. The metadata
+itself does not alter runtime `pal()`, framebuffer output, raw dumps, lint,
+poke, or edit.
 
 Only `__lua__` is required. `#` starts a comment in the data sections.
 
