@@ -14,6 +14,16 @@ local EXIT, SPRING, VINE, LAVA = 70, 71, 72, 73
 local PW, PH = 7, 15
 local GRAVITY, MAX_FALL = 0.24, 4.8
 
+-- The sprite sheet keeps a compact 0-f ink vocabulary, but each ink has a
+-- stable visual job. Keep this map semantic rather than spreading arbitrary
+-- Apollo64 indices through the authored art:
+--   shadow, violet, red, orange, lantern gold, moss light, moss dark, teal,
+--   midnight, blue, sky, cyan, moon white, mist, stone, stone shadow.
+local INK_MAP = {
+  48, 41, 36, 38, 31, 14, 11, 4,
+   1,  2,  5,  7, 63, 59, 55, 52
+}
+
 game_scene = "title"
 player_x, player_y = 104, 480
 embers, gate_open, deaths = 0, false, 0
@@ -374,13 +384,9 @@ local function reset_draw_state()
   camera()
   clip()
   pal()
-  -- Apollo64 ink map for the cart's compact 0-f sprite art. Draw-palette
-  -- remaps put the expanded indices into the framebuffer, so every renderer
-  -- and authoring tool sees the real 64-color data rather than a display-only tint.
-  pal(0,48) pal(1,40) pal(2,32) pal(3,17)
-  pal(4,36) pal(5,29) pal(6,31) pal(7,63)
-  pal(8,49) pal(9,2)  pal(10,55) pal(11,13)
-  pal(12,7) pal(13,43) pal(14,46) pal(15,62)
+  -- Draw remaps put the expanded indices into the framebuffer, so renderers
+  -- and authoring tools see real Apollo64 data rather than a scanout-only tint.
+  for ink = 0, 15 do pal(ink, INK_MAP[ink+1]) end
   fillp()
   mosaic()
   rshift()
@@ -453,9 +459,10 @@ local function draw_world()
   end
 
   if player_mode == "dash" then
-    pal(10, 13)
+    -- Push the player's sky-blue highlight to luminous cyan during a dash.
+    pal(10, 7)
     aspr("player.dash", player_x+4, player_y+15, dash_t0, face_left, false)
-    pal(10, 55)
+    pal(10, INK_MAP[11])
   elseif player_mode == "hurt" then
     aspr("player.hurt", player_x+4, player_y+15, hurt_t0, face_left, false)
   elseif player_mode == "stomp" then
@@ -571,7 +578,7 @@ function _draw()
     mosaic(factor)
   end
   if flash > 0 then
-    for c = 0, 63 do pal(c, flash%2 == 0 and 7 or 36, 1) end
+    for c = 0, 63 do pal(c, flash%2 == 0 and 63 or 31, 1) end
   end
 end
 

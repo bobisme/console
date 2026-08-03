@@ -136,3 +136,48 @@ fn scripted_inputs_produce_identical_framebuffers() {
         serde_json::to_value(second.audio_stats(30).unwrap()).unwrap()
     );
 }
+
+#[test]
+fn gameplay_uses_the_authored_night_scene_color_roles() {
+    let mut session = Session::new();
+    session.load_cart(&cart_text(), 0).unwrap();
+    session.step(1, console_core::input::A).unwrap();
+    session.step(119, 0).unwrap();
+
+    let colors: std::collections::BTreeSet<u8> = session
+        .console()
+        .unwrap()
+        .framebuffer()
+        .iter()
+        .copied()
+        .collect();
+
+    // These are semantic roles, not arbitrary high-index coverage: cool night
+    // blues, moss greens, amber light, red-orange danger, violet atmosphere,
+    // and a complete neutral stone/UI ramp all need to reach the real frame.
+    let roles = [
+        (1, "midnight blue"),
+        (4, "teal blue"),
+        (5, "sky blue"),
+        (7, "wisp cyan"),
+        (11, "deep moss"),
+        (14, "moss highlight"),
+        (31, "lantern amber"),
+        (36, "hazard red"),
+        (38, "hazard orange"),
+        (41, "violet atmosphere"),
+        (48, "near-black shadow"),
+        (49, "deep backdrop"),
+        (51, "mid backdrop"),
+        (52, "stone shadow"),
+        (55, "stone body"),
+        (59, "stone highlight"),
+        (63, "moon white"),
+    ];
+    for (index, role) in roles {
+        assert!(
+            colors.contains(&index),
+            "missing {role} (Apollo64 index {index}); rendered {colors:?}"
+        );
+    }
+}
