@@ -41,8 +41,9 @@ steps): `console-agent serve` — JSON-RPC 2.0, one request per line on
 stdin. Verbs: `load_cart{path|text} reset{seed} step{frames,input}
 screenshot{path} screen_text eval{code} get_global{name} logs
 save_state{name} load_state{name} info audio_state audio_events
-audio_stats spectrogram{path} wav{path}` plus the `sprite_*` and `map_*`
-(read-only: `map_render`, `map_dump`, `map_lint`) mirrors of the CLI tools
+audio_stats spectrogram{path} wav{path}` plus the `sprite_*`, `map_*`
+(read-only: `map_render`, `map_dump`, `map_lint`) and `music_*` (read-only:
+`music_score`, `music_lint`, `music_piano_roll`) mirrors of the CLI tools
 below.
 
 Iterate in small steps: change one thing → step → screenshot/eval →
@@ -313,18 +314,51 @@ section (positioned right after `__sprites__`) if the cart has none yet.
 
 ## Music & sfx authoring
 
-You cannot hear. Work three layers, in order:
+You cannot hear. Work four layers, in order — and start at the cart, not at
+a running console:
 
-1. **Ground truth**: `audio_state` (per-channel sfx/row/note/vol/music
-   ownership) and `audio_events` (note_on/row_change/note_off log with
-   frame numbers). Verify notes and timing here first — it reads like a
-   score.
-2. **Stats**: `audio_stats` — per-window RMS/peak/clipped. No clipping, no
-   dead air, levels balanced.
-3. **Vision + humans**: `spectrogram{path}` (semitone × time heatmap —
-   melodies read as note blocks) and `--wav` for human ears.
+```bash
+console-agent music score      game.cart [--song N]                  # the song as text
+console-agent music lint       game.cart [--strict]                  # JSON diagnostics
+console-agent music piano-roll game.cart [--song N | --patterns a,b] [--cell N] [--row-h N] -o roll.png
+console-agent music render     game.cart [--song N] [--loops K | --frames F] -o out.wav
+```
 
-Facts that bite:
+1. **The score**: `music score` prints the whole song — the form chain
+   (`pat 0 -> [pat 1 -> pat 2 ->] loop to 1`) then, per pattern, a tracker
+   grid of `row | frame | NOTE VOICE VOL FX` per channel. This is the
+   fastest way to see what you actually wrote, including which patterns are
+   intro and which repeat. `--song N` follows the chain from pattern N,
+   i.e. what `music(N)` would play.
+2. **Numbers**: `music lint` — JSON, always exit 0 unless `--strict`. It
+   catches the traps in the list below mechanically (env-sustain swell,
+   vibrato that never speaks, no channel left for `sfx()`, notes swept off
+   the note table, `music(n)`/`sfx(n)` calls naming ids the cart lacks,
+   unreachable patterns, a chain with no `loop=`/`stop`, DC-offset
+   wavetables, FM modulators past Nyquist) and reports every pattern's
+   measured peak/RMS/clipped from a headless render of that pattern alone.
+   Then `audio_stats` for the *running* mix (per-window RMS/peak/clipped)
+   once the game is playing it.
+3. **Running ground truth**: `audio_state` (per-channel sfx/row/note/vol/
+   music ownership) and `audio_events` (note_on/row_change/note_off/
+   pattern_change log with frame numbers). Reach for these when the score
+   says one thing and the game does another — they show what the sequencer
+   *did*, including sfx stealing channels from the music.
+4. **Vision + humans**: `music piano-roll` (semitone × frame grid, one color
+   per channel, brightness = velocity, pattern boundaries and the loop point
+   marked) is the *score* seen at a glance; `spectrogram{path}` is the
+   *signal* (what came out of the mixer, harmonics and all). Read them
+   together when a note is not the note you expected. `music render` writes
+   a WAV of a whole song for human ears without any input scripting — it
+   boots the cart, calls `music(N)` and stops after the intro plus `--loops`
+   (default 2) passes of the loop body.
+
+`serve` mirrors the read-only three: `music_score{song?}`,
+`music_lint{}`, `music_piano_roll{path, song?, patterns?, cell?, row_h?}`.
+There is no `music_render` verb — in a session that is just
+`eval{"music(n)"}` + `step` + `wav`.
+
+Facts that bite (all but the last three are `music lint` rules):
 - `env` sustain is an ABSOLUTE level — quiet rows on an env instrument
   swell UP to it. Voices needing per-row dynamics should carry no env.
 - Vibrato `delay` must fit inside the row or it never speaks.
@@ -476,8 +510,10 @@ pauses the game (rAF suspension — not a bug).
 - [ ] `console-agent run` a full scripted playthrough: exits clean, no halt
 - [ ] Screenshots at the moments that matter, actually looked at
 - [ ] `sprite lint` quiet on every anim; strips/onions reviewed
-- [ ] `audio_events` matches the intended score; `audio_stats` shows no
-      clipping; spectrogram eyeballed
+- [ ] `music score` reads as the song you meant, form chain included;
+      `music lint` quiet (or every warning deliberate); piano-roll eyeballed
+- [ ] `audio_events` matches the score in the running game; `audio_stats`
+      shows no clipping; spectrogram eyeballed
 - [ ] Determinism: same seed + input script run twice ⇒ identical
       `screen_text` output
 - [ ] Packed HTML loads, plays, and its cart section is still readable text

@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::map;
+use crate::music;
 use crate::session::{Session, SessionError};
 use crate::sprite::view::{self, Image, LintThresholds, OverlayOpts, RenderOpts};
 use crate::value::lua_to_json;
@@ -169,6 +170,9 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "map_render" => m_map_render(session, params),
         "map_dump" => m_map_dump(session, params),
         "map_lint" => m_map_lint(session),
+        "music_score" => m_music_score(session, params),
+        "music_lint" => m_music_lint(session),
+        "music_piano_roll" => m_music_piano_roll(session, params),
         other => Err(RpcErr::new(-32601, format!("unknown method {other:?}"))),
     }
 }
@@ -584,4 +588,55 @@ fn m_map_dump(session: &Session, params: &Value) -> Result<Value, RpcErr> {
 
 fn m_map_lint(session: &Session) -> Result<Value, RpcErr> {
     Ok(map::view::lint(session.console()?.cart()))
+}
+
+// ---------------------------------------------------------------------------
+// Music inspection verbs — the RPC mirrors of `console-agent music score|
+// lint|piano-roll`, against the session's currently loaded cart. Read-only,
+// exactly like the sprite_*/map_* mirrors above.
+//
+// `music render` has deliberately NO mirror: it boots a *second* console and
+// steps it, which is precisely what a `serve` session already does for
+// itself. From RPC the equivalent is `eval{"music(n)"}` + `step` + `wav`,
+// with the session's own console — the CLI command exists to spare a oneshot
+// caller that dance, not to add a second stepping engine to the RPC surface.
+// ---------------------------------------------------------------------------
+
+fn u8_param(params: &Value, name: &str) -> Result<Option<u8>, RpcErr> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_u64()
+            .and_then(|n| u8::try_from(n).ok())
+            .map(Some)
+            .ok_or_else(|| RpcErr::bad_params(format!("{name:?} must be an integer 0-255"))),
+    }
+}
+
+fn m_music_score(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let song = u8_param(params, "song")?;
+    let text = music::score::score(session.console()?.cart(), song).map_err(RpcErr::bad_params)?;
+    Ok(json!({ "text": text }))
+}
+
+fn m_music_lint(session: &Session) -> Result<Value, RpcErr> {
+    Ok(music::lint::lint(session.console()?.cart()))
+}
+
+fn m_music_piano_roll(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let path = required_str(params, "music_piano_roll", "path")?;
+    let cart = session.console()?.cart();
+    let song = u8_param(params, "song")?;
+    let patterns = string_param(params, "patterns");
+    let (order, loop_at) =
+        music::roll::resolve_order(cart, song, patterns).map_err(RpcErr::bad_params)?;
+    let opts = music::roll::RollOpts {
+        cell: u32_param(params, "cell").unwrap_or(music::roll::DEFAULT_CELL),
+        row_h: u32_param(params, "row_h").unwrap_or(music::roll::DEFAULT_ROW_H),
+    };
+    let image = music::roll::piano_roll(cart, &order, loop_at, &opts).map_err(RpcErr::bad_params)?;
+    let mut out = write_image(path, &image)?;
+    out["patterns"] = json!(order);
+    out["loop_pattern"] = json!(loop_at.map(|i| order[i]));
+    Ok(out)
 }

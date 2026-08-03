@@ -15,10 +15,14 @@
 //!   diffing, signal stats and the semitone-grid spectrogram.
 //! - [`map`] — map authoring tooling: render/dump/lint plus poke/edit
 //!   in-place cart transforms for the `__map__` tile grid.
+//! - [`music`] — music authoring tooling: score (the song as text), lint
+//!   (JSON diagnostics), piano-roll (score-level PNG) and render (a WAV of a
+//!   whole song, loop detection included).
 
 pub mod audio;
 pub mod input_spec;
 pub mod map;
+pub mod music;
 pub mod oneshot;
 pub mod rpc;
 pub mod session;
@@ -31,7 +35,8 @@ usage:
                     [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats]
   console-agent serve
   console-agent sprite <render|strip|onion|diff|ghost|lint|edit|dump|poke> ...
-  console-agent map <render|dump|lint|edit|poke> ...";
+  console-agent map <render|dump|lint|edit|poke> ...
+  console-agent music <score|lint|piano-roll|render> ...";
 
 /// Entry point shared by `main.rs` and integration tests: takes a full
 /// `argv` (including `argv[0]`) and returns the process exit code.
@@ -47,6 +52,7 @@ pub fn cli_main(args: &[String]) -> i32 {
         },
         Some("sprite") => sprite::cli_sprite(&args[2..]),
         Some("map") => map::cli_map(&args[2..]),
+        Some("music") => music::cli_music(&args[2..]),
         Some("serve") => {
             let stdin = std::io::stdin();
             let stdout = std::io::stdout();

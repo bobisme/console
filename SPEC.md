@@ -298,8 +298,19 @@ one response per line on stdout. Methods:
 - `save_state {name}` / `load_state {name}` — replay-based
 - `info {}` — frame count, cart meta, seed, input log length
 
+Plus the audio-inspection verbs (`audio_state`, `audio_events`,
+`audio_stats`, `spectrogram {path}`, `wav {path}`) and the read-only cart
+tooling mirrors: `sprite_*`, `map_*` (`map_render`, `map_dump`, `map_lint`)
+and `music_*` (`music_score`, `music_lint`, `music_piano_roll`).
+
 Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback in
 `data`, and the console stays alive.
+
+Subcommands beyond `run`/`serve`, all of them operating on a cart file
+directly (no stepping): `console-agent sprite
+<render|strip|onion|diff|ghost|gif|lint|edit|dump|poke>`, `console-agent map
+<render|dump|lint|edit|poke>`, `console-agent music
+<score|lint|piano-roll|render>`.
 
 ## Single-file HTML (`console-pack`)
 
@@ -427,6 +438,11 @@ auto-allocated `sfx()` to steal channel 5 out from under the music (the old
   Plus `wav {path, from_frame?, to_frame?}` (16-bit PCM mono 44100, for
   humans and regression hashes; hand-rolled header, no new deps). Oneshot
   equivalents: `--wav`, `--spectrogram`, `--audio-events`, `--audio-stats`.
+
+  All four inspect a *running* console. The `music` subcommands (see "Music
+  authoring", below) are the cart-level counterparts — score, lint,
+  piano-roll and a whole-song WAV, straight off the cart file with no
+  stepping — and are where an authoring session should start.
 - console-web C ABI: `con_audio() -> *const f32` (latest frame's 735 samples,
   valid until the next `con_step`).
 - Web shell: `AudioContext({sampleRate: 44100})` + an AudioWorklet created
@@ -887,14 +903,93 @@ every pre-existing entry renders exactly as it always did. New entries are
 appended to the **end** of the menu so the golden entries keep their input
 scripts.
 
-### Phase 2 (after phase 1 lands — planned, spec to be detailed then)
+### Inspection tools (console-agent `music` subcommands + RPC verbs) — phase 2
 
-`music score` (all channels as one time-aligned text grid), `music lint`
-(slot length/speed mismatches, out-of-key notes, vertical clashes, range
-sanity), `music summarize` (chord skeleton per bar as text), piano-roll PNG,
-`music render <cart> <pat> -o out.wav --loops N` (synth without stepping a
-cart). Phase 3: transposes/copies/double-time, auto-echo onto a free
-channel, ABC notation import.
+Agents author music blind, and until these existed the only way to check a
+song was to step a console and diff `audio_events` note by note. These work
+on a cart file directly, at cart level, and follow the sprite/map tools'
+shape: data, then numbers, then pictures.
+
+The unifying idea is the **song chain**. `__music__` is not a list, it is a
+graph: a pattern ends with `stop`, `loop=<id>` or (by default) "play the next
+existing id", so a song has an intro that plays once and a body that repeats,
+and that form is spread across flags at the ends of unrelated lines. Every
+command here resolves the chain from a starting pattern (`--song N`, i.e.
+`music(N)` semantics; default = the lowest defined pattern id) and reports it
+as one line:
+
+```
+pat 0 -> [pat 1 -> pat 2 ->] loop to 1        # bracketed span = the loop body
+pat 8 -> pat 9 -> stop                        # a one-shot jingle
+```
+
+Pattern length is `max(rows*speed)` over the pattern's slots, exactly as the
+sequencer computes it, so intro/loop frame counts are exact.
+
+| command | output |
+|---------|--------|
+| `music score <cart> [--song N]` | the song as text: the form chain and per-pattern timings, then one tracker grid per pattern — `row \| frame \| NOTE VOICE VOL FX` per occupied channel, columns aligned. `VOICE` is the row's instrument name, wave digit or `w<slot>`; rests are `---` |
+| `music lint <cart> [--strict]` | JSON diagnostics + per-pattern measurements. Exit 0 unless `--strict` |
+| `music piano-roll <cart> [--song N \| --patterns a,b,c] [--cell N] [--row-h N] -o out.png` | semitone (y) x frame (x) grid, one Sweetie-16 color per channel, brightness = velocity, C-boundary gridlines with octave numbers in a gutter, pattern boundaries as vertical lines, loop point as a bright bar |
+| `music render <cart> [--song N] [--loops K=2 \| --frames F] [--seed N] -o out.wav` | boots the cart, calls `music(N)` via eval, steps until the intro plus K loop passes have played, writes the WAV |
+
+The score's row axis is really the **frame**: one line per frame at which any
+slot starts a row, so slots at different `speed=` values stay time-aligned.
+The `row` column is filled in only when every slot shares a speed (the common
+case, where it is `frame / speed`); a channel not starting a row on a line
+shows `:` (holding) and one whose sfx has ended shows `.` (still claimed by
+music, silent until the pattern ends).
+
+`music render`'s stop condition is the plan (intro + K x loop frames, known
+before stepping) checked against observation: `music_pattern()` is sampled
+every frame and a **pattern start** — the id changing, *or* the id staying
+put once the pattern has run its full duration, which is how a `loop=<self>`
+pattern restarts — counts a loop pass. Music halting ends the render there.
+One spare loop pass past the plan is the safety ceiling; `--frames F`
+bypasses the whole mechanism.
+
+`music lint`'s rules, each of them a documented engine behaviour that is
+invisible in the cart text (severity in brackets):
+
+- `env_sustain_swell` [warn] — an `env` instrument with non-zero sustain
+  played at more than one row volume: the sustain is an absolute level, so
+  the quiet rows swell **up** to it.
+- `vib_delay_exceeds_row` [warn] — a vibrato delay at least as long as its
+  row: the vibrato never speaks.
+- `note_out_of_range` [warn] — a note plus its `sweep`/`arp`/`sl` offset
+  leaving C0–B7, where `freq_at` clamps.
+- `fm_aliasing` [info] — an FM modulator (note x ratio) past Nyquist at a
+  note the instrument actually plays. Deterministic and often the point, so
+  it is flagged, never failed.
+- `wavetable_dc_offset` [warn] — `Wavetable::dc_sum() != 0`.
+- `no_sfx_headroom` [warn] — *every* pattern fills all six slots, so the
+  first auto-allocated `sfx()` must steal channel 5 from the music.
+- `undefined_reference` [error] — the Lua calls `music(n)`/`sfx(n)` with an
+  id the cart never defines. A hard runtime halt, and the parser cannot see
+  it (parse-time reference errors — a slot naming a missing sfx, a `loop=` to
+  a missing pattern, an unknown instrument or wavetable slot — are already
+  rejected by `Cart::parse` and are deliberately not re-checked).
+- `unreachable_pattern` [warn] — a defined pattern no chain and no `music()`
+  call reaches. Song heads come from the integer literals the Lua passes to
+  `music(...)`, falling back to patterns nothing chains into and then to the
+  lowest id; the report names which (`entry_source`). Suppressed entirely
+  when the cart calls `music(<computed>)`, where reachability is unknowable.
+- `chain_has_no_terminator` [warn] — a song that neither loops nor stops and
+  just runs out of pattern ids.
+- `pattern_clipping` [warn] — from a headless render of each pattern *on its
+  own* (its Lua replaced with `music(<id>)`, its `__instruments__`/`__sfx__`/
+  `__music__` copied verbatim, so master drive/tone/hiss and the echo bus
+  apply): the report carries every pattern's peak/RMS/clipped counts.
+
+RPC mirrors: `music_score {song?}`, `music_lint {}`, `music_piano_roll
+{path, song?, patterns?, cell?, row_h?}` against the session's loaded cart —
+read-only, like the `sprite_*`/`map_*` mirrors. There is deliberately **no**
+`music_render` verb: from a session that is `eval {"music(n)"}` + `step` +
+`wav` with the session's own console, and a second stepping engine on the RPC
+surface would only be a way for the two to disagree.
+
+Phase 3 (planned): `music summarize` (chord skeleton per bar),
+transposes/copies/double-time, auto-echo onto a free channel, ABC import.
 
 ## Out of scope for PoC
 
