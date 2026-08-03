@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use console_core::{AnimDef, Cart, PALETTE, SHEET_W, SpriteDef};
 use serde_json::{Value, json};
 
-use super::{Target, frame_pixel_rect, parse_target, target_sprite};
+use super::{Target, frame_pixel_rect, parse_target, resolve_rect, target_sprite};
 
 /// Zoom used when `--zoom` / the RPC `zoom` param is omitted.
 pub const DEFAULT_ZOOM: u32 = 8;
@@ -387,6 +387,35 @@ fn lint_anim(cart: &Cart, name: &str) -> Result<Value, String> {
     }))
 }
 
+/// `sprite dump` — print `target`'s resolved region as rows of hex text, top
+/// to bottom, exactly the cart's own `__sprites__` alphabet (lowercase hex
+/// digits, one char per pixel), preceded by a `#`-comment header naming the
+/// region's pixel-space coordinates on the 128x128 sheet. Frame resolution
+/// matches `sprite edit`'s and `sprite poke`'s: `frame` is the raw sheet
+/// frame index (an anim's own frame list is not consulted), so a `dump`'d
+/// region and the `poke` that writes it back always agree on where the
+/// pixels live.
+///
+/// The header is a comment specifically so `sprite dump | sprite poke
+/// --stdin` round-trips without the caller having to strip it first —
+/// `poke --stdin` skips `#`-prefixed lines for exactly this reason.
+pub fn dump(cart: &Cart, target: &str, frame: u8) -> Result<String, String> {
+    let (x0, y0, w, h) = resolve_rect(cart, target, frame)?;
+    let sheet = cart.sprites();
+    let mut out = format!("# x={x0} y={y0} w={w} h={h}\n");
+    for j in 0..h {
+        let row: String = (0..w)
+            .map(|i| {
+                let v = sheet[(y0 + j) as usize * SHEET_W + (x0 + i) as usize];
+                char::from_digit(u32::from(v & 0xF), 16).unwrap()
+            })
+            .collect();
+        out.push_str(&row);
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -475,6 +504,16 @@ fn run_view(args: &[String]) -> Result<(), String> {
             "{}",
             serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?
         );
+        return Ok(());
+    }
+
+    if cmd == "dump" {
+        let target = one_positional(rest, cmd, "<target>")?;
+        let frame = match flags.frame {
+            Some(f) => u8::try_from(f).map_err(|_| format!("--frame {f} out of range 0-255"))?,
+            None => 0,
+        };
+        print!("{}", dump(&cart, target, frame)?);
         return Ok(());
     }
 

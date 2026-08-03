@@ -134,7 +134,19 @@ console-agent sprite diff   game.cart <anim> A B -o out.png                 # ma
 console-agent sprite ghost  game.cart <anim> -o out.png                     # motion accumulation
 console-agent sprite lint   game.cart [anim ...]                            # JSON quality numbers
 console-agent sprite edit   game.cart copy|shift|flip|rotate|clear ... [--dry-run]
+console-agent sprite dump   game.cart <sprite|anim|tx,ty,w,h> [--frame N]    # print pixels as hex rows
+console-agent sprite poke   game.cart <target> [--frame N] --rows r0,r1,... # write pixels back
+console-agent sprite poke   game.cart <target> [--frame N] --stdin          # rows on stdin, one per line
 ```
+
+Write pixels with `poke` instead of hand-editing hex: `dump` a region to see
+its rows (a `#`-comment header plus one hex-digit-per-pixel row per line,
+same alphabet as `__sprites__`), edit the rows you got back, then `poke`
+them — `--stdin` is the better fit for agents (`sprite dump ... | sprite
+poke ... --stdin` round-trips cleanly; poke skips `#`-prefixed lines so the
+dump header passes through harmlessly). `poke` validates row count and row
+width against the target's region exactly and rejects non-hex characters;
+`--dry-run` previews the changed lines without writing.
 
 Animation workflow: `copy` an existing frame → nudge pixels in the hex →
 `lint` until quiet → `onion`/`strip` for the visual pass. Quality gates:

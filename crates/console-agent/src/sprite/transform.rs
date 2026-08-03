@@ -17,7 +17,7 @@
 
 use console_core::{Cart, SHEET_W, SpriteSheet};
 
-use super::{frame_pixel_rect, parse_target};
+use super::{frame_pixel_rect, parse_target, resolve_rect};
 
 /// CLI entry for `sprite edit`. `args[0]` is the cart path, `args[1]` the op
 /// name (`shift|flip|rotate|copy|clear`); the rest are op-specific
@@ -41,7 +41,24 @@ pub fn cli_edit(args: &[String]) -> i32 {
         }
     };
 
-    match run_edit(&text, &op, &args) {
+    apply_edit_result(&cart_path, run_edit(&text, &op, &args), dry_run)
+}
+
+pub const EDIT_USAGE: &str = "\
+usage:
+  console-agent sprite edit <cart> shift  <target> [--frame N] [--dx <n>] [--dy <n>] [--wrap] [--dry-run]
+  console-agent sprite edit <cart> flip   <target> [--frame N] --horizontal|--vertical [--dry-run]
+  console-agent sprite edit <cart> rotate <target> [--frame N] --cw|--ccw [--dry-run]
+  console-agent sprite edit <cart> copy   <src> <dst> [--dry-run]
+  console-agent sprite edit <cart> clear  <target> [--frame N] [--dry-run]
+  (targets: sprite name, anim name, or tile rect tx,ty,w,h; copy endpoints:
+   sprite[:frame] or tx,ty,w,h)";
+
+/// Shared tail of `cli_edit` and `cli_poke`: either print the dry-run report
+/// or write the new text to `cart_path`, translating the result to a process
+/// exit code.
+fn apply_edit_result(cart_path: &str, result: Result<EditResult, String>, dry_run: bool) -> i32 {
+    match result {
         Ok(EditResult::Unchanged) => 0,
         Ok(EditResult::Changed { new_text, report }) => {
             if dry_run {
@@ -50,7 +67,7 @@ pub fn cli_edit(args: &[String]) -> i32 {
                 }
                 0
             } else {
-                match std::fs::write(&cart_path, &new_text) {
+                match std::fs::write(cart_path, &new_text) {
                     Ok(()) => 0,
                     Err(e) => {
                         eprintln!("error: cannot write {cart_path:?}: {e}");
@@ -66,15 +83,142 @@ pub fn cli_edit(args: &[String]) -> i32 {
     }
 }
 
-pub const EDIT_USAGE: &str = "\
+// ---------------------------------------------------------------------
+// poke: row-based pixel writes (SPEC.md "Sprite & animation authoring" —
+// the write half of the dump/poke pair; `dump` lives in view.rs).
+// ---------------------------------------------------------------------
+
+pub const POKE_USAGE: &str = "\
 usage:
-  console-agent sprite edit <cart> shift  <target> [--frame N] [--dx <n>] [--dy <n>] [--wrap] [--dry-run]
-  console-agent sprite edit <cart> flip   <target> [--frame N] --horizontal|--vertical [--dry-run]
-  console-agent sprite edit <cart> rotate <target> [--frame N] --cw|--ccw [--dry-run]
-  console-agent sprite edit <cart> copy   <src> <dst> [--dry-run]
-  console-agent sprite edit <cart> clear  <target> [--frame N] [--dry-run]
-  (targets: sprite name, anim name, or tile rect tx,ty,w,h; copy endpoints:
-   sprite[:frame] or tx,ty,w,h)";
+  console-agent sprite poke <cart> <target> [--frame N] --rows <hex,hex,...> [--dry-run]
+  console-agent sprite poke <cart> <target> [--frame N] --stdin [--dry-run]
+  (rows run top to bottom, one per source row, each exactly as many hex
+   digits as the region is wide; with --stdin, lines starting with '#' are
+   skipped, so `sprite dump`'s own output pipes straight into `--stdin`;
+   targets: sprite name, anim name, or tile rect tx,ty,w,h)";
+
+/// CLI entry for `sprite poke`. `args[0]` is the cart path, the remaining
+/// positional is the `<target>`; `--frame`, `--rows`/`--stdin` and
+/// `--dry-run` may appear anywhere.
+pub fn cli_poke(args: &[String]) -> i32 {
+    let mut args = args.to_vec();
+    let dry_run = take_flag(&mut args, "--dry-run");
+    let use_stdin = take_flag(&mut args, "--stdin");
+    let rows_csv = take_value(&mut args, "--rows");
+
+    if args.is_empty() {
+        eprintln!("{POKE_USAGE}");
+        return 2;
+    }
+    let cart_path = args.remove(0);
+
+    let frame = match take_frame(&mut args) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let target_str = match take_target(&args, "poke") {
+        Ok(t) => t.to_string(),
+        Err(e) => {
+            eprintln!("error: {e}\n{POKE_USAGE}");
+            return 2;
+        }
+    };
+
+    let rows: Vec<String> = match (rows_csv, use_stdin) {
+        (Some(_), true) => {
+            eprintln!("error: poke: pass either --rows or --stdin, not both");
+            return 2;
+        }
+        (Some(csv), false) => csv.split(',').map(str::to_string).collect(),
+        (None, true) => match read_stdin_rows() {
+            Ok(rows) => rows,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 2;
+            }
+        },
+        (None, false) => {
+            eprintln!("error: poke requires --rows <hex,hex,...> or --stdin\n{POKE_USAGE}");
+            return 2;
+        }
+    };
+
+    let text = match std::fs::read_to_string(&cart_path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("error: cannot read {cart_path:?}: {e}");
+            return 2;
+        }
+    };
+
+    apply_edit_result(&cart_path, run_poke(&text, &target_str, frame, &rows), dry_run)
+}
+
+/// Read poke rows from stdin: one row per line, in order, skipping any line
+/// starting with `#` (a comment, matching the cart format's own convention)
+/// so `sprite dump`'s header line passes through harmlessly when piped
+/// straight into `poke --stdin`.
+fn read_stdin_rows() -> Result<Vec<String>, String> {
+    use std::io::BufRead;
+    std::io::stdin()
+        .lock()
+        .lines()
+        .filter(|line| !matches!(line, Ok(l) if l.trim_start().starts_with('#')))
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(|e| format!("reading stdin: {e}"))
+}
+
+/// Parse `text` as a cart, validate `rows` against `target`'s resolved
+/// region (exact row count, exact row width, valid hex digits), overwrite
+/// those pixels, and compute the resulting cart text via the same rewrite
+/// path `sprite edit` uses. Pure — no file I/O — so it is directly testable.
+fn run_poke(text: &str, target_str: &str, frame: u8, rows: &[String]) -> Result<EditResult, String> {
+    let cart = Cart::parse(text).map_err(|e| format!("cart: {e}"))?;
+    let (x0, y0, w, h) = resolve_rect(&cart, target_str, frame)?;
+    let (w, h) = (w as usize, h as usize);
+
+    if rows.len() != h {
+        return Err(format!(
+            "poke: region is {w}x{h}, expected {h} row(s), got {}",
+            rows.len()
+        ));
+    }
+    let mut values = vec![0u8; w * h];
+    for (j, row) in rows.iter().enumerate() {
+        let chars: Vec<char> = row.chars().collect();
+        if chars.len() != w {
+            return Err(format!(
+                "poke: row {j}: region is {w} pixel(s) wide, expected {w} hex char(s), got {} ({row:?})",
+                chars.len()
+            ));
+        }
+        for (i, ch) in chars.into_iter().enumerate() {
+            let v = ch.to_digit(16).ok_or_else(|| {
+                format!("poke: row {j}: invalid hex digit {ch:?} at column {i} ({row:?})")
+            })?;
+            values[j * w + i] = v as u8;
+        }
+    }
+
+    let mut sheet: SpriteSheet = *cart.sprites();
+    for j in 0..h {
+        for i in 0..w {
+            sheet[idx(x0 + i as u32, y0 + j as u32)] = values[j * w + i];
+        }
+    }
+
+    match rewrite_sprites(text, cart.sprites(), &sheet) {
+        None => Ok(EditResult::Unchanged),
+        Some((new_text, report)) => {
+            Cart::parse(&new_text)
+                .map_err(|e| format!("poke would produce an invalid cart (not written): {e}"))?;
+            Ok(EditResult::Changed { new_text, report })
+        }
+    }
+}
 
 /// The outcome of computing an edit against cart text, before any I/O.
 enum EditResult {
@@ -122,11 +266,6 @@ fn run_edit(text: &str, op: &str, op_args: &[String]) -> Result<EditResult, Stri
 // ---------------------------------------------------------------------
 // Op argument parsing + pixel math
 // ---------------------------------------------------------------------
-
-fn resolve_rect(cart: &Cart, target_str: &str, frame: u8) -> Result<(u32, u32, u32, u32), String> {
-    let target = parse_target(target_str, cart.gfx_meta())?;
-    frame_pixel_rect(cart, &target, frame)
-}
 
 fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
     if let Some(pos) = args.iter().position(|a| a == flag) {

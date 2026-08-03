@@ -92,13 +92,27 @@ pub fn target_sprite<'c>(cart: &'c Cart, target: &Target) -> Option<&'c SpriteDe
     }
 }
 
+/// Parse a `<target>` string and resolve it straight to a pixel-space rect
+/// against `cart`, at raw sheet frame `frame` — the shared entry point for
+/// every command that mutates or dumps pixels in place (`sprite edit`,
+/// `sprite dump`, `sprite poke`). Note this is *not* the same as
+/// `view::render`'s anim-aware `--frame` (which indexes an anim's own frame
+/// list); here `frame` is always the raw sprite frame index, matching how
+/// `sprite edit`'s ops have always treated it.
+pub fn resolve_rect(cart: &Cart, target_str: &str, frame: u8) -> Result<(u32, u32, u32, u32), String> {
+    let target = parse_target(target_str, cart.gfx_meta())?;
+    frame_pixel_rect(cart, &target, frame)
+}
+
 /// CLI dispatch for `console-agent sprite <cmd> ...`. Returns process exit
-/// code. `view` commands are wired by view.rs, `edit` by transform.rs.
+/// code. `view` commands (including `dump`) are wired by view.rs, `edit` and
+/// `poke` by transform.rs.
 pub fn cli_sprite(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("render") | Some("strip") | Some("onion") | Some("diff") | Some("ghost")
-        | Some("lint") => view::cli_view(args),
+        | Some("lint") | Some("dump") => view::cli_view(args),
         Some("edit") => transform::cli_edit(&args[1..]),
+        Some("poke") => transform::cli_poke(&args[1..]),
         _ => {
             eprintln!("{SPRITE_USAGE}");
             2
@@ -115,4 +129,6 @@ usage:
   console-agent sprite ghost  <cart> <anim> [--zoom Z] -o out.png
   console-agent sprite lint   <cart> [anim ...]
   console-agent sprite edit   <cart> <shift|flip|rotate|copy|clear> ... [--dry-run]
+  console-agent sprite dump   <cart> <target> [--frame N]
+  console-agent sprite poke   <cart> <target> [--frame N] (--rows <hex,hex,...> | --stdin) [--dry-run]
   (targets: sprite name, anim name, or tile rect tx,ty,w,h)";
