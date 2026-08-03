@@ -248,9 +248,137 @@ play the next existing pattern id, else halt.
   worklet (transferred); the worklet keeps a small ring (~8 frames) and plays
   silence on underrun. Pause menu open ⇒ no steps ⇒ ring drains to silence.
 
+## Sprite & animation authoring (PoC v1)
+
+Agents author pixels as hex text but can't see them, and they author
+animation frames with no memory of neighboring frames' pixels. Tooling
+follows the audio philosophy: ground truth as data, numeric lints, then
+vision renders — plus mechanical transforms so agents never hand-shift hex.
+
+### `__gfx_meta__` cart section (authoring metadata; runtime ignores it)
+
+```
+sprite <name> rect=<tx>,<ty> size=<w>x<h> [anchor=<px>,<py>]
+anim <sprite>.<label> frames=<i0,i1,...> fps=<1-60> [loop]
+```
+
+- `name`: `[a-z0-9_]+`, unique. `rect` in tile coords (0–15), `size` in
+  tiles (1×1 up to 16×16). `anchor` in pixels relative to the sprite's
+  top-left; default = bottom-center `(w*8/2, h*8-1)` (ground contact).
+- Anim names are namespaced by sprite (`player.walk`). Frame index `i`
+  addresses the rect displaced `i` sprite-widths to the right, wrapping to
+  the next row band: `tx' = (tx + i*w) % 16`, `ty' = ty + ((tx + i*w) / 16) * h`.
+  Every resolved rect must fit the 16×16 tile sheet.
+- Validation after the whole section parses (forward references fine);
+  errors are `Error::Cart` with section-relative line numbers. Section is
+  optional; carts without it behave identically.
+- Core API: `Cart::gfx_meta()` exposing sprite/anim defs plus
+  `resolve_frame(sprite, i) -> pixel rect` — pixel data itself comes from the
+  existing sprite sheet accessors.
+
+### Inspection tools (console-agent `sprite` subcommands + RPC verbs)
+
+All operate on a cart file directly (no stepping). Renders default to
+**zoom 8**, on a dark checkerboard (transparency = color 0 shows through),
+optional `--grid` (tile boundaries), `--indices` (palette index glyph per
+pixel cell), `--anchor` (crosshair, color 4). Targets: sprite name, anim
+name, or raw rect `tx,ty,w,h`.
+
+| command | output |
+|---------|--------|
+| `sprite render <cart> <target> [--frame N] -o out.png` | one frame, zoomed |
+| `sprite strip <cart> <anim> -o` | all frames side by side, baselines aligned through the anchor |
+| `sprite onion <cart> <anim> --frame N -o` | frame N full opacity; previous frame tinted red ~35%, next tinted green ~35% (loop-aware; color-0 pixels excluded from ghosts) |
+| `sprite diff <cart> <anim> <frameA> <frameB> -o` | frame B dimmed ~35%; pixels that differ from frame A in bright magenta |
+| `sprite ghost <cart> <anim> -o` | every frame overlaid at low alpha (motion accumulation) |
+| `sprite lint <cart> [anim ...]` | JSON to stdout, per frame and per consecutive pair (loop-aware): changed-pixel count, silhouette area + % drift, centroid & bbox relative to anchor + per-frame drift, per-frame palette histogram, colors unique to a single frame. Report-only; agents do the asserting. |
+
+RPC mirrors: `sprite_render`, `sprite_strip`, `sprite_onion`, `sprite_diff`,
+`sprite_ghost`, `sprite_lint` against the session's loaded cart.
+
+### Transforms (console-agent `sprite edit` — CLI only, rewrites the cart file)
+
+```
+sprite edit <cart> shift <target> [--frame N] --dx <n> --dy <n> [--wrap]
+sprite edit <cart> flip  <target> [--frame N] --horizontal|--vertical
+sprite edit <cart> rotate <target> [--frame N] --cw|--ccw   (square only)
+sprite edit <cart> copy  <sprite:frame|rect> <sprite:frame|rect>  (equal sizes)
+sprite edit <cart> clear <target> [--frame N]
+```
+
+Vacated pixels fill with color 0 unless `--wrap`. Edits rewrite ONLY the
+changed lines of `__sprites__`; every other byte of the cart file survives
+verbatim (text carts must stay git-diff friendly). `--dry-run` prints the
+would-be new hex lines instead of writing.
+
+## Music authoring (PoC v2)
+
+The synth's expressiveness is the ceiling on music quality, so phase 1 is
+engine vocabulary; inspection/transform tooling (phase 2/3) mirrors the
+sprite tools. Determinism contract unchanged: no transcendentals at runtime —
+pitch offsets resolve through NOTE_FREQ with **linear interpolation between
+adjacent semitones**, vibrato applies linear frequency scaling with a const
+cents factor, LFOs are integer-phase triangles.
+
+### `__instruments__` section (phase 1)
+
+```
+inst <name> wave=<0-5> [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>]
+```
+
+- `name` `[a-z0-9_]+`, unique, must not shadow the bare wave digits 0–5.
+- `env`: attack frames (vol ramps 0→row vol), decay frames (then decays
+  toward sustain), sustain level 0–7 held until the row/note changes.
+  Default: flat at row volume.
+- `vib`: depth in cents (1–100), rate as an integer LFO period divisor
+  (1–16, higher = faster), delay frames before onset. Triangle LFO on pitch.
+- `sweep`: signed semitone offset traversed over N frames from note-on
+  (drum sweeps: `sweep=-12,6` = kick).
+- Sfx rows may name an instrument in place of the wave digit
+  (`A4 lead 5`); a bare digit means "flat instrument with that wave"
+  (today's behavior, still valid — old carts unchanged).
+- Percussion is just instruments: `inst kick wave=3 sweep=-14,5 env=0,6,0`,
+  triggered by an ordinary note row giving the sweep's start pitch.
+
+### Effects column (phase 1; optional 4th token on a note row)
+
+| fx | behavior |
+|----|----------|
+| `arp<a>,<b>` | cycle pitch offsets 0,+a,+b semitones, 2 frames per step (the chiptune chord) |
+| `sl<±n>` | slide n semitones across the row's duration (portamento) |
+| `vib` or `vib<cents>,<rate>` | vibrato this row (bare form uses the instrument's setting) |
+| `fade<±n>` | volume ramps by n levels across the row |
+
+One fx per row for now. All fx are per-row state on the channel, reset at
+the next note row.
+
+### Tempo sugar (phase 1)
+
+`__music__` may open with `bpm=<n> [rows_per_beat=<r>]` (default r=4).
+Sfx may then declare `speed=auto` = `round(3600 / (bpm * r))`. Explicit
+numeric speeds keep working everywhere.
+
+### `carts/soundtest.cart` (phase 1)
+
+A listening-session cart: d-pad browses a menu of audition entries — each
+waveform, vibrato off/on comparison, arpeggio chord, slides, a drum kit
+pattern, the two-pulse echo trick, and one full 4-channel groove — A plays
+the selection, B stops. This is the vehicle for tuning instrument defaults
+by ear; agents render entries to WAV via the harness for the same purpose.
+
+### Phase 2 (after phase 1 lands — planned, spec to be detailed then)
+
+`music score` (all 4 channels as one time-aligned text grid), `music lint`
+(slot length/speed mismatches, out-of-key notes, vertical clashes, range
+sanity), `music summarize` (chord skeleton per bar as text), piano-roll PNG,
+`music render <cart> <pat> -o out.wav --loops N` (synth without stepping a
+cart). Phase 3: transposes/copies/double-time, auto-echo onto a free
+channel, ABC notation import.
+
 ## Out of scope for PoC
 
-Map section, camera, palette remap, multiple carts, save data, sprite/sfx
-editors, sfx effects columns (arpeggio/slide/vibrato), stereo. Design must
-not preclude them. (A minimal pause menu — RESUME/RESET — already exists in
-the web shell.)
+Map section, camera, palette remap, multiple carts, save data, interactive
+sprite/sfx editors, sfx effects columns (arpeggio/slide/vibrato), stereo,
+runtime anim helpers (`aspr()` — revisit once `__gfx_meta__` proves out).
+Design must not preclude them. (A minimal pause menu — RESUME/RESET —
+already exists in the web shell.)

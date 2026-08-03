@@ -1,0 +1,1 @@
+- use bones (`bn --help`) to track work

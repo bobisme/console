@@ -1,0 +1,36 @@
+# bones event log v1
+# fields: timestamp	agent	type	item_id	data
+1785715270052110	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuAQ		item.create	bn-3d1	{"kind":"goal","title":"Sprite & animation authoring tools"}	blake3:ML1ahCrun9e-rVZW1RBH-uGhTkmrrSi2DKeUXFWoJyM
+1785715270147415	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuAg		item.create	bn-2yg	{"kind":"goal","title":"Music authoring: effects, instruments, tooling"}	blake3:rLo6KqTgaNepisqjrAXkLA9SRxTwjsxQDYu1dDDuGZk
+1785715281519302	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuAw		item.create	bn-1hb	{"kind":"task","parent":"bn-3d1","size":"m","title":"__gfx_meta__ cart section parser in console-core"}	blake3:S6gDKIy6pgGn-FT47RP3X83NGeqHQZIt1cKKS14ufHY
+1785715281622438	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuBA		item.create	bn-20a	{"kind":"task","parent":"bn-3d1","size":"m","title":"Sprite view tools: render/strip/onion/diff/ghost/lint"}	blake3:nsYyS0XKpgHobjeZIFkbDL9X2vVHrS1joA6NZ_SstAc
+1785715281722905	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuBQ		item.create	bn-1ta	{"kind":"task","parent":"bn-3d1","size":"m","title":"Sprite edit transforms: shift/flip/rotate/copy/clear"}	blake3:U6CPGM705d81RgaWb1zPdfdXml1zTrTQH8pL1WjIOc8
+1785715281822394	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuBg		item.create	bn-3jd	{"kind":"task","parent":"bn-3d1","size":"m","title":"Dogfood: author a 2-frame player anim with the tools, verify loop"}	blake3:TrnWt5RJlCAfMuT8A6ItOaoZezM0ZIPVkaTDdCAYHnk
+1785715281925607	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuBw		item.create	bn-2xz	{"kind":"task","parent":"bn-2yg","size":"m","title":"SPEC: effects columns, __instruments__, BPM sugar"}	blake3:HuwTqfYXBfNPAgqf1aI8LZrZW2mg40dmKaZ6CVQpl0o
+1785715282026977	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuCA		item.create	bn-2l1	{"kind":"task","parent":"bn-2yg","size":"m","title":"Synth effects + instruments in console-core + soundtest cart"}	blake3:D2JrH94JjGZmsKMiyx-e3zRnIdOiK9MTo5wuOqxPhk4
+1785715282126258	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuCQ		item.create	bn-2zv	{"kind":"task","parent":"bn-2yg","size":"m","title":"Listening session with Bob: pick instrument/voicing defaults"}	blake3:SVwJoV8y4JDq0UmxFY_trYW49SG1Vpl3d_UE-0ONGmE
+1785715282227587	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuCg		item.create	bn-3sh	{"kind":"task","parent":"bn-2yg","size":"m","title":"Music tooling: score/lint/summarize/piano-roll/direct WAV render"}	blake3:r7OhG9S5z3qYP0-XTgprVhiLTROPcNno4Lw6JkwUrS8
+1785715282320093	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuCw		item.create	bn-374	{"kind":"task","parent":"bn-2yg","size":"m","title":"Music transforms + ABC import (phase 3)"}	blake3:qhRR9gdN_KZbFpcLQyzmVmqRgnlI6ZUuhd2xBKZk6YA
+1785715289393434	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuDA		item.move	bn-1hb	{"state":"done"}	blake3:px6vHn69ZFWZnwm1_MMEcHW6wyuv_xOIt5Km0Fx8F84
+1785715289414677	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuDQ		item.move	bn-20a	{"state":"doing"}	blake3:3mU7kc1lxoGwcNQzWCJFzOes9n9MVGYFiFCJBlw8Ky8
+1785715289417973	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuDg		item.assign	bn-20a	{"action":"assign","agent":"console-dev"}	blake3:mSb5KSyUdQCLeY7YWQ742h3XcwQYA60AYvmgja2qmjw
+1785715289428009	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuDw		item.move	bn-1ta	{"state":"doing"}	blake3:ksaNniKRr6PYKYgzxC4ZK0qAdX8d0v_7uhtpqTfxiQA
+1785715289430457	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuEA		item.assign	bn-1ta	{"action":"assign","agent":"console-dev"}	blake3:mCgjo_WjqB9kVaZulGfa71d7olrjuvc183xmnGNtyqs
+1785715289439660	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuEQ		item.move	bn-2xz	{"state":"doing"}	blake3:Y0WaoBgSpY24Mvzs6fyJEVN8uCW0nlMWqCKMqRqzliM
+1785715289442884	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuEg		item.assign	bn-2xz	{"action":"assign","agent":"console-dev"}	blake3:xxms7D5WyOJwvzFCjwWDYbfls76jM0cDt_Rfh8P_wsg
+1785715316722447	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuEw		item.link	bn-2l1	{"link_type":"blocks","target":"bn-2xz"}	blake3:2jJTQSbCjjfJQlj_SMJKz_b7XSFuVyTNmU3Z1iFrZA0
+1785715316745138	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuFA		item.link	bn-2zv	{"link_type":"blocks","target":"bn-2l1"}	blake3:rqfjTRNJkS2gVbg2WC1VemyXH7V2AVIRtUM26Dpzesc
+1785715316759909	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuFQ		item.link	bn-3sh	{"link_type":"blocks","target":"bn-2l1"}	blake3:bEsnOae8ecVuuVt51ggj5XrxfQjRZgQkeIJ2VT7dYi0
+1785715316773296	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuFg		item.link	bn-374	{"link_type":"blocks","target":"bn-3sh"}	blake3:pwHaPVawei8M7ghKhrOdTRL91HCtIfOQ3W-w5Nqc8io
+1785715316784253	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuFw		item.link	bn-3jd	{"link_type":"blocks","target":"bn-20a"}	blake3:ef8J_J_EtKV6Uf3bqTAecbRn0PXcmYUPJjElkUCCm08
+1785715316797727	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuGA		item.link	bn-3jd	{"link_type":"blocks","target":"bn-1ta"}	blake3:k7-eQf1Zbe3uSNZ9JEvOTk5SMMoL7tKl8Yva217mcnk
+1785715462183977	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuGQ		item.move	bn-2xz	{"state":"done"}	blake3:gZzD5X12AH6Uvf-lcLWEPzYwnczU1PL-oMjLKBd3cFM
+1785715462206120	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuGg		item.move	bn-2l1	{"state":"doing"}	blake3:6QfFsdOrzWOC0Iyt72yz8ik2cz4ZZHENTM4dwPfDDR8
+1785715462209372	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuGw		item.assign	bn-2l1	{"action":"assign","agent":"console-dev"}	blake3:8VbeAkHFXaqld5tA_fffuuxljVdi-jfY6mAfceATdZY
+1785716464680089	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuHA		item.move	bn-20a	{"state":"done"}	blake3:BTQ8T9gcpq1QLqT63aH4r4NuQCjmJNNrQo_jLhmCKog
+1785716663555938	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuHQ		item.move	bn-3jd	{"state":"doing"}	blake3:dQirunBJgPjXMt1dB_QvfwKYjrmCZr8YLWL5-jNRTdQ
+1785716663568938	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuHg		item.assign	bn-3jd	{"action":"assign","agent":"console-dev"}	blake3:cdTrcUKn290t5l9wmzaF3Wg4mno2jynpa7w-9mIJ7J0
+1785716761040973	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuHw		item.move	bn-3jd	{"state":"done"}	blake3:ig0bdoDdf45gvjxPI1Ay6C8-8k6idFb_ig6svgwNLm8
+1785716774804092	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuIA		item.move	bn-3d1	{"state":"done"}	blake3:3f1D7yPOaDIbL7z1hRFhBQfk_ZepmcRGsicJ5J4hJMk
+1785716782942496	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuIQ		item.move	bn-1ta	{"state":"done"}	blake3:JFacKW2kC9JMaYK3tITh3a3ezULXbBgC7CDHhvUrOFo
+1785717113558130	console-dev	itc:v3:AWLmTP-ZOTJklAAAAAAAQe1v-11rVAAAAAEuIg		item.move	bn-2l1	{"state":"done"}	blake3:bDKYDMnHSUWa9G-0X3Hz2KQMS9K5L25TF2aI0OlLg00

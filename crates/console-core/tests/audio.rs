@@ -2,10 +2,12 @@
 //! determinism contract.
 
 use console_core::{
-    Cart, CHANNEL_COUNT, Console, Error, PatternEnd, SAMPLE_RATE, SAMPLES_PER_FRAME, SfxRow, input,
+    CHANNEL_COUNT, Cart, Console, Env, Error, Fx, PatternEnd, SAMPLE_RATE, SAMPLES_PER_FRAME,
+    SfxRow, Sweep, Vib, freq_at, input,
 };
 
 const DEMO: &str = include_str!("../../../carts/demo.cart");
+const SOUNDTEST: &str = include_str!("../../../carts/soundtest.cart");
 
 /// FNV-1a, 64-bit. Inline so the test suite needs no dependencies.
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -172,7 +174,7 @@ fn malformed_sfx_is_a_line_numbered_cart_error() {
     expect_cart_error(
         "__lua__\n\n__sfx__\nsfx 0 speed=2\nC4 0\n",
         2,
-        "expected `NOTE WAVE VOL`",
+        "expected `NOTE WAVE VOL [FX]`",
     );
     expect_cart_error("__lua__\n\n__sfx__\nsfx 64 speed=1\nC4 0 1\n", 1, "0-63");
     expect_cart_error("__lua__\n\n__sfx__\nsfx 0 speed=0\nC4 0 1\n", 1, "speed must be");
@@ -706,6 +708,849 @@ fn out_of_range_ids_error_clearly() {
     assert!(msg.contains("channel 4 out of range"), "{msg}");
     let msg = lua_error(SEQ, "music(-2)");
     assert!(msg.contains("out of range"), "{msg}");
+}
+
+// ---------------------------------------------------------------------------
+// PoC v2: `__instruments__`
+// ---------------------------------------------------------------------------
+
+const INST_CART: &str = "\
+__lua__
+x = 1
+
+__instruments__
+# every field, in every combination
+inst plain wave=2
+inst lead wave=1 env=4,6,3
+inst wobble wave=0 vib=25,4,10
+inst kick wave=3 sweep=-14,5 env=0,6,0
+inst everything wave=4 env=1,2,3 vib=100,16,255 sweep=95,255
+
+__sfx__
+sfx 0 speed=8
+A4 lead 6
+C5 plain 5
+---
+G3 kick 7
+
+__music__
+bpm=120 rows_per_beat=4
+pat 0 : 0 - - -
+";
+
+#[test]
+fn instruments_section_round_trips() {
+    let cart = Cart::parse(INST_CART).unwrap();
+    let names: Vec<&str> = cart.instruments().iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["plain", "lead", "wobble", "kick", "everything"],
+        "declaration order is preserved"
+    );
+
+    let plain = cart.instrument("plain").unwrap();
+    assert_eq!(plain.wave, 2);
+    assert_eq!((plain.env, plain.vib, plain.sweep), (None, None, None));
+    assert!(plain.is_flat());
+
+    let lead = cart.instrument("lead").unwrap();
+    assert_eq!(
+        lead.env,
+        Some(Env {
+            attack: 4,
+            decay: 6,
+            sustain: 3
+        })
+    );
+    assert!(!lead.is_flat());
+
+    let wobble = cart.instrument("wobble").unwrap();
+    assert_eq!(
+        wobble.vib,
+        Some(Vib {
+            cents: 25,
+            rate: 4,
+            delay: 10
+        })
+    );
+
+    let kick = cart.instrument("kick").unwrap();
+    assert_eq!(
+        kick.sweep,
+        Some(Sweep {
+            semis: -14,
+            frames: 5
+        })
+    );
+
+    let all = cart.instrument("everything").unwrap();
+    assert_eq!(all.wave, 4);
+    assert_eq!(
+        all.vib,
+        Some(Vib {
+            cents: 100,
+            rate: 16,
+            delay: 255
+        })
+    );
+    assert_eq!(
+        all.sweep,
+        Some(Sweep {
+            semis: 95,
+            frames: 255
+        })
+    );
+
+    assert!(cart.instrument("nope").is_none());
+    assert!(!cart.audio().is_empty());
+    // A cart with no section at all still has none of this.
+    assert!(Cart::parse("__lua__\nx=1\n").unwrap().instruments().is_empty());
+}
+
+#[test]
+fn sfx_rows_resolve_instrument_names_to_their_waveform() {
+    let cart = Cart::parse(INST_CART).unwrap();
+    let sfx = cart.sfx(0).unwrap();
+    // The row's `wave` is the instrument's, so every PoC v1 consumer of
+    // SfxRow keeps working unchanged.
+    assert_eq!(sfx.rows[0], SfxRow::Note { note: 57, wave: 1, vol: 6 });
+    assert_eq!(sfx.rows[1], SfxRow::Note { note: 60, wave: 2, vol: 5 });
+    assert_eq!(sfx.rows[2], SfxRow::Rest);
+    assert_eq!(sfx.rows[3], SfxRow::Note { note: 43, wave: 3, vol: 7 });
+
+    // ...and the instrument itself is on the side.
+    let bank = cart.audio();
+    assert_eq!(
+        bank.instrument_at(sfx.row_mod(0).inst.unwrap()).unwrap().name,
+        "lead"
+    );
+    assert_eq!(
+        bank.instrument_at(sfx.row_mod(3).inst.unwrap()).unwrap().name,
+        "kick"
+    );
+    assert_eq!(sfx.row_mod(2).inst, None, "rests name no instrument");
+    assert_eq!(sfx.row_mod(99), Default::default(), "out of range is default");
+    assert_eq!(sfx.mods.len(), sfx.rows.len());
+}
+
+#[test]
+fn section_order_in_the_file_does_not_matter() {
+    // __instruments__ *after* the sfx that use it, and after __music__.
+    let text = "\
+__lua__
+x = 1
+
+__sfx__
+sfx 0 speed=auto
+A4 horn 6
+
+__music__
+bpm=90 rows_per_beat=2
+pat 0 : 0 - - -
+
+__instruments__
+inst horn wave=4 env=2,3,4
+";
+    let cart = Cart::parse(text).unwrap();
+    assert_eq!(cart.instrument("horn").unwrap().wave, 4);
+    assert_eq!(cart.sfx(0).unwrap().rows[0], SfxRow::Note { note: 57, wave: 4, vol: 6 });
+    // ...and `speed=auto` still saw the tempo line: 3600/(90*2) = 20.
+    assert_eq!(cart.sfx(0).unwrap().speed, 20);
+}
+
+#[test]
+fn malformed_instruments_are_line_numbered_cart_errors() {
+    fn inst_err(body: &str, line: usize, needle: &str) {
+        expect_cart_error(&format!("__lua__\nx=1\n\n__instruments__\n{body}"), line, needle);
+    }
+
+    inst_err("inst a wave=6\n", 1, "wave must be 0-5");
+    inst_err("inst a\n", 1, "missing `wave=<0-5>`");
+    inst_err("inst\n", 1, "expected `inst <name>");
+    inst_err("inst A wave=1\n", 1, "must match [a-z0-9_]+");
+    inst_err("inst a-b wave=1\n", 1, "must match [a-z0-9_]+");
+    inst_err("inst 3 wave=1\n", 1, "must not be a bare wave digit");
+    inst_err("inst 12 wave=1\n", 1, "must not be a bare wave digit");
+    inst_err("inst a wave=1\ninst a wave=2\n", 2, "duplicate instrument name");
+    inst_err("wave=1\n", 1, "expected `inst <name>");
+    inst_err("inst a wave=1 nope\n", 1, "unexpected \"nope\"");
+    inst_err("inst a wave=1 boom=2\n", 1, "unknown inst key");
+
+    // env
+    inst_err("inst a wave=1 env=1,2\n", 1, "env must be `env=<attack>,<decay>,<sustain>`");
+    inst_err("inst a wave=1 env=1,2,3,4\n", 1, "env must be");
+    inst_err("inst a wave=1 env=256,0,0\n", 1, "env attack must be 0-255");
+    inst_err("inst a wave=1 env=0,999,0\n", 1, "env decay must be 0-255");
+    inst_err("inst a wave=1 env=0,0,8\n", 1, "env sustain must be 0-7");
+    inst_err("inst a wave=1 env=x,0,0\n", 1, "env attack must be a number");
+
+    // vib
+    inst_err("inst a wave=1 vib=25,4\n", 1, "vib must be `vib=<cents>,<rate>,<delay>`");
+    inst_err("inst a wave=1 vib=0,4,0\n", 1, "vib cents must be 1-100");
+    inst_err("inst a wave=1 vib=101,4,0\n", 1, "vib cents must be 1-100");
+    inst_err("inst a wave=1 vib=25,0,0\n", 1, "vib rate must be 1-16");
+    inst_err("inst a wave=1 vib=25,17,0\n", 1, "vib rate must be 1-16");
+    inst_err("inst a wave=1 vib=25,4,256\n", 1, "vib delay must be 0-255");
+
+    // sweep
+    inst_err("inst a wave=1 sweep=-12\n", 1, "sweep must be `sweep=<semis>,<frames>`");
+    inst_err("inst a wave=1 sweep=-12,0\n", 1, "sweep frames must be 1-255");
+    inst_err("inst a wave=1 sweep=-12,256\n", 1, "sweep frames must be 1-255");
+    inst_err("inst a wave=1 sweep=97,4\n", 1, "sweep semitones must be -96-96");
+
+    // line numbers count from the section start, blank/comment lines included
+    inst_err("# note\n\ninst a wave=1\ninst b wave=9\n", 4, "wave must be 0-5");
+}
+
+#[test]
+fn unknown_instrument_names_are_reported_on_the_row() {
+    expect_cart_error(
+        "__lua__\nx=1\n\n__instruments__\ninst lead wave=1\n\n__sfx__\nsfx 0 speed=4\nA4 bass 6\n",
+        2,
+        "unknown instrument \"bass\"",
+    );
+    // The hint lists what the cart does define.
+    let err = Cart::parse(
+        "__lua__\nx=1\n\n__instruments__\ninst lead wave=1\n\n__sfx__\nsfx 0 speed=4\nA4 bass 6\n",
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("lead"), "{err}");
+
+    // With no __instruments__ section at all the message says so.
+    expect_cart_error(
+        "__lua__\nx=1\n\n__sfx__\nsfx 0 speed=4\nA4 bass 6\n",
+        2,
+        "no __instruments__ section",
+    );
+    // A numeric column 2 is still validated as a waveform, as in PoC v1.
+    expect_cart_error(
+        "__lua__\nx=1\n\n__instruments__\ninst lead wave=1\n\n__sfx__\nsfx 0 speed=4\nA4 9 6\n",
+        2,
+        "wave must be 0-5",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// PoC v2: the effect column
+// ---------------------------------------------------------------------------
+
+fn fx_of(text: &str) -> Fx {
+    let cart = Cart::parse(text).unwrap();
+    cart.sfx(0).unwrap().row_mod(0).fx.expect("row has an fx")
+}
+
+#[test]
+fn effect_column_round_trips() {
+    const HEAD: &str = "__lua__\nx=1\n\n__instruments__\ninst v wave=1 vib=30,8,4\n\n__sfx__\nsfx 0 speed=8\n";
+
+    assert_eq!(
+        fx_of(&format!("{HEAD}A4 1 6 arp3,7\n")),
+        Fx::Arp { a: 3, b: 7 }
+    );
+    assert_eq!(
+        fx_of(&format!("{HEAD}A4 1 6 arp0,24\n")),
+        Fx::Arp { a: 0, b: 24 }
+    );
+    assert_eq!(
+        fx_of(&format!("{HEAD}A4 1 6 sl+7\n")),
+        Fx::Slide { semis: 7 }
+    );
+    assert_eq!(fx_of(&format!("{HEAD}A4 1 6 sl-12\n")), Fx::Slide { semis: -12 });
+    assert_eq!(
+        fx_of(&format!("{HEAD}A4 1 6 sl5\n")),
+        Fx::Slide { semis: 5 },
+        "the + sign is optional"
+    );
+    assert_eq!(
+        fx_of(&format!("{HEAD}A4 1 6 fade-3\n")),
+        Fx::Fade { levels: -3 }
+    );
+    assert_eq!(
+        fx_of(&format!("{HEAD}A4 1 6 fade+2\n")),
+        Fx::Fade { levels: 2 }
+    );
+    assert_eq!(
+        fx_of(&format!("{HEAD}A4 1 6 vib50,4\n")),
+        Fx::Vibrato(Vib {
+            cents: 50,
+            rate: 4,
+            delay: 0
+        }),
+        "the explicit form has no delay"
+    );
+    // The bare form copies the row instrument's setting.
+    assert_eq!(
+        fx_of(&format!("{HEAD}A4 v 6 vib\n")),
+        Fx::Vibrato(Vib {
+            cents: 30,
+            rate: 8,
+            delay: 4
+        })
+    );
+    // Case-insensitive, like every other keyword in the format.
+    assert_eq!(fx_of(&format!("{HEAD}A4 1 6 ARP3,7\n")), Fx::Arp { a: 3, b: 7 });
+    // Absent by default.
+    let cart = Cart::parse(&format!("{HEAD}A4 1 6\n---\n")).unwrap();
+    assert_eq!(cart.sfx(0).unwrap().row_mod(0).fx, None);
+    assert_eq!(cart.sfx(0).unwrap().row_mod(1).fx, None);
+}
+
+#[test]
+fn malformed_effects_are_line_numbered_cart_errors() {
+    const HEAD: &str =
+        "__lua__\nx=1\n\n__instruments__\ninst v wave=1 vib=30,8,4\ninst p wave=1\n\n__sfx__\nsfx 0 speed=8\n";
+    fn fx_err(row: &str, needle: &str) {
+        expect_cart_error(
+            &format!("{HEAD}{row}\n"),
+            2, // section-relative: line 1 is the `sfx` header
+            needle,
+        );
+    }
+
+    fx_err("A4 1 6 nope", "unknown effect \"nope\"");
+    fx_err("A4 1 6 arp3", "arp must be `arp<a>,<b>`");
+    fx_err("A4 1 6 arp3,25", "arp second offset must be 0-24");
+    fx_err("A4 1 6 arp-1,3", "arp first offset must be 0-24");
+    fx_err("A4 1 6 sl25", "slide semitones must be -24-24");
+    fx_err("A4 1 6 sl-25", "slide semitones must be -24-24");
+    fx_err("A4 1 6 slx", "slide semitones must be a number");
+    fx_err("A4 1 6 vib101,4", "vib cents must be 1-100");
+    fx_err("A4 1 6 vib50,17", "vib rate must be 1-16");
+    fx_err("A4 1 6 vib50", "vib must be `vib` or `vib<cents>,<rate>`");
+    fx_err("A4 1 6 fade8", "fade levels must be -7-7");
+    fx_err("A4 1 6 fade-8", "fade levels must be -7-7");
+    // Bare `vib` needs an instrument that has one.
+    fx_err("A4 p 6 vib", "bare `vib` needs the row's instrument \"p\"");
+    fx_err("A4 1 6 vib", "bare `vib` needs the row to name an instrument");
+    // Only one effect per row.
+    fx_err("A4 1 6 sl+2 vib", "expected `NOTE WAVE VOL [FX]`");
+}
+
+// ---------------------------------------------------------------------------
+// PoC v2: tempo sugar
+// ---------------------------------------------------------------------------
+
+#[test]
+fn speed_auto_resolves_from_the_bpm_line() {
+    fn speed_for(bpm: &str) -> u8 {
+        let text = format!(
+            "__lua__\nx=1\n\n__sfx__\nsfx 0 speed=auto\nA4 1 6\n\n__music__\n{bpm}\npat 0 : 0 - - -\n"
+        );
+        Cart::parse(&text).unwrap().sfx(0).unwrap().speed
+    }
+    // round(3600 / (bpm * rows_per_beat)); rows_per_beat defaults to 4.
+    assert_eq!(speed_for("bpm=120"), 8); // 7.5 -> 8
+    assert_eq!(speed_for("bpm=120 rows_per_beat=4"), 8);
+    assert_eq!(speed_for("bpm=125"), 7); // 7.2 -> 7
+    assert_eq!(speed_for("bpm=112"), 8); // 8.035 -> 8
+    assert_eq!(speed_for("bpm=90 rows_per_beat=2"), 20); // exactly 20
+    assert_eq!(speed_for("bpm=150 rows_per_beat=4"), 6); // exactly 6
+    assert_eq!(speed_for("bpm=100 rows_per_beat=8"), 5); // 4.5 -> 5 (half up)
+    assert_eq!(speed_for("bpm=60 rows_per_beat=1"), 60); // one row per beat
+    assert_eq!(speed_for("BPM=120"), 8, "case-insensitive");
+
+    let cart = Cart::parse(INST_CART).unwrap();
+    let tempo = cart.audio().tempo().unwrap();
+    assert_eq!((tempo.bpm, tempo.rows_per_beat, tempo.speed), (120, 4, 8));
+    // No bpm line -> no tempo.
+    assert!(Cart::parse(PARSE_CART).unwrap().audio().tempo().is_none());
+    // Numeric speeds are untouched by the presence of a tempo line.
+    assert_eq!(cart.sfx(0).unwrap().speed, 8);
+}
+
+#[test]
+fn speed_auto_without_a_bpm_line_is_an_error() {
+    expect_cart_error(
+        "__lua__\nx=1\n\n__sfx__\nsfx 0 speed=auto\nA4 1 6\n",
+        1,
+        "speed=auto needs a `bpm=",
+    );
+    // A __music__ section that does not open with bpm= does not count.
+    expect_cart_error(
+        "__lua__\nx=1\n\n__sfx__\nsfx 0 speed=auto\nA4 1 6\n\n__music__\npat 0 : 0 - - -\n",
+        1,
+        "speed=auto needs a `bpm=",
+    );
+}
+
+#[test]
+fn malformed_tempo_lines_are_line_numbered_cart_errors() {
+    const SFX: &str = "__lua__\nx=1\n\n__sfx__\nsfx 0 speed=4\nA4 1 6\n\n__music__\n";
+    expect_cart_error(&format!("{SFX}bpm=0\npat 0 : 0 - - -\n"), 1, "bpm must be 1-1000");
+    expect_cart_error(&format!("{SFX}bpm=1001\npat 0 : 0 - - -\n"), 1, "bpm must be 1-1000");
+    expect_cart_error(&format!("{SFX}bpm=x\npat 0 : 0 - - -\n"), 1, "bpm must be a number");
+    expect_cart_error(
+        &format!("{SFX}bpm=120 rows_per_beat=0\npat 0 : 0 - - -\n"),
+        1,
+        "rows_per_beat must be 1-16",
+    );
+    expect_cart_error(
+        &format!("{SFX}bpm=120 rows_per_beat=17\npat 0 : 0 - - -\n"),
+        1,
+        "rows_per_beat must be 1-16",
+    );
+    expect_cart_error(
+        &format!("{SFX}bpm=120 wat=2\npat 0 : 0 - - -\n"),
+        1,
+        "unknown tempo key",
+    );
+    expect_cart_error(&format!("{SFX}bpm=120 wat\npat 0 : 0 - - -\n"), 1, "unexpected \"wat\"");
+    // 3600/(1000*16) rounds to 0, which is not a legal speed.
+    expect_cart_error(
+        &format!("{SFX}bpm=1000 rows_per_beat=16\npat 0 : 0 - - -\n"),
+        1,
+        "gives speed=0",
+    );
+    // ...and 3600/(1*1) = 3600 is past 255.
+    expect_cart_error(&format!("{SFX}bpm=1\npat 0 : 0 - - -\n"), 1, "gives speed=900");
+    // The tempo line may only be the first line.
+    expect_cart_error(
+        &format!("{SFX}pat 0 : 0 - - -\nbpm=120\n"),
+        2,
+        "must be the first line of __music__",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// PoC v2: backward compatibility
+// ---------------------------------------------------------------------------
+
+/// A flat instrument, a cart with unused instruments and the bare-digit cart
+/// must all render the same samples: the new paths are strictly additive.
+#[test]
+fn flat_instruments_are_bit_identical_to_bare_wave_digits() {
+    const PLAY: &str = "__lua__\nfunction _init() sfx(0, 0) end\n";
+    const ROWS: &str = "\nA4 {} 6\nC5 {} 5\n---\nE5 {} 7\n";
+
+    let bare = format!(
+        "{PLAY}\n__sfx__\nsfx 0 speed=6 loop=0,3{}",
+        ROWS.replace("{}", "2")
+    );
+    let named = format!(
+        "{PLAY}\n__instruments__\ninst horn wave=2\n\n__sfx__\nsfx 0 speed=6 loop=0,3{}",
+        ROWS.replace("{}", "horn")
+    );
+    let unused = format!(
+        "{PLAY}\n__instruments__\ninst horn wave=2 env=4,4,4 vib=50,4,0 sweep=-5,5\n\n__sfx__\nsfx 0 speed=6 loop=0,3{}",
+        ROWS.replace("{}", "2")
+    );
+
+    let a = hash_samples(&run_audio(&bare, 0, &[0u8; 60]));
+    let b = hash_samples(&run_audio(&named, 0, &[0u8; 60]));
+    let c = hash_samples(&run_audio(&unused, 0, &[0u8; 60]));
+    assert_eq!(a, b, "a flat instrument must not change a single sample");
+    assert_eq!(a, c, "an unused instrument must not change a single sample");
+}
+
+// ---------------------------------------------------------------------------
+// PoC v2: runtime trajectories
+// ---------------------------------------------------------------------------
+
+/// Volume level reported for channel 0 on each of the next `frames` frames.
+fn vol_trajectory(con: &mut Console, frames: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(frames);
+    for _ in 0..frames {
+        out.push(con.audio_channels()[0].vol);
+        con.step(0).unwrap();
+    }
+    out
+}
+
+/// Peak |sample| in the tail of each frame, where the 64-sample slew limiter
+/// has certainly settled on that frame's target level.
+fn frame_tail_peaks(samples: &[f32], frames: usize) -> Vec<f32> {
+    (0..frames)
+        .map(|f| {
+            let base = f * SAMPLES_PER_FRAME;
+            samples[base + 300..base + SAMPLES_PER_FRAME]
+                .iter()
+                .fold(0.0f32, |m, s| m.max(s.abs()))
+        })
+        .collect()
+}
+
+#[test]
+fn envelopes_shape_the_volume_frame_by_frame() {
+    let cart = "\
+__lua__
+function _init() sfx(0, 0) end
+
+__instruments__
+inst horn wave=2 env=4,4,3
+
+__sfx__
+sfx 0 speed=32
+A4 horn 7
+";
+    let mut con = console(cart);
+    // attack 4 (0 -> 7 by frame 3), decay 4 (7 -> 3 by frame 7), then sustain.
+    assert_eq!(
+        vol_trajectory(&mut con, 12),
+        vec![2, 4, 5, 7, 6, 5, 4, 3, 3, 3, 3, 3]
+    );
+
+    // The same shape is audible: a square wave's |sample| *is* the envelope.
+    let mut con = console(cart);
+    let samples = collect(&mut con, 12);
+    let peaks = frame_tail_peaks(&samples, 12);
+    let want: Vec<f32> = [2, 4, 5, 7, 6, 5, 4, 3, 3, 3, 3, 3]
+        .iter()
+        .map(|&v| v as f32 / 7.0 * 0.25)
+        .collect();
+    for (i, (got, want)) in peaks.iter().zip(&want).enumerate() {
+        assert!(
+            (got - want).abs() < 1e-6,
+            "frame {i}: heard {got}, wanted {want}"
+        );
+    }
+}
+
+#[test]
+fn fade_ramps_the_volume_to_its_endpoint_within_the_row() {
+    let cart = "\
+__lua__
+function _init() sfx(0, 0) end
+
+__sfx__
+sfx 0 speed=8
+A4 2 7 fade-7
+A4 2 1 fade+4
+";
+    let mut con = console(cart);
+    let vols = vol_trajectory(&mut con, 16);
+    assert_eq!(&vols[..8], &[7, 6, 5, 4, 3, 2, 1, 0], "fade-7 reaches silence");
+    assert_eq!(&vols[8..], &[1, 2, 2, 3, 3, 4, 4, 5], "fade+4 reaches 1+4");
+}
+
+#[test]
+fn a_percussion_instrument_sweeps_its_pitch_down_and_decays() {
+    let cart = "\
+__lua__
+function _init() sfx(0, 0) end
+
+__instruments__
+inst kick wave=3 sweep=-12,5 env=0,6,0
+
+__sfx__
+sfx 0 speed=30
+C3 kick 7
+";
+    let mut con = console(cart);
+    assert_eq!(
+        vol_trajectory(&mut con, 8),
+        vec![6, 5, 3, 2, 1, 0, 0, 0],
+        "env=0,6,0 decays from 7 to silence in six frames"
+    );
+
+    // The pitch really falls an octave over five frames.
+    let mut con = console(cart);
+    let samples = collect(&mut con, 6);
+    let f0 = frame_freq(&samples, 0);
+    let f5 = frame_freq(&samples, 4);
+    assert!((f0 - 130.8).abs() < 6.0, "frame 0 should be C3, got {f0}");
+    assert!((f5 - 69.3).abs() < 6.0, "frame 4 should be near C2, got {f5}");
+}
+
+/// Estimate the fundamental of one rendered frame from its rising zero
+/// crossings. Only meaningful for the deterministic non-noise waveforms.
+fn frame_freq(samples: &[f32], frame: usize) -> f32 {
+    let f = &samples[frame * SAMPLES_PER_FRAME..(frame + 1) * SAMPLES_PER_FRAME];
+    let mut edges = Vec::new();
+    for i in 1..f.len() {
+        if f[i - 1] < 0.0 && f[i] >= 0.0 {
+            edges.push(i);
+        }
+    }
+    assert!(edges.len() >= 2, "frame {frame} has no periodic content");
+    let span = (edges[edges.len() - 1] - edges[0]) as f32;
+    SAMPLE_RATE as f32 * (edges.len() - 1) as f32 / span
+}
+
+#[test]
+fn a_slide_glides_linearly_across_its_row() {
+    // One 60-frame row, sliding a whole octave up from A4.
+    let cart = "\
+__lua__
+function _init() sfx(0, 0) end
+
+__sfx__
+sfx 0 speed=60
+A4 2 7 sl+12
+";
+    let mut con = console(cart);
+    let samples = collect(&mut con, 60);
+
+    let start = frame_freq(&samples, 0);
+    assert!((start - 440.0).abs() < 4.0, "starts at A4, got {start}");
+
+    // Halfway through the row the offset is exactly +6 semitones, which the
+    // note table resolves to D#5.
+    let mid = frame_freq(&samples, 30);
+    let want = freq_at(57, 6.0);
+    assert!(
+        (mid - want).abs() / want < 0.02,
+        "midpoint should be {want} Hz (D#5), got {mid}"
+    );
+    // Quarter and three-quarter points are +3 and +9 semitones.
+    for (frame, semis) in [(15u32, 3.0f32), (45.0 as usize as u32, 9.0)] {
+        let got = frame_freq(&samples, frame as usize);
+        let want = freq_at(57, semis);
+        assert!(
+            (got - want).abs() / want < 0.02,
+            "frame {frame} should be {want} Hz, got {got}"
+        );
+    }
+    // The last frame is one step short of the full octave: the offset lands
+    // on the *boundary*, so a slide glides into whatever plays next.
+    let last = frame_freq(&samples, 59);
+    let full = freq_at(57, 12.0);
+    assert!(last < full && last > freq_at(57, 11.0) * 0.99, "{last} vs {full}");
+}
+
+#[test]
+fn an_arpeggio_switches_pitch_every_two_frames() {
+    let cart = "\
+__lua__
+function _init() sfx(0, 0) end
+
+__sfx__
+sfx 0 speed=12
+A4 2 7 arp4,7
+";
+    let mut con = console(cart);
+    let samples = collect(&mut con, 12);
+    // 0, 0, +4, +4, +7, +7, then back round.
+    let want = [0.0f32, 0.0, 4.0, 4.0, 7.0, 7.0, 0.0, 0.0, 4.0, 4.0, 7.0, 7.0];
+    for (frame, semis) in want.iter().enumerate() {
+        let got = frame_freq(&samples, frame);
+        let want = freq_at(57, *semis);
+        assert!(
+            (got - want).abs() / want < 0.03,
+            "frame {frame}: heard {got}, wanted {want} (+{semis} semitones)"
+        );
+    }
+}
+
+#[test]
+fn vibrato_bends_the_pitch_around_the_note() {
+    // rate 4 -> a 16-frame LFO cycle: peak at frame 4, trough at frame 12.
+    let cart = "\
+__lua__
+function _init() sfx(0, 0) end
+
+__instruments__
+inst wob wave=2 vib=100,4,0
+
+__sfx__
+sfx 0 speed=40
+A4 wob 7
+";
+    let mut con = console(cart);
+    let samples = collect(&mut con, 20);
+    let flat = frame_freq(&samples, 0);
+    let up = frame_freq(&samples, 4);
+    let down = frame_freq(&samples, 12);
+    assert!((flat - 440.0).abs() < 4.0, "{flat}");
+    assert!(up > flat + 15.0, "peak {up} should be ~+100 cents of {flat}");
+    assert!(down < flat - 15.0, "trough {down} should be ~-100 cents");
+    // Delay holds the pitch still first.
+    let delayed = "\
+__lua__
+function _init() sfx(0, 0) end
+
+__instruments__
+inst wob wave=2 vib=100,4,20
+
+__sfx__
+sfx 0 speed=40
+A4 wob 7
+";
+    let mut con = console(delayed);
+    let samples = collect(&mut con, 26);
+    assert!((frame_freq(&samples, 4) - 440.0).abs() < 4.0, "still delayed");
+    assert!(frame_freq(&samples, 24) > 455.0, "vibrato has started");
+}
+
+#[test]
+fn effect_state_resets_at_the_next_note_row() {
+    // A slide row followed by a plain row: the second row starts at its own
+    // pitch, not where the slide left off.
+    let cart = "\
+__lua__
+function _init() sfx(0, 0) end
+
+__sfx__
+sfx 0 speed=30
+A4 2 7 sl+12
+A4 2 7
+";
+    let mut con = console(cart);
+    let samples = collect(&mut con, 60);
+    let end_of_slide = frame_freq(&samples, 29);
+    assert!(end_of_slide > 800.0, "the slide climbed: {end_of_slide}");
+    let after = frame_freq(&samples, 31);
+    assert!((after - 440.0).abs() < 5.0, "row 2 is back at A4, got {after}");
+}
+
+// ---------------------------------------------------------------------------
+// PoC v2: the soundtest cart
+// ---------------------------------------------------------------------------
+
+/// Menu navigation: `entry` presses of DOWN (with a release between them, so
+/// `btnp` sees each one), then A to play.
+fn soundtest_script(entry: usize, play_frames: usize) -> Vec<u8> {
+    let mut log = Vec::new();
+    for _ in 0..entry {
+        log.push(input::DOWN);
+        log.push(0);
+    }
+    log.push(input::A);
+    log.extend(std::iter::repeat_n(0u8, play_frames));
+    log
+}
+
+#[test]
+fn the_soundtest_cart_loads_and_describes_itself() {
+    let cart = Cart::parse(SOUNDTEST).unwrap();
+    assert_eq!(cart.title(), "Sound Test");
+    // 11 instruments, 20 sfx, one self-looping pattern per menu entry.
+    assert_eq!(cart.instruments().len(), 11);
+    assert_eq!(cart.audio().sfx_ids().count(), 20);
+    let pats: Vec<u8> = cart.audio().pattern_ids().collect();
+    assert_eq!(pats, (0..=12).collect::<Vec<u8>>());
+    for id in 0..=12u8 {
+        assert_eq!(
+            cart.pattern(id).unwrap().end,
+            PatternEnd::Loop(id),
+            "pattern {id} should loop on itself so it can be auditioned"
+        );
+    }
+    // The whole point of the cart: every waveform, and each of the four fx.
+    let waves: Vec<u8> = (0..6)
+        .map(|w| cart.sfx(w).unwrap().rows[0])
+        .map(|r| match r {
+            SfxRow::Note { wave, .. } => wave,
+            SfxRow::Rest => 99,
+        })
+        .collect();
+    assert_eq!(waves, vec![0, 1, 2, 3, 4, 5]);
+    let mut kinds = [false; 4];
+    for id in cart.audio().sfx_ids() {
+        for m in &cart.sfx(id).unwrap().mods {
+            match m.fx {
+                Some(Fx::Arp { .. }) => kinds[0] = true,
+                Some(Fx::Slide { .. }) => kinds[1] = true,
+                Some(Fx::Vibrato(_)) => kinds[2] = true,
+                Some(Fx::Fade { .. }) => kinds[3] = true,
+                None => {}
+            }
+        }
+    }
+    assert_eq!(kinds, [true, true, true, true], "arp/slide/vib/fade all used");
+    // Instruments cover envelopes, vibrato and sweeps.
+    assert!(cart.instruments().iter().any(|i| i.env.is_some()));
+    assert!(cart.instruments().iter().any(|i| i.vib.is_some()));
+    assert!(cart.instruments().iter().any(|i| i.sweep.is_some()));
+    assert_eq!(cart.instrument("kick").unwrap().sweep.unwrap().semis, -14);
+    // Tempo sugar drives most of it.
+    let tempo = cart.audio().tempo().unwrap();
+    assert_eq!((tempo.bpm, tempo.rows_per_beat, tempo.speed), (112, 4, 8));
+}
+
+#[test]
+fn every_soundtest_entry_makes_a_different_noise() {
+    let mut seen: Vec<u64> = Vec::new();
+    for entry in 0..13 {
+        let samples = run_audio(SOUNDTEST, 0, &soundtest_script(entry, 90));
+        // Percussive entries are mostly gaps, so the bar is "clearly audible",
+        // not "always ringing".
+        let audible = samples.iter().filter(|s| **s != 0.0).count();
+        assert!(
+            audible > 8_000,
+            "entry {entry} is nearly silent ({audible} nonzero samples)"
+        );
+        let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(peak > 0.1, "entry {entry} is too quiet to judge (peak {peak})");
+        assert!(samples.iter().all(|s| (-1.0..=1.0).contains(s)));
+        let h = hash_samples(&samples);
+        assert!(!seen.contains(&h), "entry {entry} sounds like an earlier one");
+        seen.push(h);
+    }
+}
+
+#[test]
+fn the_soundtest_menu_navigates_and_stops() {
+    let mut con = Console::new(SOUNDTEST, 0).unwrap();
+    // Nothing plays until A.
+    for _ in 0..4 {
+        con.step(0).unwrap();
+    }
+    assert_eq!(con.music_pattern(), None);
+    assert!(con.audio_frame().iter().all(|&s| s == 0.0));
+
+    // Down twice, then play: entry index 2 is pattern 2.
+    for mask in soundtest_script(2, 3) {
+        con.step(mask).unwrap();
+    }
+    assert_eq!(con.music_pattern(), Some(2));
+    assert!(con.audio_frame().iter().any(|&s| s != 0.0));
+
+    // Up wraps to the top of the list...
+    for mask in [input::UP, 0, input::UP, 0, input::UP, 0, input::A, 0] {
+        con.step(mask).unwrap();
+    }
+    assert_eq!(con.music_pattern(), Some(12), "UP past the top wraps around");
+
+    // ...and B stops.
+    con.step(input::B).unwrap();
+    assert_eq!(con.music_pattern(), None);
+    let tail = collect(&mut con, 6);
+    assert!(
+        tail[SAMPLES_PER_FRAME..].iter().all(|&s| s == 0.0),
+        "B should silence the console"
+    );
+}
+
+/// Golden hash of the soundtest cart's "FULL GROOVE" entry (menu index 12,
+/// pattern 12): FNV-1a over the little-endian bits of the samples rendered
+/// while navigating there and then playing 150 frames, seed 0.
+///
+/// This is the PoC v2 counterpart of [`DEMO_AUDIO_GOLDEN`]: it pins the
+/// envelope, vibrato, sweep, arpeggio, slide and fade paths all at once. If it
+/// changes, the new synth vocabulary changed.
+const SOUNDTEST_GROOVE_GOLDEN: u64 = 0x98fd_7369_d783_2a07;
+
+#[test]
+fn soundtest_groove_matches_the_golden_hash() {
+    let hash = hash_samples(&run_audio(SOUNDTEST, 0, &soundtest_script(12, 150)));
+    assert_eq!(
+        hash, SOUNDTEST_GROOVE_GOLDEN,
+        "soundtest groove audio changed; new hash is {hash:#018x}"
+    );
+}
+
+#[test]
+fn the_soundtest_groove_is_deterministic_across_consoles_and_seeds() {
+    let script = soundtest_script(12, 150);
+    let a = run_audio(SOUNDTEST, 0, &script);
+    let b = run_audio(SOUNDTEST, 0, &script);
+    let c = run_audio(SOUNDTEST, 999_999, &script);
+    assert_eq!(a.len(), script.len() * SAMPLES_PER_FRAME);
+    for (i, ((x, y), z)) in a.iter().zip(&b).zip(&c).enumerate() {
+        assert_eq!(
+            x.to_bits(),
+            y.to_bits(),
+            "sample {i} (frame {}) diverged between consoles",
+            i / SAMPLES_PER_FRAME
+        );
+        assert_eq!(
+            x.to_bits(),
+            z.to_bits(),
+            "sample {i} (frame {}) depends on the PRNG seed",
+            i / SAMPLES_PER_FRAME
+        );
+    }
+    assert!(a.iter().any(|&s| s != 0.0));
 }
 
 // ---------------------------------------------------------------------------

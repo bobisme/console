@@ -1,11 +1,12 @@
 //! Cart text format parser (`__meta__` / `__lua__` / `__sprites__` /
-//! `__sfx__` / `__music__`).
+//! `__instruments__` / `__sfx__` / `__music__`).
 
 use std::collections::BTreeMap;
 
-use crate::audio::{AudioBank, Pattern, Sfx};
+use crate::audio::{AudioBank, Instrument, Pattern, Sfx};
 use crate::error::Error;
 use crate::gfx::{SHEET_LEN, SHEET_W, SpriteSheet};
+use crate::gfx_meta::GfxMeta;
 
 /// A parsed cart.
 #[derive(Debug, Clone)]
@@ -14,6 +15,7 @@ pub struct Cart {
     lua: String,
     sprites: Box<SpriteSheet>,
     audio: AudioBank,
+    gfx_meta: GfxMeta,
     /// Raw text of every section, keyed by section name (without the `__`
     /// markers), including unknown ones so tools can round-trip them.
     sections: BTreeMap<String, String>,
@@ -61,15 +63,19 @@ impl Cart {
         };
 
         let audio = AudioBank::parse(
+            sections.get("instruments").map(String::as_str),
             sections.get("sfx").map(String::as_str),
             sections.get("music").map(String::as_str),
         )?;
+
+        let gfx_meta = GfxMeta::parse(sections.get("gfx_meta").map(String::as_str))?;
 
         Ok(Cart {
             meta,
             lua,
             sprites,
             audio,
+            gfx_meta,
             sections,
         })
     }
@@ -97,6 +103,23 @@ impl Cart {
     /// Pattern `id` from `__music__`.
     pub fn pattern(&self, id: u8) -> Option<&Pattern> {
         self.audio.pattern(id)
+    }
+
+    /// The cart's `__instruments__` entries, in declaration order (empty if
+    /// the section is absent).
+    pub fn instruments(&self) -> &[Instrument] {
+        self.audio.instruments()
+    }
+
+    /// One instrument by name.
+    pub fn instrument(&self, name: &str) -> Option<&Instrument> {
+        self.audio.instrument(name)
+    }
+
+    /// The cart's `__gfx_meta__` sprite/anim authoring data (empty if the
+    /// section is absent). Purely descriptive: the runtime never reads it.
+    pub fn gfx_meta(&self) -> &GfxMeta {
+        &self.gfx_meta
     }
 
     /// All `key=value` pairs from `__meta__`.

@@ -108,7 +108,9 @@ fn every_button_bit_maps_to_its_index() {
 
 #[test]
 fn out_of_range_button_indices_are_false() {
-    let mut con = cart("function _update() a = btn(-1) b = btn(6) c = btnp(99) end");
+    // BUTTON_COUNT is 7 (indices 0..=6, since the MENU button was added), so
+    // the first genuinely out-of-range index is 7.
+    let mut con = cart("function _update() a = btn(-1) b = btn(7) c = btnp(99) end");
     con.step(0xff).unwrap();
     for name in ["a", "b", "c"] {
         assert_eq!(

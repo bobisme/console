@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::session::{Session, SessionError};
+use crate::sprite::view::{self, Image, RenderOpts};
 use crate::value::lua_to_json;
 
 /// A JSON-RPC error: `code` + `message` are always present, `data` carries
@@ -158,6 +159,12 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "audio_events" => m_audio_events(session, params),
         "audio_stats" => m_audio_stats(session, params),
         "spectrogram" => m_spectrogram(session, params),
+        "sprite_render" => m_sprite_render(session, params),
+        "sprite_strip" => m_sprite_strip(session, params),
+        "sprite_onion" => m_sprite_onion(session, params),
+        "sprite_diff" => m_sprite_diff(session, params),
+        "sprite_ghost" => m_sprite_ghost(session, params),
+        "sprite_lint" => m_sprite_lint(session, params),
         other => Err(RpcErr::new(-32601, format!("unknown method {other:?}"))),
     }
 }
@@ -351,4 +358,120 @@ fn m_spectrogram(session: &Session, params: &Value) -> Result<Value, RpcErr> {
         "width": spec.width,
         "height": spec.height,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Sprite inspection verbs — the RPC mirrors of `console-agent sprite ...`,
+// all against the session's currently loaded cart (no stepping involved).
+// ---------------------------------------------------------------------------
+
+fn u32_param(params: &Value, name: &str) -> Option<u32> {
+    params.get(name).and_then(Value::as_u64).map(|v| v as u32)
+}
+
+fn bool_param(params: &Value, name: &str) -> bool {
+    params.get(name).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn required_str<'a>(params: &'a Value, method: &str, name: &str) -> Result<&'a str, RpcErr> {
+    string_param(params, name)
+        .ok_or_else(|| RpcErr::bad_params(format!("{method} requires a {name:?} string param")))
+}
+
+fn required_u32(params: &Value, method: &str, name: &str) -> Result<u32, RpcErr> {
+    u32_param(params, name).ok_or_else(|| {
+        RpcErr::bad_params(format!("{method} requires a non-negative integer {name:?} param"))
+    })
+}
+
+/// Shared tail of every image verb: write the PNG where the caller asked and
+/// report back what was drawn.
+fn write_image(path: &str, image: &Image) -> Result<Value, RpcErr> {
+    std::fs::write(path, &image.png)
+        .map_err(|e| RpcErr::bad_params(format!("cannot write {path:?}: {e}")))?;
+    Ok(json!({
+        "ok": true,
+        "path": path,
+        "width": image.width,
+        "height": image.height,
+        "frames": image.frames,
+    }))
+}
+
+fn zoom_param(params: &Value) -> u32 {
+    u32_param(params, "zoom").unwrap_or(view::DEFAULT_ZOOM)
+}
+
+fn m_sprite_render(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let target = required_str(params, "sprite_render", "target")?;
+    let path = required_str(params, "sprite_render", "path")?;
+    let opts = RenderOpts {
+        frame: u32_param(params, "frame"),
+        zoom: zoom_param(params),
+        grid: bool_param(params, "grid"),
+        indices: bool_param(params, "indices"),
+        anchor: bool_param(params, "anchor"),
+    };
+    let image = view::render(session.console()?.cart(), target, &opts).map_err(RpcErr::bad_params)?;
+    write_image(path, &image)
+}
+
+fn m_sprite_strip(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let anim = required_str(params, "sprite_strip", "anim")?;
+    let path = required_str(params, "sprite_strip", "path")?;
+    let image = view::strip(
+        session.console()?.cart(),
+        anim,
+        zoom_param(params),
+        bool_param(params, "anchor"),
+    )
+    .map_err(RpcErr::bad_params)?;
+    write_image(path, &image)
+}
+
+fn m_sprite_onion(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let anim = required_str(params, "sprite_onion", "anim")?;
+    let path = required_str(params, "sprite_onion", "path")?;
+    let frame = u32_param(params, "frame").unwrap_or(0);
+    let image = view::onion(session.console()?.cart(), anim, frame, zoom_param(params))
+        .map_err(RpcErr::bad_params)?;
+    write_image(path, &image)
+}
+
+fn m_sprite_diff(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let anim = required_str(params, "sprite_diff", "anim")?;
+    let path = required_str(params, "sprite_diff", "path")?;
+    let a = required_u32(params, "sprite_diff", "frame_a")?;
+    let b = required_u32(params, "sprite_diff", "frame_b")?;
+    let image = view::diff(session.console()?.cart(), anim, a, b, zoom_param(params))
+        .map_err(RpcErr::bad_params)?;
+    write_image(path, &image)
+}
+
+fn m_sprite_ghost(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let anim = required_str(params, "sprite_ghost", "anim")?;
+    let path = required_str(params, "sprite_ghost", "path")?;
+    let image = view::ghost(session.console()?.cart(), anim, zoom_param(params))
+        .map_err(RpcErr::bad_params)?;
+    write_image(path, &image)
+}
+
+fn m_sprite_lint(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let anims: Vec<String> = match params.get("anims") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| RpcErr::bad_params("sprite_lint \"anims\" must be strings"))
+            })
+            .collect::<Result<Vec<String>, RpcErr>>()?,
+        Some(_) => {
+            return Err(RpcErr::bad_params(
+                "sprite_lint \"anims\" must be an array of anim names",
+            ));
+        }
+    };
+    view::lint(session.console()?.cart(), &anims).map_err(RpcErr::bad_params)
 }

@@ -25,6 +25,7 @@ mod cart;
 mod error;
 mod font;
 mod gfx;
+mod gfx_meta;
 mod rng;
 mod state;
 
@@ -35,15 +36,17 @@ use mlua::{Function, Lua, StdLib, Value};
 
 pub use crate::api::BUTTON_COUNT;
 pub use crate::audio::{
-    AudioBank, AudioFrame, CHANNEL_COUNT, ChannelInfo, MAX_ID, MAX_SFX_ROWS, MAX_VOL, NOTE_FREQ,
-    Pattern, PatternEnd, RAMP_SAMPLES, SAMPLE_RATE, SAMPLES_PER_FRAME, Sfx, SfxRow, WAVE_COUNT,
-    parse_note,
+    ARP_FRAMES_PER_STEP, AudioBank, AudioFrame, CENTS_TO_RATIO, CHANNEL_COUNT, ChannelInfo, Env,
+    Fx, Instrument, LFO_STEPS, MAX_FX_SEMIS, MAX_ID, MAX_SFX_ROWS, MAX_VIB_CENTS, MAX_VIB_RATE,
+    MAX_VOL, NOTE_FREQ, Pattern, PatternEnd, RAMP_SAMPLES, RowMod, SAMPLE_RATE, SAMPLES_PER_FRAME,
+    Sfx, SfxRow, Sweep, Tempo, Vib, WAVE_COUNT, freq_at, parse_note,
 };
 pub use crate::cart::Cart;
 pub use crate::error::Error;
 pub use crate::gfx::{
     FB_LEN, Framebuffer, PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN, SHEET_W, SPRITE_SIZE, SpriteSheet,
 };
+pub use crate::gfx_meta::{AnimDef, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
 /// Re-exported so hosts (`console-agent`, `console-web`) can talk to the VM
 /// without pinning their own, possibly different, mlua version.

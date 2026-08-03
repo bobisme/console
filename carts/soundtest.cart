@@ -1,0 +1,570 @@
+__meta__
+title=Sound Test
+author=console-core
+version=0
+
+__lua__
+-- sound test -- a listening session for the PoC v2 synth.
+--
+-- UP/DOWN browse the menu, A plays the highlighted entry (every entry is a
+-- self-looping music pattern, so it repeats until you stop it), B stops.
+-- Nothing here reads the clock or rnd(): the picture is a pure function of
+-- (selection, playing, frame counter).
+
+local entries = {
+  { n = "WAVE 0  PULSE 12.5%", p = 0,
+    d1 = "THIN AND NASAL. CUTS THROUGH", d2 = "A BUSY MIX. CLASSIC NES LEAD." },
+  { n = "WAVE 1  PULSE 25%", p = 1,
+    d1 = "ROUNDER THAN 12.5%. THE",       d2 = "DEFAULT MELODY VOICE." },
+  { n = "WAVE 2  SQUARE 50%", p = 2,
+    d1 = "HOLLOW, WOODY, LOUDEST ODD",    d2 = "HARMONICS. GOOD FOR FLUTES." },
+  { n = "WAVE 3  TRIANGLE", p = 3,
+    d1 = "SOFT AND DARK. BASS AND",       d2 = "KICK DRUMS LIVE HERE." },
+  { n = "WAVE 4  SAW", p = 4,
+    d1 = "BRIGHT AND BUZZY, EVERY",       d2 = "HARMONIC. BIG LEADS, STRINGS." },
+  { n = "WAVE 5  NOISE", p = 5,
+    d1 = "LFSR NOISE CLOCKED FROM THE",   d2 = "NOTE. PITCHED HISS, DRUMS." },
+  { n = "VIBRATO  OFF", p = 6,
+    d1 = "SUSTAINED FLUTE PHRASE, DEAD",  d2 = "FLAT. PLAY THIS THEN THE NEXT." },
+  { n = "VIBRATO  ON", p = 7,
+    d1 = "SAME PHRASE, VIB=40,8,8: 40",   d2 = "CENTS AT 7.5HZ. WIDER AT THE END." },
+  { n = "ARPEGGIO CHORDS", p = 8,
+    d1 = "ARP3,7 / ARP4,7 OVER A BASS.",  d2 = "ONE VOICE FAKING A TRIAD." },
+  { n = "PITCH SLIDES", p = 9,
+    d1 = "SL+7, SL-3, SL+12, SL-14.",     d2 = "PORTAMENTO ACROSS EACH ROW." },
+  { n = "DRUM KIT", p = 10,
+    d1 = "KICK/SNARE/HAT AS INSTRUMENTS", d2 = "- SWEEP + ENV, NO SAMPLES." },
+  { n = "TWO-PULSE ECHO", p = 11,
+    d1 = "CH0 MELODY, CH1 THE SAME TWO",  d2 = "ROWS LATER AND QUIETER." },
+  { n = "FULL GROOVE", p = 12,
+    d1 = "BASS, VIBRATO LEAD, DRUMS AND", d2 = "AN ARP BED. ALL FOUR CHANNELS." },
+}
+
+local sel = 1
+local playing = 0     -- 0 = stopped, else the entry index
+local frame = 0
+
+function _init()
+  sel = 1
+  playing = 0
+  frame = 0
+end
+
+function _update()
+  frame = frame + 1
+  if btnp(2) then
+    sel = sel - 1
+    if sel < 1 then sel = #entries end
+  end
+  if btnp(3) then
+    sel = sel + 1
+    if sel > #entries then sel = 1 end
+  end
+  if btnp(4) then
+    music(entries[sel].p)
+    playing = sel
+  end
+  if btnp(5) then
+    music(-1)
+    playing = 0
+  end
+end
+
+-- A level meter driven by nothing fancier than the entry index: 13 bars, the
+-- first `sel` of them lit, the lit tip blinking while something is playing.
+local function meter(y)
+  for i = 1, #entries do
+    local x = 6 + (i - 1) * 10
+    local h = 2 + i
+    local c = 15
+    if i <= sel then
+      c = 11
+      if i > #entries - 3 then c = 8 elseif i > #entries - 6 then c = 10 end
+      if i == sel and playing ~= 0 and frame % 30 < 15 then c = 12 end
+    end
+    rectfill(x, y + 16 - h, x + 6, y + 16, c)
+  end
+end
+
+function _draw()
+  cls(1)
+
+  -- header
+  rectfill(0, 0, 143, 16, 15)
+  print("SOUND TEST", 4, 3, 12)
+  print("A PLAY  B STOP", 4, 10, 13)
+
+  -- menu
+  local top = 22
+  for i = 1, #entries do
+    local y = top + (i - 1) * 9
+    local c = 13
+    if i == sel then
+      rectfill(2, y - 1, 141, y + 6, 15)
+      c = 12
+      print(">", 4, y, 10)
+    end
+    if i == playing then
+      print("*", 136, y, 11)
+      c = 11
+    end
+    print(entries[i].n, 10, y, c)
+  end
+
+  -- meter
+  meter(150)
+
+  -- description of the highlighted entry
+  local e = entries[sel]
+  rectfill(2, 176, 141, 205, 15)
+  print(e.n, 5, 179, 10)
+  print(e.d1, 5, 188, 12)
+  print(e.d2, 5, 195, 12)
+
+  -- status
+  if playing ~= 0 then
+    print("PLAYING: " .. entries[playing].n, 4, 214, 11)
+    print("PATTERN " .. entries[playing].p .. "  LOOPING", 4, 222, 13)
+  else
+    print("STOPPED", 4, 214, 8)
+    print("UP/DOWN BROWSE   A AUDITIONS", 4, 222, 13)
+  end
+  print("13 ENTRIES  " .. sel .. "/" .. #entries, 4, 236, 6)
+  print("112 BPM  4 ROWS/BEAT  SPEED=AUTO", 4, 244, 6)
+end
+
+__instruments__
+# Melodic voices. `env`'s sustain is an *absolute* level, not a fraction of
+# the row volume, so an instrument that carries an envelope is only used with
+# row volumes at or above its sustain - otherwise quiet rows swell back up to
+# it. Voices that want per-row dynamics (lead, chord) simply carry no env.
+#
+# Vibrato rate is LFO phase units per frame out of 64, so one cycle takes
+# 64/rate frames: rate 8 = 7.5Hz, rate 12 = 11.25Hz. The delay has to fit
+# inside the row or the vibrato never gets to speak - the 24-frame flute rows
+# can afford 8 frames of delay, the 8-frame groove rows only 2.
+inst lead      wave=1
+inst lead_vib  wave=1 vib=20,12,2
+inst flute     wave=2 env=8,10,5
+inst flute_vib wave=2 env=8,10,5 vib=40,8,8
+inst pluck     wave=1 env=0,10,3
+inst bass      wave=3 env=0,6,4
+inst chord     wave=0
+inst echo      wave=1 env=0,6,2
+
+# Percussion is just instruments: an ordinary note row gives the sweep its
+# start pitch and the envelope does the rest.
+inst kick      wave=3 sweep=-14,5 env=0,6,0
+inst snare     wave=5 sweep=-5,4  env=0,8,0
+inst hat       wave=5 env=0,2,0
+
+__sfx__
+# ---- 0-5: the same 16-row phrase on each of the six waveforms -------------
+# Bare wave digits: no envelope, no vibrato - exactly PoC v1 behaviour, so
+# what you hear is the raw oscillator.
+sfx 0 speed=auto
+A4 0 6
+E5 0 5
+C5 0 6
+E5 0 5
+D5 0 6
+E5 0 5
+C5 0 6
+A4 0 5
+B4 0 6
+E5 0 5
+D5 0 6
+B4 0 5
+C5 0 6
+A4 0 5
+E4 0 6
+---
+
+sfx 1 speed=auto
+A4 1 6
+E5 1 5
+C5 1 6
+E5 1 5
+D5 1 6
+E5 1 5
+C5 1 6
+A4 1 5
+B4 1 6
+E5 1 5
+D5 1 6
+B4 1 5
+C5 1 6
+A4 1 5
+E4 1 6
+---
+
+sfx 2 speed=auto
+A4 2 6
+E5 2 5
+C5 2 6
+E5 2 5
+D5 2 6
+E5 2 5
+C5 2 6
+A4 2 5
+B4 2 6
+E5 2 5
+D5 2 6
+B4 2 5
+C5 2 6
+A4 2 5
+E4 2 6
+---
+
+sfx 3 speed=auto
+A4 3 6
+E5 3 5
+C5 3 6
+E5 3 5
+D5 3 6
+E5 3 5
+C5 3 6
+A4 3 5
+B4 3 6
+E5 3 5
+D5 3 6
+B4 3 5
+C5 3 6
+A4 3 5
+E4 3 6
+---
+
+sfx 4 speed=auto
+A4 4 6
+E5 4 5
+C5 4 6
+E5 4 5
+D5 4 6
+E5 4 5
+C5 4 6
+A4 4 5
+B4 4 6
+E5 4 5
+D5 4 6
+B4 4 5
+C5 4 6
+A4 4 5
+E4 4 6
+---
+
+sfx 5 speed=auto
+A4 5 6
+E5 5 5
+C5 5 6
+E5 5 5
+D5 5 6
+E5 5 5
+C5 5 6
+A4 5 5
+B4 5 6
+E5 5 5
+D5 5 6
+B4 5 5
+C5 5 6
+A4 5 5
+E4 5 6
+---
+
+# ---- 6/7: the same sustained phrase, vibrato off then on -----------------
+sfx 6 speed=24
+E5 flute 5
+G5 flute 5
+A5 flute 5
+G5 flute 5
+E5 flute 5
+D5 flute 5
+E5 flute 5
+---
+
+sfx 7 speed=24
+E5 flute_vib 5
+G5 flute_vib 5
+A5 flute_vib 5
+G5 flute_vib 5
+E5 flute_vib 5
+D5 flute_vib 5
+E5 flute_vib 5 vib70,10
+---
+
+# ---- 8/9: arpeggio chords over a root bass -------------------------------
+sfx 8 speed=16
+A4 pluck 6 arp3,7
+A4 pluck 5 arp3,7
+F4 pluck 6 arp4,7
+F4 pluck 5 arp4,7
+C4 pluck 6 arp4,7
+C4 pluck 5 arp4,7
+E4 pluck 6 arp4,7
+E4 pluck 5 arp4,7
+
+sfx 9 speed=16
+A2 bass 6
+A2 bass 5
+F2 bass 6
+F2 bass 5
+C3 bass 6
+C3 bass 5
+E2 bass 6
+E2 bass 5
+
+# ---- 10: portamento ------------------------------------------------------
+sfx 10 speed=16
+C4 lead 6 sl+7
+G4 lead 6
+G4 lead 6 sl-3
+E4 lead 6
+E4 lead 6 sl+12
+E5 lead 6
+E5 lead 6 sl-14
+D4 lead 5
+
+# ---- 11-13: the drum kit, one limb per channel ---------------------------
+sfx 11 speed=auto
+C3 kick 7
+---
+---
+---
+---
+---
+C3 kick 5
+---
+C3 kick 7
+---
+---
+C3 kick 4
+---
+---
+C3 kick 5
+---
+
+sfx 12 speed=auto
+---
+---
+---
+---
+D5 snare 6
+---
+---
+---
+---
+---
+---
+---
+D5 snare 6
+---
+D5 snare 3
+---
+
+sfx 13 speed=auto
+B6 hat 4
+---
+B6 hat 2
+---
+B6 hat 3
+---
+B6 hat 2
+---
+B6 hat 4
+---
+B6 hat 2
+---
+B6 hat 3
+---
+B6 hat 2
+B6 hat 3
+
+# ---- 14/15: the two-pulse echo trick -------------------------------------
+# Same melody twice: ch1 is hand-authored two rows late and four levels down.
+sfx 14 speed=auto
+E5 lead 6
+---
+B4 lead 6
+---
+C5 lead 6
+---
+G4 lead 6
+---
+A4 lead 6
+---
+E4 lead 6
+---
+A4 lead 6
+---
+B4 lead 5
+---
+
+sfx 15 speed=auto
+---
+---
+E5 echo 3
+---
+B4 echo 3
+---
+C5 echo 3
+---
+G4 echo 3
+---
+A4 echo 3
+---
+E4 echo 3
+---
+A4 echo 3
+---
+
+# ---- 16-19: the full groove, all four channels ---------------------------
+sfx 16 speed=auto
+A2 bass 6
+---
+A3 bass 4
+---
+A2 bass 6
+---
+E3 bass 4
+---
+F2 bass 6
+---
+F3 bass 4
+---
+F2 bass 6
+---
+C3 bass 4
+---
+C3 bass 6
+---
+C4 bass 4
+---
+C3 bass 6
+---
+G3 bass 4
+---
+G2 bass 6
+---
+G3 bass 4
+---
+G2 bass 6
+---
+D3 bass 4
+---
+
+sfx 17 speed=auto
+A4 lead_vib 6
+---
+C5 lead_vib 6
+---
+E5 lead_vib 6 sl+2
+E5 lead_vib 6
+D5 lead_vib 6
+---
+C5 lead_vib 6
+---
+A4 lead_vib 6 arp3,7
+A4 lead_vib 6 arp3,7
+---
+---
+F4 lead_vib 5
+---
+E4 lead_vib 6 vib60,10
+---
+G4 lead_vib 6
+---
+C5 lead_vib 6 fade-4
+C5 lead_vib 2 fade-2
+---
+---
+B4 lead_vib 6
+---
+D5 lead_vib 6 sl-2
+D5 lead_vib 6
+B4 lead_vib 6 arp4,7
+B4 lead_vib 6 arp4,7
+---
+---
+
+sfx 18 speed=auto
+C3 kick 7
+B6 hat 3
+B6 hat 2
+---
+D5 snare 6
+B6 hat 2
+C3 kick 5
+B6 hat 2
+C3 kick 6
+B6 hat 3
+---
+B6 hat 2
+D5 snare 6
+B6 hat 2
+C3 kick 4
+B6 hat 2
+C3 kick 7
+B6 hat 3
+B6 hat 2
+---
+D5 snare 6
+B6 hat 2
+C3 kick 5
+B6 hat 2
+C3 kick 6
+B6 hat 3
+C3 kick 4
+B6 hat 2
+D5 snare 6
+D5 snare 4
+D5 snare 5
+D5 snare 6
+
+sfx 19 speed=auto
+A4 chord 3 arp3,7
+A4 chord 3 arp3,7
+A4 chord 3 arp3,7
+A4 chord 3 arp3,7
+A4 chord 3 arp3,7
+A4 chord 3 arp3,7
+A4 chord 3 arp3,7
+A4 chord 3 arp3,7
+A4 chord 3 arp3,8
+A4 chord 3 arp3,8
+A4 chord 3 arp3,8
+A4 chord 3 arp3,8
+A4 chord 3 arp3,8
+A4 chord 3 arp3,8
+A4 chord 3 arp3,8
+A4 chord 3 arp3,8
+G4 chord 3 arp5,9
+G4 chord 3 arp5,9
+G4 chord 3 arp5,9
+G4 chord 3 arp5,9
+G4 chord 3 arp5,9
+G4 chord 3 arp5,9
+G4 chord 3 arp5,9
+G4 chord 3 arp5,9
+G4 chord 3 arp4,7
+G4 chord 3 arp4,7
+G4 chord 3 arp4,7
+G4 chord 3 arp4,7
+G4 chord 3 arp4,7
+G4 chord 3 arp4,7
+G4 chord 3 arp4,7
+G4 chord 3 arp4,7
+
+__music__
+bpm=112 rows_per_beat=4
+pat 0  loop=0  : 0 - - -
+pat 1  loop=1  : 1 - - -
+pat 2  loop=2  : 2 - - -
+pat 3  loop=3  : 3 - - -
+pat 4  loop=4  : 4 - - -
+pat 5  loop=5  : 5 - - -
+pat 6  loop=6  : 6 - - -
+pat 7  loop=7  : 7 - - -
+pat 8  loop=8  : 9 8 - -
+pat 9  loop=9  : 10 - - -
+pat 10 loop=10 : 11 12 13 -
+pat 11 loop=11 : 14 15 - -
+pat 12 loop=12 : 16 17 18 19

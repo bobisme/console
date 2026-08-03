@@ -19,13 +19,15 @@ pub mod input_spec;
 pub mod oneshot;
 pub mod rpc;
 pub mod session;
+pub mod sprite;
 pub mod value;
 
 const USAGE: &str = "\
 usage:
   console-agent run <cart> [--frames N] [--input SPEC] [--screenshot out.png] [--screen-text] [--eval CODE] [--seed N]
                     [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats]
-  console-agent serve";
+  console-agent serve
+  console-agent sprite <render|strip|onion|diff|ghost|lint|edit> ...";
 
 /// Entry point shared by `main.rs` and integration tests: takes a full
 /// `argv` (including `argv[0]`) and returns the process exit code.
@@ -39,6 +41,7 @@ pub fn cli_main(args: &[String]) -> i32 {
                 2
             }
         },
+        Some("sprite") => sprite::cli_sprite(&args[2..]),
         Some("serve") => {
             let stdin = std::io::stdin();
             let stdout = std::io::stdout();
