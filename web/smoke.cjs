@@ -2,12 +2,13 @@
 // Headless smoke test for web/engine.js — the same C ABI the packed HTML uses,
 // driven from Node (SINGLE_FILE means there is nothing else to load).
 //
-//   node web/smoke.cjs [path/to/engine.js] [path/to/cart]
+//   node web/smoke.cjs
+//   node web/smoke.cjs --cart path/to/game.cart [--frames 180] [--input-mask 16] [--expect-audio]
+//   node web/smoke.cjs --generic [path/to/engine.js] [path/to/cart]
 //
-// Exits non-zero on the first failure. Verifies: module loads, cart allocates
-// and initialises, 120 frames run error-free with input applied mid-run, the
-// framebuffer is both non-trivial and actually animating, and — the headline
-// check — that the wasm synth renders audio bit-identical to the native build.
+// The default demo run includes its native golden hashes. --cart selects a
+// reusable generic gate: it verifies runtime invariants without expecting the
+// selected game's pixels or samples to match demo.cart.
 
 "use strict";
 
@@ -15,12 +16,100 @@ const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.resolve(__dirname, "..");
-const enginePath = process.argv[2] || path.join(repoRoot, "web", "engine.js");
-const cartPath = process.argv[3] || path.join(repoRoot, "carts", "demo.cart");
+const USAGE = `usage:
+  node web/smoke.cjs
+  node web/smoke.cjs --cart CART [--engine ENGINE] [--frames N] [--input-mask MASK] [--expect-audio]
+  node web/smoke.cjs --generic [ENGINE] [CART] [--frames N] [--input-mask MASK] [--expect-audio]
+
+With no options, runs the demo-specific golden checks. --cart implies
+--generic; generic mode checks runtime invariants without demo hashes.`;
+
+function parseArgs(args) {
+  const options = {
+    enginePath: path.join(repoRoot, "web", "engine.js"),
+    cartPath: path.join(repoRoot, "carts", "demo.cart"),
+    frames: 120,
+    generic: false,
+    expectAudio: false,
+    inputMask: null,
+  };
+  const positional = [];
+  let explicitEngine = false;
+  let explicitCart = false;
+
+  const valueAfter = (flag, index) => {
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) {
+      throw new Error(`${flag} requires a value`);
+    }
+    return value;
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "-h" || arg === "--help") {
+      console.log(USAGE);
+      process.exit(0);
+    } else if (arg === "--generic") {
+      options.generic = true;
+    } else if (arg === "--expect-audio") {
+      options.expectAudio = true;
+    } else if (arg === "--engine") {
+      options.enginePath = path.resolve(valueAfter(arg, i++));
+      explicitEngine = true;
+    } else if (arg === "--cart") {
+      options.cartPath = path.resolve(valueAfter(arg, i++));
+      options.generic = true;
+      explicitCart = true;
+    } else if (arg === "--frames") {
+      const raw = valueAfter(arg, i++);
+      const frames = Number(raw);
+      if (!Number.isSafeInteger(frames) || frames < 2) {
+        throw new Error(`--frames must be an integer >= 2, got ${JSON.stringify(raw)}`);
+      }
+      options.frames = frames;
+    } else if (arg === "--input-mask") {
+      const raw = valueAfter(arg, i++);
+      const mask = Number(raw);
+      if (!Number.isSafeInteger(mask) || mask < 0 || mask > 0x7f) {
+        throw new Error(`--input-mask must be an integer in 0..127, got ${JSON.stringify(raw)}`);
+      }
+      options.inputMask = mask;
+      options.generic = true;
+    } else if (arg.startsWith("--")) {
+      throw new Error(`unknown option ${JSON.stringify(arg)}`);
+    } else {
+      positional.push(arg);
+    }
+  }
+
+  if (positional.length > 2) throw new Error("expected at most ENGINE and CART positionals");
+  if (explicitEngine && positional.length > 0) {
+    throw new Error("ENGINE was supplied both positionally and with --engine");
+  }
+  if (explicitCart && positional.length > 1) {
+    throw new Error("CART was supplied both positionally and with --cart");
+  }
+  if (positional[0]) options.enginePath = path.resolve(positional[0]);
+  if (positional[1]) options.cartPath = path.resolve(positional[1]);
+  if (!options.generic && options.frames !== 120) {
+    throw new Error("--frames requires --generic or --cart because golden hashes use 120 frames");
+  }
+  return options;
+}
+
+let options;
+try {
+  options = parseArgs(process.argv.slice(2));
+} catch (e) {
+  console.error(`error: ${e.message}\n\n${USAGE}`);
+  process.exit(2);
+}
+
+const { enginePath, cartPath } = options;
 
 const W = 144, H = 256, FB_LEN = W * H;
 const BTN_RIGHT = 2;
-const FRAMES = 120;
 const AUDIO_LEN = 735; // console_core::SAMPLES_PER_FRAME (44100 / 60)
 
 // Golden hashes from the *native* console-core build, demo.cart, seed 0,
@@ -106,6 +195,7 @@ function hex64(v) {
 }
 
 (async function main() {
+  console.log(`${options.generic ? "GENERIC" : "GOLDEN"} SMOKE: ${path.relative(process.cwd(), cartPath)}`);
   const ConsoleEngine = require(enginePath);
   check(typeof ConsoleEngine === "function", "engine.js exports a ConsoleEngine factory");
 
@@ -174,9 +264,16 @@ function hex64(v) {
 
   const dpalBytes = () => Module.HEAPU8.slice(con_dpal(), con_dpal() + 16);
   const IDENTITY_PAL = Uint8Array.from({ length: 16 }, (_, i) => i);
-  check(equalBytes(dpalBytes(), IDENTITY_PAL),
-        "con_dpal is identity for a cart that never calls pal(c0, c1, 1)",
-        Array.from(dpalBytes()).join(","));
+  const initialDpal = dpalBytes();
+  if (options.generic) {
+    check(initialDpal.length === 16 && initialDpal.every((c) => c <= 15),
+          "con_dpal gives 16 valid display-palette indices",
+          Array.from(initialDpal).join(","));
+  } else {
+    check(equalBytes(initialDpal, IDENTITY_PAL),
+          "con_dpal is identity for a cart that never calls pal(c0, c1, 1)",
+          Array.from(initialDpal).join(","));
+  }
 
   // --- audio: silence before the first step ---
   const audioPtrFirst = con_audio();
@@ -188,50 +285,79 @@ function hex64(v) {
         `got ${audio0.length}`);
   check(audio0.every((s) => s === 0), "frame 0 (pre-step) is silence");
 
-  // --- run 120 frames, RIGHT held for frames 30..90 ---
+  // --- run multiple frames; retain demo's input probe in golden mode ---
   const fbPtrFirst = con_fb();
   let frame1 = null, frameLast = null;
-  let audio1 = null;
   let errAt = null;
+  let invalidPixelAt = null;
+  let fbPointerChangedAt = null;
+  let audioPointerChangedAt = null;
+  let audioPeak = 0;
+  let audioBounded = true;
 
-  for (let f = 1; f <= FRAMES; f++) {
-    const input = f >= 30 && f <= 90 ? BTN_RIGHT : 0;
+  for (let f = 1; f <= options.frames; f++) {
+    const input = options.inputMask !== null
+      ? options.inputMask
+      : (!options.generic && f >= 30 && f <= 90 ? BTN_RIGHT : 0);
     con_step(input);
     const err = currentError();
     if (err && errAt === null) errAt = `frame ${f}: ${err}`;
-    if (f === 1) {
-      frame1 = Module.HEAPU8.slice(con_fb(), con_fb() + FB_LEN);
-      audio1 = audioFrame();
+    const fbPtr = con_fb();
+    const audioPtr = con_audio();
+    if (fbPtr !== fbPtrFirst && fbPointerChangedAt === null) {
+      fbPointerChangedAt = `frame ${f}: ${fbPtrFirst} -> ${fbPtr}`;
     }
-    if (f === FRAMES) frameLast = Module.HEAPU8.slice(con_fb(), con_fb() + FB_LEN);
+    if (audioPtr !== audioPtrFirst && audioPointerChangedAt === null) {
+      audioPointerChangedAt = `frame ${f}: ${audioPtrFirst} -> ${audioPtr}`;
+    }
+    const fb = Module.HEAPU8.slice(fbPtr, fbPtr + FB_LEN);
+    const badPixel = fb.findIndex((value) => value > 15);
+    if (badPixel !== -1 && invalidPixelAt === null) {
+      invalidPixelAt = `frame ${f}, byte ${badPixel}, value ${fb[badPixel]}`;
+    }
+    const audio = audioFrame();
+    for (const sample of audio) {
+      audioPeak = Math.max(audioPeak, Math.abs(sample));
+      if (!Number.isFinite(sample) || Math.abs(sample) > 1) audioBounded = false;
+    }
+    if (f === 1) {
+      frame1 = fb;
+    }
+    if (f === options.frames) frameLast = fb;
   }
 
-  check(errAt === null, `con_error null across ${FRAMES} frames`, errAt);
-  check(con_fb() === fbPtrFirst, "con_fb pointer is stable across calls");
-  check(con_audio() === audioPtrFirst, "con_audio pointer is stable across calls");
+  check(errAt === null, `con_error null across ${options.frames} frames`, errAt);
+  check(frame1 !== null && frameLast !== null,
+        `stepped ${options.frames} frames and captured endpoints`);
+  check(fbPointerChangedAt === null, "con_fb pointer is stable across calls", fbPointerChangedAt);
+  check(audioPointerChangedAt === null,
+        "con_audio pointer is stable across calls", audioPointerChangedAt);
 
-  // The demo cart starts music in _init, so frame 1 already has sound.
-  const peak1 = audio1.reduce((m, s) => Math.max(m, Math.abs(s)), 0);
-  check(peak1 > 0, "frame 1 audio is nonzero (music starts in _init)",
-        `peak=${peak1}`);
-  check(audio1.every((s) => Math.abs(s) <= 1), "samples stay clamped to [-1, 1]",
-        `peak=${peak1}`);
+  check(audioBounded, "all samples are finite and clamped to [-1, 1]",
+        `peak=${audioPeak}`);
+  if (options.expectAudio || !options.generic) {
+    check(audioPeak > 0, `audio is nonzero across ${options.frames} frames`,
+          `peak=${audioPeak}`);
+  }
 
   check(
     frame1.length === FB_LEN && frameLast.length === FB_LEN,
     `framebuffer is ${FB_LEN} bytes (${W}x${H})`
   );
   const d1 = distinct(frame1), dN = distinct(frameLast);
-  check(d1 >= 3, "frame 1 has >= 3 distinct palette values", `got ${d1}`);
-  check(dN >= 3, `frame ${FRAMES} has >= 3 distinct palette values`, `got ${dN}`);
-  check(!equalBytes(frame1, frameLast), `frame 1 differs from frame ${FRAMES}`);
-  const maxIdx = Math.max(...frameLast);
-  check(maxIdx <= 15, "all palette indices are in 0..15", `max=${maxIdx}`);
+  const minDistinct = options.generic ? 2 : 3;
+  check(d1 >= minDistinct, `frame 1 has >= ${minDistinct} distinct palette values`, `got ${d1}`);
+  check(dN >= minDistinct,
+        `frame ${options.frames} has >= ${minDistinct} distinct palette values`, `got ${dN}`);
+  if (!options.generic) {
+    check(!equalBytes(frame1, frameLast), `frame 1 differs from frame ${options.frames}`);
+  }
+  check(invalidPixelAt === null, "all stepped palette indices are in 0..15", invalidPixelAt);
 
   // --- THE headline check: wasm audio is bit-identical to native ---
   // Fresh console, seed 0, 120 frames of input mask 0 — exactly the run that
   // console-core's native test suite hashes.
-  {
+  if (!options.generic) {
     const bytes = new TextEncoder().encode(fs.readFileSync(cartPath, "utf8"));
     const p = con_alloc(bytes.length);
     Module.HEAPU8.set(bytes, p);
@@ -240,15 +366,15 @@ function hex64(v) {
     check(audioFrame().every((s) => s === 0), "con_init resets audio to silence");
 
     const chunks = [];
-    for (let f = 0; f < FRAMES; f++) {
+    for (let f = 0; f < options.frames; f++) {
       con_step(0);
       chunks.push(audioFrame());
     }
     const err = currentError();
-    check(err === null, `golden run is error-free across ${FRAMES} frames`, err);
+    check(err === null, `golden run is error-free across ${options.frames} frames`, err);
 
     const total = chunks.reduce((n, c) => n + c.length, 0);
-    check(total === FRAMES * AUDIO_LEN, `collected ${FRAMES * AUDIO_LEN} samples`,
+    check(total === options.frames * AUDIO_LEN, `collected ${options.frames * AUDIO_LEN} samples`,
           `got ${total}`);
 
     const audioHash = hashSamples(chunks);

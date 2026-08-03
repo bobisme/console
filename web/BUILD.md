@@ -85,6 +85,26 @@ FNV-1a-64 prime `0x100000001b3`; `smoke.cjs` mirrors that multiplier
 (`CORE_HASH_PRIME`) so the constants line up. The two primes agree in the low 40
 bits, so a mismatch shows up only in the top three nibbles of the hash.
 
+To run the same structural WASM gate against an authored cart without comparing
+it to `demo.cart`'s hashes, select the cart explicitly:
+
+```bash
+node web/smoke.cjs --cart carts/lantern-leap.cart
+node web/smoke.cjs --cart carts/lantern-leap.cart --frames 180 --input-mask 16 --expect-audio
+```
+
+`--cart` implies generic mode. It checks that the cart loads, steps for multiple
+frames without a surfaced runtime error, produces a non-uniform framebuffer
+whose palette indices stay valid, keeps the framebuffer and audio pointers
+stable, and emits only finite audio samples in `[-1, 1]`. `--expect-audio`
+additionally requires at least one nonzero sample. The synthetic display-palette
+and failing-cart probes still run, so generic mode also validates `con_dpal` and
+`con_error`; only the demo-specific framebuffer/audio hashes and animation
+comparison are skipped. `--input-mask` holds a numeric seven-button mask on
+every stepped frame (for example, `16` is A), which is useful for starting a
+title-screen game before asserting audio. Use `--engine PATH` to exercise a
+different engine build, or `node web/smoke.cjs --help` for the full syntax.
+
 Then pack and eyeball the result:
 
 ```bash

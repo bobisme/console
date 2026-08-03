@@ -8,6 +8,7 @@ check:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
     node web/smoke.cjs
+    node web/smoke.cjs --cart carts/lantern-leap.cart --frames 180 --input-mask 16 --expect-audio
 
 # Install the current local agent and packer binaries, even at the same version.
 install:
