@@ -53,6 +53,26 @@ cheap for asserting "pixel (x,y) is color c" without vision. Save states
 are replays (`seed` + input log), so they reproduce everything, audio
 included.
 
+Once an interaction is worth repeating, encode it as strict versioned JSON
+and run it as one deterministic session:
+
+```bash
+console-agent playtest game.cart --scenario playtests/game.json \
+  --artifacts /tmp/game-playtest --format json
+```
+
+Version 1 scenarios contain ordered `eval`, `input`, `assert`, and `capture`
+stages. `eval` is the pre-step hook missing from oneshot `run`; `input` holds
+one `L R U D A B M` mask for an exact frame count; `assert` compares the Lua
+result to an exact JSON value; and `capture` can write screenshots, screen
+text, WAVs, spectrograms, audio events, and audio stats beneath the explicit
+artifact root. Capture paths must be relative and cannot contain `.` or `..`.
+Normalized capture paths must also be unique. Screenshot `zoom` is 1–16
+(default 1); spectrogram `cell` is 1–8 (default 4) and covers at most 3600
+frames; audio-stat `window_frames` is 1–36000 (default 6). Scenarios may step
+at most 36000 input frames, and invalid button names fail validation before
+the cart runs.
+
 ## Cart anatomy
 
 ```

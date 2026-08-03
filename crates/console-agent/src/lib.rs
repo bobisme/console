@@ -18,6 +18,7 @@
 //! - [`music`] — music authoring tooling: score (the song as text), lint
 //!   (JSON diagnostics), piano-roll (score-level PNG) and render (a WAV of a
 //!   whole song, loop detection included).
+//! - [`playtest`] — ordered, versioned scenario execution over one session.
 
 pub mod artifact;
 pub mod audio;
@@ -25,6 +26,7 @@ pub mod input_spec;
 pub mod map;
 pub mod music;
 pub mod oneshot;
+pub mod playtest;
 pub mod rpc;
 pub mod session;
 pub mod sprite;
@@ -41,7 +43,7 @@ pub const SERVE_USAGE: &str = "usage:\n  console-agent serve";
 /// inventory so a newly-added leaf cannot silently disappear from discovery.
 pub fn usage() -> String {
     format!(
-        "{RUN_USAGE}\n  console-agent serve\n  console-agent sprite <{}> ...\n  console-agent map <{}> ...\n  console-agent music <{}> ...",
+        "{RUN_USAGE}\n  console-agent playtest <cart> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console-agent serve\n  console-agent sprite <{}> ...\n  console-agent map <{}> ...\n  console-agent music <{}> ...",
         sprite::COMMANDS.join("|"),
         map::COMMANDS.join("|"),
         music::COMMANDS.join("|")
@@ -73,6 +75,7 @@ pub fn cli_main(args: &[String]) -> i32 {
                 2
             }
         },
+        Some("playtest") => playtest::cli_playtest(&args[2..]),
         Some("sprite") => sprite::cli_sprite(&args[2..]),
         Some("map") => map::cli_map(&args[2..]),
         Some("music") => music::cli_music(&args[2..]),

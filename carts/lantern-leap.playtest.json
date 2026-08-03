@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "seed": 424242,
+  "stages": [
+    {
+      "name": "start_game",
+      "op": "input",
+      "frames": 1,
+      "buttons": "A"
+    },
+    {
+      "name": "settle_title_transition",
+      "op": "input",
+      "frames": 20,
+      "buttons": ""
+    },
+    {
+      "name": "warp_to_lower_ember",
+      "op": "eval",
+      "code": "dev_warp(48,449)"
+    },
+    {
+      "name": "collect_lower_ember",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "settle_ember_flash",
+      "op": "input",
+      "frames": 12,
+      "buttons": ""
+    },
+    {
+      "name": "ember_count",
+      "op": "assert",
+      "code": "return dev_status().embers",
+      "equals": 1
+    },
+    {
+      "name": "lower_tower_artifacts",
+      "op": "capture",
+      "screenshot": "lower-tower.png",
+      "zoom": 4,
+      "screen_text": "lower-tower.txt",
+      "wav": "lower-tower.wav",
+      "spectrogram": "lower-tower-spectrum.png",
+      "audio_events": "lower-tower-events.json",
+      "audio_stats": "lower-tower-stats.json",
+      "window_frames": 6,
+      "cell": 1
+    }
+  ]
+}

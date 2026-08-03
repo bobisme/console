@@ -100,6 +100,19 @@ pull a screenshot or the framebuffer as text (`screen_text`), `eval` Lua,
 and inspect audio without ears (`audio_state`, `audio_events`,
 `audio_stats`, `spectrogram`). Full method list in SPEC.md.
 
+For repeatable multi-stage acceptance, use a versioned playtest scenario
+instead of hand-driving an RPC session:
+
+```bash
+console-agent playtest carts/lantern-leap.cart \
+  --scenario carts/lantern-leap.playtest.json \
+  --artifacts /tmp/lantern-playtest --format json
+```
+
+Scenario stages run in file order and can evaluate Lua, hold an input mask for
+an exact frame count, compare an evaluated value to JSON, and capture
+screenshots, screen text, WAVs, spectrograms, audio events, and signal stats.
+
 ## Development
 
 This repo uses a bones/maw workflow for changes — see

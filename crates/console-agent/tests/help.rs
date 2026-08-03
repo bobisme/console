@@ -21,6 +21,7 @@ fn top_level_help_is_complete_and_successful() {
         assert!(text.contains("sprite <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke>"));
         assert!(text.contains("map <render|dump|lint|edit|poke>"));
         assert!(text.contains("music <score|lint|piano-roll|render|edit|import-abc>"));
+        assert!(text.contains("playtest <cart> --scenario <scenario.json>"));
     }
 }
 
@@ -29,6 +30,7 @@ fn command_family_and_leaf_help_use_stdout_and_exit_zero() {
     for (args, expected) in [
         (&["run", "--help"][..], "console-agent run <cart>"),
         (&["serve", "--help"][..], "console-agent serve"),
+        (&["playtest", "--help"][..], "Scenario format (version 1)"),
         (&["sprite", "--help"][..], "console-agent sprite gif"),
         (
             &["sprite", "render", "--help"][..],

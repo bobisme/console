@@ -381,6 +381,41 @@ directly (no stepping): `console-agent sprite
 <render|dump|lint|edit|poke>`, `console-agent music
 <score|lint|piano-roll|render|edit|import-abc>`.
 
+For a repeatable multi-stage session, `console-agent playtest <cart>
+--scenario <scenario.json> [--artifacts DIR] [--seed N] [--format
+text|pretty|json]` executes strict, versioned JSON in order. Version 1 stages
+are:
+
+- `{"op":"eval","code":"..."}` — evaluate a Lua chunk immediately;
+- `{"op":"input","frames":N,"buttons":"RA"}` — step a fixed input mask;
+- `{"op":"assert","code":"return ...","equals":<json>}` — exact JSON
+  comparison of the evaluated value;
+- `{"op":"capture",...}` — write one or more `screenshot`, `screen_text`,
+  `wav`, `spectrogram`, `audio_events`, or `audio_stats` artifacts.
+
+Every stage may have a unique `name`. A scenario declares `version: 1` and an
+optional seed; `--seed` overrides it. Captures require `--artifacts`, use
+relative unique paths beneath that root, and reject absolute paths, `.`/`..`
+components, symlink traversal, and paths that alias after normalization.
+
+Capture fields are strict and typed. `screenshot` and `screen_text` capture the
+current framebuffer. `zoom` is an integer from 1 through 16 (default 1) used by
+`screenshot`. `wav` renders the retained audio between optional integer
+`from_frame` and `to_frame` bounds (defaults: start/end of retained audio).
+`spectrogram` visualizes that same range; `cell` is an integer from 1 through 8
+(default 4), and a spectrogram range may span at most 3600 frames.
+`audio_events` emits events at or after `from_frame` (default 0).
+`audio_stats` groups audio into `window_frames`, an integer from 1 through
+36000 (default 6). A scenario may step at most 36000 input frames in total.
+Each input stage requires `frames >= 1`; `buttons` is a string containing only
+`L R U D A B M` (whitespace and separators accepted by the input parser).
+
+Execution stops at the first failing stage and reports its index, frame range,
+expected/actual values, logs, and artifacts.
+Exit 0 means every stage passed, 1 means a stage failed, and 2 means invalid
+CLI/schema/setup input. JSON output is an object envelope with `scenario`,
+`stages`, and `advice` fields.
+
 ## Single-file HTML (`console-pack`)
 
 `console-pack <cart> -o game.html [--engine <path to engine.js>]`
