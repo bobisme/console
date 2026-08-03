@@ -10,6 +10,11 @@ pub mod view;
 
 use console_core::{Cart, GfxMeta, SpriteDef};
 
+/// Canonical command inventory used by generated top-level help.
+pub const COMMANDS: &[&str] = &[
+    "render", "strip", "onion", "diff", "ghost", "gif", "lint", "edit", "dump", "poke",
+];
+
 /// What a `<target>` CLI argument resolved to: a named sprite (with its
 /// metadata) or a raw `tx,ty,w,h` tile rect.
 #[derive(Debug, Clone)]
@@ -139,6 +144,10 @@ pub fn resolve_rect(
 /// code. `view` commands (including `dump`) are wired by view.rs, `edit` and
 /// `poke` by transform.rs.
 pub fn cli_sprite(args: &[String]) -> i32 {
+    if super::help_requested(args) {
+        println!("{SPRITE_USAGE}");
+        return 0;
+    }
     match args.first().map(String::as_str) {
         Some("render") | Some("strip") | Some("onion") | Some("diff") | Some("ghost")
         | Some("lint") | Some("dump") | Some("gif") => view::cli_view(args),

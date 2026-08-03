@@ -11,6 +11,9 @@ pub mod view;
 
 use console_core::{MAP_H, MAP_W, TileMap};
 
+/// Canonical command inventory used by generated top-level help.
+pub const COMMANDS: &[&str] = &["render", "dump", "lint", "edit", "poke"];
+
 /// Parse a `[cx,cy,cw,ch]` region argument, in map cell coordinates.
 /// `None` (the argument was omitted) resolves to [`used_extent`] — the
 /// bounding box of non-zero cells — or a single cell at the origin if the
@@ -77,6 +80,10 @@ fn default_region(tiles: &TileMap) -> (u32, u32, u32, u32) {
 /// code. `render`/`dump`/`lint` are wired by `view.rs`, `edit`/`poke` by
 /// `transform.rs`.
 pub fn cli_map(args: &[String]) -> i32 {
+    if super::help_requested(args) {
+        println!("{MAP_USAGE}");
+        return 0;
+    }
     match args.first().map(String::as_str) {
         Some("render") | Some("dump") | Some("lint") => view::cli_view(args),
         Some("edit") => transform::cli_edit(&args[1..]),

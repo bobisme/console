@@ -35,6 +35,16 @@ use std::collections::BTreeMap;
 
 use console_core::{CHANNEL_COUNT, Cart, PatternEnd, SAMPLE_RATE, SAMPLES_PER_FRAME};
 
+/// Canonical command inventory used by generated top-level help.
+pub const COMMANDS: &[&str] = &[
+    "score",
+    "lint",
+    "piano-roll",
+    "render",
+    "edit",
+    "import-abc",
+];
+
 /// Frames per second — the sequencer's own clock (`speed=` is in frames).
 pub const FPS: f64 = SAMPLE_RATE as f64 / SAMPLES_PER_FRAME as f64;
 
@@ -427,6 +437,10 @@ pub fn occupied_slots(cart: &Cart, id: u8) -> usize {
 /// CLI dispatch for `console-agent music <cmd> ...`. Returns the process exit
 /// code.
 pub fn cli_music(args: &[String]) -> i32 {
+    if super::help_requested(args) {
+        println!("{MUSIC_USAGE}");
+        return 0;
+    }
     let cmd = args.first().map(String::as_str).unwrap_or_default();
     let result = match cmd {
         "score" => score::cli_score(&args[1..]),
