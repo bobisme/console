@@ -33,12 +33,15 @@ fn framebuffer_is_the_documented_shape() {
 fn cls_fills_and_masks_colour() {
     let con = draw_once("cls(7)");
     assert_eq!(count(&con, 7), FB_LEN);
-    // 23 & 15 == 7
+    // All six color bits survive.
     let con = draw_once("cls(23)");
+    assert_eq!(count(&con, 23), FB_LEN);
+    // Values beyond the palette wrap with the six-bit mask.
+    let con = draw_once("cls(71)");
     assert_eq!(count(&con, 7), FB_LEN);
     // negative wraps into range too
     let con = draw_once("cls(-1)");
-    assert_eq!(count(&con, 15), FB_LEN);
+    assert_eq!(count(&con, 63), FB_LEN);
 }
 
 #[test]

@@ -310,14 +310,14 @@ fn display_remap_before_drawing_is_still_only_a_display_map() {
 }
 
 #[test]
-fn a_whole_screen_fade_costs_sixteen_calls_and_no_redraw() {
+fn a_whole_screen_fade_costs_sixty_four_calls_and_no_redraw() {
     // The reason the display palette exists: fade every colour to 0 without
     // touching a single pixel.
     let con = draw_once(
         "cls(3) circfill(70, 70, 30, 11)
-         for i = 0, 15 do pal(i, 0, 1) end",
+         for i = 0, 63 do pal(i, 0, 1) end",
     );
-    assert_eq!(con.display_palette(), &[0u8; 16]);
+    assert_eq!(con.display_palette(), &[0u8; 64]);
     assert!(count(&con, 11) > 0, "pixels are untouched by the fade");
     assert!(count(&con, 3) > 0);
 }

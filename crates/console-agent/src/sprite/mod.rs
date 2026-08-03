@@ -172,5 +172,5 @@ usage:
   console-agent sprite lint   <cart> [anim ...] [--max-drift PX] [--max-area-var PCT] [--max-changed PX] [--no-unique-colors] [--summary]
   console-agent sprite edit   <cart> <shift|flip|rotate|copy|clear> ... [--dry-run]
   console-agent sprite dump   <cart> <target> [--frame N]
-  console-agent sprite poke   <cart> <target> [--frame N] (--rows <hex,hex,...> | --stdin) [--dry-run]
+  console-agent sprite poke   <cart> <target> [--frame N] (--rows <pixels,pixels,...> | --stdin) [--dry-run]
   (targets: sprite name, anim name, or tile rect tx,ty,w,h)";

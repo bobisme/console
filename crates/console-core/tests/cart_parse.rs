@@ -1,4 +1,4 @@
-use console_core::{Cart, Error, SHEET_W};
+use console_core::{COLOR_ALPHABET, Cart, Error, SHEET_W};
 
 #[test]
 fn parses_all_sections() {
@@ -41,6 +41,13 @@ fedcba9876543210
 
     let names: Vec<&str> = cart.section_names().collect();
     assert_eq!(names, vec!["lua", "meta", "sprites"]);
+}
+
+#[test]
+fn sprite_palette_alphabet_round_trips_all_64_indices() {
+    let row = std::str::from_utf8(COLOR_ALPHABET).unwrap();
+    let cart = Cart::parse(&format!("__lua__\n\n__sprites__\n{row}\n")).unwrap();
+    assert_eq!(&cart.sprites()[..64], &(0u8..64).collect::<Vec<_>>());
 }
 
 #[test]

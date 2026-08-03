@@ -50,8 +50,9 @@ pub use crate::audio::{
 pub use crate::cart::Cart;
 pub use crate::error::Error;
 pub use crate::gfx::{
-    DrawState, FB_LEN, FILLP_SIZE, Framebuffer, IDENTITY_PAL, MAP_H, MAP_LEN, MAP_W, MAX_MOSAIC,
-    PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN, SHEET_W, SPRITE_SIZE, ShiftTable, SpriteSheet, TileMap,
+    COLOR_ALPHABET, COLOR_COUNT, COLOR_MASK, DrawState, FB_LEN, FILLP_SIZE, Framebuffer,
+    IDENTITY_PAL, MAP_H, MAP_LEN, MAP_W, MAX_MOSAIC, PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN,
+    SHEET_W, SPRITE_SIZE, ShiftTable, SpriteSheet, TileMap, color_char, parse_color_char,
 };
 pub use crate::gfx_meta::{AnimDef, FrameSpec, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
@@ -103,7 +104,7 @@ pub struct Console {
     /// [`Console::framebuffer`] can hand out a plain reference.
     fb: Box<Framebuffer>,
     /// Snapshot of the display palette, refreshed alongside `fb`.
-    dpal: [u8; 16],
+    dpal: [u8; COLOR_COUNT],
     /// Samples rendered by the most recent successful [`Console::step`].
     /// All zeros before the first step and after a halt.
     audio: Box<AudioFrame>,
@@ -225,20 +226,20 @@ impl Console {
         }
     }
 
-    /// The current frame's pixels: one palette index (0..=15) per pixel,
+    /// The current frame's pixels: one palette index (0..=63) per pixel,
     /// row-major, 144 wide by 256 tall.
     pub fn framebuffer(&self) -> &Framebuffer {
         &self.fb
     }
 
-    /// The display palette: a 16-entry index -> index map that the **host**
+    /// The display palette: a 64-entry index -> index map that the **host**
     /// applies when it turns framebuffer indices into colours (`pal(c0, c1, 1)`
     /// in Lua). Identity by default.
     ///
     /// This never touches [`Console::framebuffer`], which always holds raw
     /// draw-space indices — that is what keeps goldens and `screen_text` stable
     /// while a cart fades the whole screen.
-    pub fn display_palette(&self) -> &[u8; 16] {
+    pub fn display_palette(&self) -> &[u8; COLOR_COUNT] {
         &self.dpal
     }
 
@@ -401,10 +402,10 @@ mod tests {
     }
 
     #[test]
-    fn palette_is_sweetie16() {
-        assert_eq!(PALETTE.len(), 16);
-        assert_eq!(PALETTE[0], [0x1a, 0x1c, 0x2c]);
-        assert_eq!(PALETTE[12], [0xf4, 0xf4, 0xf4]);
-        assert_eq!(PALETTE[15], [0x33, 0x3c, 0x57]);
+    fn palette_is_apollo64() {
+        assert_eq!(PALETTE.len(), 64);
+        assert_eq!(PALETTE[0], [0x17, 0x20, 0x38]);
+        assert_eq!(PALETTE[31], [0xe8, 0xc1, 0x70]);
+        assert_eq!(PALETTE[63], [0xeb, 0xed, 0xe9]);
     }
 }

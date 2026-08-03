@@ -5,7 +5,7 @@
 //! resolution and validation), but the file itself is rewritten by locating
 //! the `__sprites__` section's raw text lines *positionally* — mirroring
 //! `console_core::cart`'s section/row scanning exactly — and overwriting
-//! only the specific hex rows whose pixels actually changed. Every other
+//! only the specific palette-text rows whose pixels actually changed. Every other
 //! byte of the cart file (other sections, comments, blank lines, ordering,
 //! line endings, trailing whitespace) survives verbatim, because we only
 //! ever touch the lines we've identified as changed; everything else is
@@ -15,7 +15,7 @@
 //! is re-parsed with `Cart::parse` before anything is written to disk; a
 //! parse failure aborts with no write.
 
-use console_core::{Cart, SHEET_W, SpriteSheet};
+use console_core::{Cart, SHEET_W, SpriteSheet, color_char, parse_color_char};
 
 use super::{frame_pixel_rect, parse_target, resolve_rect};
 
@@ -90,10 +90,10 @@ fn apply_edit_result(cart_path: &str, result: Result<EditResult, String>, dry_ru
 
 pub const POKE_USAGE: &str = "\
 usage:
-  console-agent sprite poke <cart> <target> [--frame N] --rows <hex,hex,...> [--dry-run]
+  console-agent sprite poke <cart> <target> [--frame N] --rows <pixels,pixels,...> [--dry-run]
   console-agent sprite poke <cart> <target> [--frame N] --stdin [--dry-run]
-  (rows run top to bottom, one per source row, each exactly as many hex
-   digits as the region is wide; with --stdin, lines starting with '#' are
+  (rows run top to bottom, one per source row, each exactly as many palette
+   characters as the region is wide; with --stdin, lines starting with '#' are
    skipped, so `sprite dump`'s own output pipes straight into `--stdin`;
    targets: sprite name, anim name, or tile rect tx,ty,w,h)";
 
@@ -176,7 +176,7 @@ fn read_stdin_rows() -> Result<Vec<String>, String> {
 }
 
 /// Parse `text` as a cart, validate `rows` against `target`'s resolved
-/// region (exact row count, exact row width, valid hex digits), overwrite
+/// region (exact row count, exact row width, valid palette characters), overwrite
 /// those pixels, and compute the resulting cart text via the same rewrite
 /// path `sprite edit` uses. Pure — no file I/O — so it is directly testable.
 fn run_poke(
@@ -200,15 +200,15 @@ fn run_poke(
         let chars: Vec<char> = row.chars().collect();
         if chars.len() != w {
             return Err(format!(
-                "poke: row {j}: region is {w} pixel(s) wide, expected {w} hex char(s), got {} ({row:?})",
+                "poke: row {j}: region is {w} pixel(s) wide, expected {w} palette character(s), got {} ({row:?})",
                 chars.len()
             ));
         }
         for (i, ch) in chars.into_iter().enumerate() {
-            let v = ch.to_digit(16).ok_or_else(|| {
-                format!("poke: row {j}: invalid hex digit {ch:?} at column {i} ({row:?})")
+            let v = parse_color_char(ch).ok_or_else(|| {
+                format!("poke: row {j}: invalid palette character {ch:?} at column {i} ({row:?})")
             })?;
-            values[j * w + i] = v as u8;
+            values[j * w + i] = v;
         }
     }
 
@@ -592,7 +592,7 @@ fn locate_sprites_layout(lines: &[&str]) -> SpritesLayout {
 
 fn encode_row(sheet: &SpriteSheet, y: usize) -> String {
     (0..SHEET_W)
-        .map(|x| char::from_digit((sheet[y * SHEET_W + x] & 0xF) as u32, 16).unwrap())
+        .map(|x| color_char(sheet[y * SHEET_W + x]))
         .collect()
 }
 

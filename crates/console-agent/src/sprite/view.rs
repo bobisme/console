@@ -17,7 +17,7 @@
 //!   Checker cells are 4 *logical* (sheet) pixels square, so the backdrop
 //!   stays legible instead of shimmering at high zoom.
 //! - `--grid` overlays tile (8px) boundaries, `--indices` writes the palette
-//!   index into each pixel cell as a 3x5 hex glyph (only when `zoom >= 6`,
+//!   index into each pixel cell as two 3x5 hex glyphs (only when `zoom >= 8`,
 //!   otherwise silently skipped), `--anchor` draws a crosshair in palette
 //!   color 4 at the sprite's anchor pixel. `onion` and `ghost` accept
 //!   `--grid`/`--anchor` too (mirroring `render`/`strip`), via
@@ -27,7 +27,7 @@
 
 use std::collections::BTreeMap;
 
-use console_core::{AnimDef, Cart, FrameSpec, PALETTE, SHEET_W, SpriteDef};
+use console_core::{AnimDef, COLOR_MASK, Cart, FrameSpec, PALETTE, SHEET_W, SpriteDef};
 use serde_json::{Value, json};
 
 use super::{Target, frame_pixel_rect, parse_target, resolve_rect, target_sprite};
@@ -402,7 +402,7 @@ pub fn diff(cart: &Cart, anim: &str, a: u32, b: u32, zoom: u32) -> Result<Image,
                 h: zoom,
             };
             if vb != 0 {
-                canvas.fill(block, dim(PALETTE[usize::from(vb) & 15], DIFF_DIM));
+                canvas.fill(block, dim(PALETTE[usize::from(vb & COLOR_MASK)], DIFF_DIM));
             }
             if fa.at(x, y) != vb {
                 canvas.fill(block, DIFF_MARK);
@@ -438,7 +438,7 @@ pub fn ghost(cart: &Cart, anim: &str, opts: &OverlayOpts) -> Result<Image, Strin
                         w: zoom,
                         h: zoom,
                     },
-                    PALETTE[usize::from(v) & 15],
+                    PALETTE[usize::from(v & COLOR_MASK)],
                     alpha,
                 );
             }
@@ -914,9 +914,9 @@ fn lint_anim_gated(
     Ok((value, violations, summary))
 }
 
-/// `sprite dump` — print `target`'s resolved region as rows of hex text, top
-/// to bottom, exactly the cart's own `__sprites__` alphabet (lowercase hex
-/// digits, one char per pixel), preceded by a `#`-comment header naming the
+/// `sprite dump` — print `target`'s resolved region as palette text, top
+/// to bottom, exactly the cart's own `__sprites__` alphabet (one character
+/// per pixel), preceded by a `#`-comment header naming the
 /// region's pixel-space coordinates on the 128x128 sheet. Frame resolution
 /// matches `sprite edit`, `sprite poke`, and `sprite render`: animation
 /// targets index their declared frame list (including `frames_rect` and
@@ -935,7 +935,7 @@ pub fn dump(cart: &Cart, target: &str, frame: u8) -> Result<String, String> {
         let row: String = (0..w)
             .map(|i| {
                 let v = sheet[(y0 + j) as usize * SHEET_W + (x0 + i) as usize];
-                char::from_digit(u32::from(v & 0xF), 16).unwrap()
+                console_core::color_char(v)
             })
             .collect();
         out.push_str(&row);
@@ -1529,7 +1529,7 @@ pub(crate) fn draw_frame(canvas: &mut Canvas, frame: &Frame, origin: (u32, u32),
                     w: zoom,
                     h: zoom,
                 },
-                PALETTE[usize::from(v) & 15],
+                PALETTE[usize::from(v & COLOR_MASK)],
             );
         }
     }
@@ -1622,15 +1622,15 @@ fn draw_anchor(canvas: &mut Canvas, cell: Rect, anchor: (i32, i32), zoom: u32) {
     }
 }
 
-/// A 3x5 hex glyph per pixel cell. Needs `zoom >= 6` to fit; below that the
+/// Two 3x5 hex glyphs per pixel cell. Needs `zoom >= 8` to fit; below that the
 /// flag is silently a no-op (the render is still useful, just unlabelled).
 fn draw_indices(canvas: &mut Canvas, frame: &Frame, origin: (u32, u32), zoom: u32) {
-    if zoom < 6 {
+    if zoom < 8 {
         return;
     }
     for y in 0..frame.h {
         for x in 0..frame.w {
-            let v = usize::from(frame.at(x, y)) & 15;
+            let v = usize::from(frame.at(x, y));
             let cx = origin.0 + x * zoom;
             let cy = origin.1 + y * zoom;
             let ink = if luminance(canvas.get(cx + zoom / 2, cy + zoom / 2)) < 128.0 {
@@ -1638,12 +1638,14 @@ fn draw_indices(canvas: &mut Canvas, frame: &Frame, origin: (u32, u32), zoom: u3
             } else {
                 INK_DARK
             };
-            let gx = cx + (zoom - 3) / 2;
+            let gx = cx + (zoom - 7) / 2;
             let gy = cy + (zoom - 5) / 2;
-            for (row, bits) in GLYPHS[v].iter().enumerate() {
-                for bit in 0..3u32 {
-                    if bits & (1 << (2 - bit)) != 0 {
-                        canvas.set(gx + bit, gy + row as u32, ink);
+            for (digit, dx) in [(v >> 4, 0), (v & 0xf, 4)] {
+                for (row, bits) in GLYPHS[digit].iter().enumerate() {
+                    for bit in 0..3u32 {
+                        if bits & (1 << (2 - bit)) != 0 {
+                            canvas.set(gx + dx + bit, gy + row as u32, ink);
+                        }
                     }
                 }
             }

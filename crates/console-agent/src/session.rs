@@ -9,8 +9,8 @@
 use std::collections::BTreeMap;
 
 use console_core::{
-    CHANNEL_COUNT, ChannelInfo, Console, Error, FB_LEN, PALETTE, SAMPLES_PER_FRAME, SCREEN_H,
-    SCREEN_W, input,
+    CHANNEL_COUNT, COLOR_COUNT, COLOR_MASK, ChannelInfo, Console, Error, FB_LEN, PALETTE,
+    SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W, color_char, input,
 };
 
 use crate::audio::{self, AudioEvent, AudioState, Spectrogram, StatsWindow};
@@ -244,7 +244,7 @@ impl Session {
         for row in fb.chunks_exact(SCREEN_W) {
             let mut line = String::with_capacity(SCREEN_W);
             for &px in row {
-                line.push(std::char::from_digit((px & 0x0f) as u32, 16).unwrap());
+                line.push(color_char(px));
             }
             lines.push(line);
         }
@@ -454,26 +454,26 @@ pub struct Info {
     pub saved_states: Vec<String>,
 }
 
-/// Encode a framebuffer as an RGBA PNG at 1:1 scale using the fixed
-/// Sweetie-16 palette.
+/// Encode a framebuffer as an RGBA PNG at 1:1 scale using the fixed palette.
 ///
 /// `dpal` is the console's display palette (`Console::display_palette`): a
-/// 16-entry index -> index map applied at scanout, identity unless the cart
+/// 64-entry index -> index map applied at scanout, identity unless the cart
 /// called `pal(c0, c1, 1)`. Pass [`console_core::IDENTITY_PAL`] for raw output.
-pub fn encode_png(fb: &[u8; FB_LEN], dpal: &[u8; 16]) -> Vec<u8> {
+pub fn encode_png(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT]) -> Vec<u8> {
     encode_png_zoomed(fb, dpal, 1)
 }
 
 /// Encode a framebuffer as an RGBA PNG, nearest-neighbor upscaled by an
 /// integer `zoom` factor (each logical pixel becomes a `zoom`x`zoom` block).
 /// `zoom <= 1` behaves exactly like [`encode_png`].
-pub fn encode_png_zoomed(fb: &[u8; FB_LEN], dpal: &[u8; 16], zoom: u32) -> Vec<u8> {
+pub fn encode_png_zoomed(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT], zoom: u32) -> Vec<u8> {
     let zoom = zoom.max(1);
-    // Fold the display map into a 16-entry RGB lookup once, not per pixel.
-    let lut: [[u8; 3]; 16] = std::array::from_fn(|i| PALETTE[(dpal[i] & 0x0f) as usize]);
+    // Fold the display map into an RGB lookup once, not per pixel.
+    let lut: [[u8; 3]; COLOR_COUNT] =
+        std::array::from_fn(|i| PALETTE[(dpal[i] & COLOR_MASK) as usize]);
     let mut rgba = Vec::with_capacity(FB_LEN * 4);
     for &idx in fb.iter() {
-        let [r, g, b] = lut[(idx & 0x0f) as usize];
+        let [r, g, b] = lut[(idx & COLOR_MASK) as usize];
         rgba.extend_from_slice(&[r, g, b, 255]);
     }
 
@@ -535,7 +535,7 @@ mod tests {
     const FADE_CART: &str = "\
 __lua__
 function _draw() cls(1) rectfill(0, 0, 9, 9, 7) end
-function _update() if t() * 60 >= 2 then for i = 0, 15 do pal(i, 0, 1) end end end
+function _update() if t() * 60 >= 2 then for i = 0, 63 do pal(i, 0, 1) end end end
 ";
 
     #[test]
@@ -559,6 +559,20 @@ function _update() if t() * 60 >= 2 then for i = 0, 15 do pal(i, 0, 1) end end e
             before_png, after_png,
             "the screenshot must show the display-palette fade"
         );
+    }
+
+    #[test]
+    fn screen_text_uses_the_full_palette_alphabet() {
+        let mut session = Session::default();
+        session
+            .load_cart(
+                "__lua__\nfunction _draw() cls(0) pset(0,0,36) pset(1,0,63) end\n",
+                0,
+            )
+            .unwrap();
+        session.step(1, 0).unwrap();
+        let text = session.screen_text().unwrap();
+        assert!(text[0].starts_with("A_"));
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use mlua::{Lua, Result as LuaResult, Table, Value, Variadic};
 
-use crate::gfx::{self, MAP_H, MAP_W, col, fl, pat_col};
+use crate::gfx::{self, MAP_H, MAP_W, col, fl};
 use crate::gfx_meta::{AnimDef, GfxMeta, SpriteDef};
 use crate::state::State;
 
@@ -169,7 +169,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         lua.create_function(move |_, (x, y, c): (f64, f64, Option<f64>)| {
             let mut s = st.borrow_mut();
             let State { fb, draw, .. } = &mut *s;
-            gfx::pset(fb, draw, fl(x), fl(y), pat_col(c.unwrap_or(0.0)));
+            gfx::pset(fb, draw, fl(x), fl(y), col(c.unwrap_or(0.0)));
             Ok(())
         })?,
     )?;
@@ -196,7 +196,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     fl(y0),
                     fl(x1),
                     fl(y1),
-                    pat_col(c.unwrap_or(0.0)),
+                    col(c.unwrap_or(0.0)),
                 );
                 Ok(())
             },
@@ -217,7 +217,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     fl(y0),
                     fl(x1),
                     fl(y1),
-                    pat_col(c.unwrap_or(0.0)),
+                    col(c.unwrap_or(0.0)),
                 );
                 Ok(())
             },
@@ -238,7 +238,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     fl(y0),
                     fl(x1),
                     fl(y1),
-                    pat_col(c.unwrap_or(0.0)),
+                    col(c.unwrap_or(0.0)),
                 );
                 Ok(())
             },
@@ -258,7 +258,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     fl(x),
                     fl(y),
                     fl(r.unwrap_or(4.0)),
-                    pat_col(c.unwrap_or(0.0)),
+                    col(c.unwrap_or(0.0)),
                 );
                 Ok(())
             },
@@ -278,7 +278,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     fl(x),
                     fl(y),
                     fl(r.unwrap_or(4.0)),
-                    pat_col(c.unwrap_or(0.0)),
+                    col(c.unwrap_or(0.0)),
                 );
                 Ok(())
             },
@@ -610,22 +610,21 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         })?,
     )?;
 
-    // `fillp([p])`: the 4x4 dither pattern used by the shape primitives. `p` is
-    // a 16-bit number, bit 15 = top-left, rows read left to right, top to
-    // bottom. A clear bit draws the colour's low nibble; a set bit draws the
-    // high nibble, or nothing at all when the high nibble is 0. No arguments
-    // (or 0) is solid. `pal()` deliberately does NOT reset it.
+    // `fillp([p], [secondary])`: the 4x4 dither pattern used by the shape
+    // primitives. A clear bit draws the shape's colour; a set bit draws the
+    // optional secondary colour or punches a hole when it is omitted. No
+    // arguments (or pattern 0) is solid. `pal()` deliberately does not reset it.
     let st = state.clone();
     g.set(
         "fillp",
-        lua.create_function(move |_, p: Option<f64>| {
+        lua.create_function(move |_, (p, secondary): (Option<f64>, Option<f64>)| {
             let mut s = st.borrow_mut();
             match p {
                 None => s.draw.reset_fillp(),
                 Some(p) => {
                     let f = p.floor();
                     let i = if f.is_nan() { 0i64 } else { f as i64 };
-                    s.draw.set_fillp((i & 0xffff) as u16);
+                    s.draw.set_fillp((i & 0xffff) as u16, secondary.map(col));
                 }
             }
             Ok(())

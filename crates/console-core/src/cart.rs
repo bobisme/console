@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 
 use crate::audio::{AudioBank, Echo, Instrument, Master, Pattern, Sfx, Wavetable};
 use crate::error::Error;
-use crate::gfx::{MAP_H, MAP_LEN, MAP_W, SHEET_LEN, SHEET_W, SpriteSheet, TileMap};
+use crate::gfx::{
+    MAP_H, MAP_LEN, MAP_W, SHEET_LEN, SHEET_W, SpriteSheet, TileMap, parse_color_char,
+};
 use crate::gfx_meta::GfxMeta;
 
 /// A parsed cart.
@@ -225,12 +227,12 @@ fn parse_sprites(text: &str) -> Result<Box<SpriteSheet>, Error> {
             break;
         }
         for (x, ch) in line.chars().take(SHEET_W).enumerate() {
-            let v = ch.to_digit(16).ok_or_else(|| {
+            let v = parse_color_char(ch).ok_or_else(|| {
                 Error::Cart(format!(
-                    "__sprites__ row {y}: expected hex digit, found {ch:?}"
+                    "__sprites__ row {y}: expected a 64-color palette character, found {ch:?}"
                 ))
             })?;
-            sheet[y * SHEET_W + x] = v as u8;
+            sheet[y * SHEET_W + x] = v;
         }
         y += 1;
     }
@@ -243,8 +245,10 @@ fn map_err(line: usize, msg: impl AsRef<str>) -> Error {
     Error::Cart(format!("{MAP_SEC} line {line}: {}", msg.as_ref()))
 }
 
-/// `__map__`: rows of tile ids, **two hex digits per cell**, following the same
-/// hex-grid conventions as `__sprites__`.
+/// `__map__`: rows of tile ids, **two hex digits per cell**. It shares the
+/// sprite grid's comment, blank-line, padding, and row-count conventions, but
+/// deliberately keeps a hex alphabet because tile ids are bytes rather than
+/// palette indices.
 ///
 /// Short rows pad with tile 0 and missing rows are all tile 0, so the common
 /// case (a small map at the top-left) stays a small block of text. Unlike
@@ -325,7 +329,7 @@ mod tests {
 
     #[test]
     fn bad_sprite_char_is_an_error() {
-        let err = Cart::parse("__lua__\n\n__sprites__\n00zz\n").unwrap_err();
-        assert!(err.to_string().contains("hex digit"));
+        let err = Cart::parse("__lua__\n\n__sprites__\n00@@\n").unwrap_err();
+        assert!(err.to_string().contains("palette character"));
     }
 }

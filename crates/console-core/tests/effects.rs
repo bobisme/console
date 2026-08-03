@@ -15,7 +15,7 @@
 //! * the end-of-frame order is `mosaic` then `rshift`, and `rshift` wraps each
 //!   scanline around the 144-pixel line rather than clipping it.
 
-use console_core::{Console, FB_LEN, MAX_MOSAIC, SCREEN_H, SCREEN_W};
+use console_core::{Console, FB_LEN, MAX_MOSAIC, SCREEN_H, SCREEN_W, color_char};
 
 /// Sprite 0 is an 8x8 gradient with no colour 0 in it; sprite 1 is the 2x2
 /// marker (colours 1..4) plus a lone 5 at (7, 7) used by the other test files.
@@ -49,11 +49,11 @@ fn count(con: &Console, c: u8) -> usize {
     con.framebuffer().iter().filter(|&&p| p == c).count()
 }
 
-/// The framebuffer as `screen_text` would render it: one hex digit per pixel.
+/// The framebuffer as `screen_text` would render it: one palette character per pixel.
 fn screen_text(con: &Console) -> Vec<String> {
     con.framebuffer()
         .chunks(SCREEN_W)
-        .map(|row| row.iter().map(|p| format!("{p:x}")).collect())
+        .map(|row| row.iter().map(|&p| color_char(p)).collect())
         .collect()
 }
 
@@ -86,18 +86,10 @@ fn explicit_defaults_are_identical_to_untouched_state() {
 }
 
 #[test]
-fn a_solid_fill_ignores_the_secondary_nibble() {
-    // Shape colours are now `c0 + c1 * 16`. Without a pattern the high nibble
-    // is never consulted, so every old cart that passed a big number keeps the
-    // colour it always got.
-    let plain = run("cls(0) rectfill(0, 0, 9, 9, 7)");
-    for c in ["7 + 2 * 16", "0x27", "7 + 15 * 16", "-9"] {
-        let wide = run(&format!("cls(0) rectfill(0, 0, 9, 9, {c})"));
-        assert_eq!(
-            plain.framebuffer(),
-            wide.framebuffer(),
-            "colour `{c}` should still draw as 7"
-        );
+fn a_solid_fill_uses_the_whole_six_bit_colour() {
+    for (c, expected) in [("7", 7), ("39", 39), ("247", 55), ("-1", 63)] {
+        let con = run(&format!("cls(0) rectfill(0, 0, 9, 9, {c})"));
+        assert_eq!(count(&con, expected), 100, "colour `{c}`");
     }
 }
 
@@ -163,9 +155,9 @@ fn fillp_tiles_the_whole_shape() {
 }
 
 #[test]
-fn fillp_secondary_colour_comes_from_the_high_nibble() {
-    // c0 + c1 * 16: set bits draw c1 instead of punching a hole.
-    let con = run("cls(9) fillp(0x8000) rectfill(0, 0, 3, 3, 7 + 2 * 16)");
+fn fillp_secondary_colour_is_explicit() {
+    // A second fillp argument makes set bits draw a second colour.
+    let con = run("cls(9) fillp(0x8000, 2) rectfill(0, 0, 3, 3, 7)");
     assert_eq!(px(&con, 0, 0), 2, "the set bit drew the secondary colour");
     assert_eq!(px(&con, 1, 0), 7);
     assert_eq!(count(&con, 2), 1);
@@ -173,7 +165,7 @@ fn fillp_secondary_colour_comes_from_the_high_nibble() {
     assert_eq!(count(&con, 9), FB_LEN - 16);
 
     // A two-colour checker covers every pixel it touches.
-    let con = run("cls(9) fillp(0x5a5a) rectfill(0, 0, 7, 7, 3 + 12 * 16)");
+    let con = run("cls(9) fillp(0x5a5a, 12) rectfill(0, 0, 7, 7, 3)");
     assert_eq!(count(&con, 3), 32);
     assert_eq!(count(&con, 12), 32);
     assert_eq!(count(&con, 9), FB_LEN - 64);
@@ -183,7 +175,7 @@ fn fillp_secondary_colour_comes_from_the_high_nibble() {
 
 #[test]
 fn the_draw_palette_remaps_both_fill_colours() {
-    let con = run("cls(9) pal(7, 5) pal(2, 11) fillp(0x5a5a) rectfill(0, 0, 3, 3, 7 + 2 * 16)");
+    let con = run("cls(9) pal(7, 5) pal(2, 11) fillp(0x5a5a, 2) rectfill(0, 0, 3, 3, 7)");
     assert_eq!(px(&con, 0, 0), 5);
     assert_eq!(px(&con, 1, 0), 11);
     assert_eq!(count(&con, 7) + count(&con, 2), 0);
@@ -839,8 +831,8 @@ fn the_effects_replay_identically() {
         function _draw()
           cls(1)
           camera(f % 7, f % 5)
-          fillp((f * 4919) % 65536)
-          rectfill(0, 0, 100, 100, 7 + (f % 15) * 16)
+          fillp((f * 4919) % 65536, f % 64)
+          rectfill(0, 0, 100, 100, 7)
           circfill(70, 70, 20 + f % 9, 3)
           sspr(0, 0, 8, 8, f % 20, 40, 8 + f % 24, 8 + f % 13, f % 2 == 0, f % 3 == 0)
           mosaic(1 + f % 6)

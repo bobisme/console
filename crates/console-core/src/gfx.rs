@@ -40,24 +40,111 @@ pub type SpriteSheet = [u8; SHEET_LEN];
 /// cell — [`map`] skips it entirely rather than drawing sprite 0.
 pub type TileMap = [u8; MAP_LEN];
 
-/// The fixed 16-colour Sweetie-16 palette, as RGB triples.
-pub const PALETTE: [[u8; 3]; 16] = [
-    [0x1a, 0x1c, 0x2c],
-    [0x5d, 0x27, 0x5d],
-    [0xb1, 0x3e, 0x53],
-    [0xef, 0x7d, 0x57],
-    [0xff, 0xcd, 0x75],
-    [0xa7, 0xf0, 0x70],
-    [0x38, 0xb7, 0x64],
-    [0x25, 0x71, 0x79],
-    [0x29, 0x36, 0x6f],
-    [0x3b, 0x5d, 0xc9],
-    [0x41, 0xa6, 0xf6],
-    [0x73, 0xef, 0xf7],
-    [0xf4, 0xf4, 0xf4],
-    [0x94, 0xb0, 0xc2],
-    [0x56, 0x6c, 0x86],
-    [0x33, 0x3c, 0x57],
+/// Number of fixed display colours. Palette indices occupy the low six bits
+/// of each framebuffer and sprite-sheet byte.
+pub const COLOR_COUNT: usize = 64;
+pub const COLOR_MASK: u8 = (COLOR_COUNT - 1) as u8;
+const _: () = assert!(COLOR_COUNT.is_power_of_two());
+
+/// One-character cart/screen-text alphabet for the 64 palette indices.
+/// The first sixteen characters deliberately match lowercase hexadecimal.
+pub const COLOR_ALPHABET: &[u8; COLOR_COUNT] =
+    b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_";
+
+/// Encode a palette index as its one-character cart representation.
+pub fn color_char(color: u8) -> char {
+    COLOR_ALPHABET[usize::from(color & COLOR_MASK)] as char
+}
+
+/// Decode one cart palette character. The alphabet is case-sensitive.
+pub fn parse_color_char(ch: char) -> Option<u8> {
+    ch.is_ascii()
+        .then_some(ch as u8)
+        .and_then(|byte| {
+            COLOR_ALPHABET
+                .iter()
+                .position(|&candidate| candidate == byte)
+        })
+        .map(|index| index as u8)
+}
+
+/// Fixed Apollo-derived 64-colour palette, as RGB triples.
+///
+/// AdamCYounis' 46 Apollo swatches remain exact anchors. `tools/apollo64.mjs`
+/// fills the largest perceptual gaps in OKLCH (chromatic ramps) and OKLab
+/// (neutrals), producing six 8-shade ramps followed by 16 neutrals.
+pub const PALETTE: [[u8; 3]; COLOR_COUNT] = [
+    // 0..7 — blue / cyan
+    [0x17, 0x20, 0x38],
+    [0x25, 0x3a, 0x5e],
+    [0x3c, 0x5e, 0x8b],
+    [0x45, 0x76, 0xa3],
+    [0x4f, 0x8f, 0xba],
+    [0x5f, 0xa7, 0xc7],
+    [0x73, 0xbe, 0xd3],
+    [0xa4, 0xdd, 0xdb],
+    // 8..15 — green
+    [0x19, 0x33, 0x2d],
+    [0x25, 0x56, 0x2e],
+    [0x33, 0x6c, 0x32],
+    [0x46, 0x82, 0x32],
+    [0x5d, 0x94, 0x3b],
+    [0x75, 0xa7, 0x43],
+    [0xa8, 0xca, 0x58],
+    [0xd0, 0xda, 0x91],
+    // 16..23 — earth / skin
+    [0x4d, 0x2b, 0x32],
+    [0x63, 0x39, 0x3a],
+    [0x7a, 0x48, 0x41],
+    [0x94, 0x5f, 0x4c],
+    [0xad, 0x77, 0x57],
+    [0xc0, 0x94, 0x73],
+    [0xd7, 0xb5, 0x94],
+    [0xe7, 0xd5, 0xb3],
+    // 24..31 — amber / brown
+    [0x34, 0x1c, 0x27],
+    [0x60, 0x2c, 0x2c],
+    [0x75, 0x3a, 0x2d],
+    [0x88, 0x4b, 0x2b],
+    [0xa4, 0x60, 0x2c],
+    [0xbe, 0x77, 0x2b],
+    [0xde, 0x9e, 0x41],
+    [0xe8, 0xc1, 0x70],
+    // 32..39 — red / orange
+    [0x24, 0x15, 0x27],
+    [0x41, 0x1d, 0x31],
+    [0x5a, 0x21, 0x38],
+    [0x75, 0x24, 0x38],
+    [0xa5, 0x30, 0x30],
+    [0xba, 0x44, 0x36],
+    [0xcf, 0x57, 0x3c],
+    [0xda, 0x86, 0x3e],
+    // 40..47 — violet / pink
+    [0x1e, 0x1d, 0x39],
+    [0x40, 0x27, 0x51],
+    [0x5b, 0x2f, 0x68],
+    [0x7a, 0x36, 0x7b],
+    [0xa2, 0x3e, 0x8c],
+    [0xc6, 0x51, 0x97],
+    [0xd4, 0x6b, 0x9d],
+    [0xdf, 0x84, 0xa5],
+    // 48..63 — neutral / cool gray
+    [0x09, 0x0a, 0x14],
+    [0x10, 0x14, 0x1f],
+    [0x15, 0x1d, 0x28],
+    [0x20, 0x2e, 0x37],
+    [0x2c, 0x3c, 0x43],
+    [0x39, 0x4a, 0x50],
+    [0x48, 0x5e, 0x63],
+    [0x57, 0x72, 0x77],
+    [0x6c, 0x84, 0x86],
+    [0x81, 0x97, 0x96],
+    [0x94, 0xa6, 0xa4],
+    [0xa8, 0xb5, 0xb2],
+    [0xb7, 0xc2, 0xbf],
+    [0xc7, 0xcf, 0xcc],
+    [0xd9, 0xde, 0xda],
+    [0xeb, 0xed, 0xe9],
 ];
 
 /// Floor a Lua float to a screen coordinate. NaN maps to 0, infinities saturate.
@@ -66,26 +153,14 @@ pub fn fl(v: f64) -> i32 {
     if f.is_nan() { 0 } else { f as i32 }
 }
 
-/// Floor a Lua float and mask it into the 0..=15 palette range.
+/// Floor a Lua float and mask it into the 0..=63 palette range.
 ///
 /// This is the colour of everything that cannot carry a fill pattern: `cls`,
 /// `print`, and the sprite path.
 pub fn col(v: f64) -> u8 {
     let f = v.floor();
     let i = if f.is_nan() { 0i64 } else { f as i64 };
-    (i & 0xf) as u8
-}
-
-/// Floor a Lua float to a **shape** colour: `c0 + c1 * 16`, masked into
-/// 0..=255. The low nibble is the colour drawn where the fill pattern's bit is
-/// clear, the high nibble the colour drawn where it is set (0 = "draw nothing
-/// there"). With the default solid pattern the high nibble is never consulted,
-/// so this is indistinguishable from [`col`] for every cart that ignores
-/// `fillp`.
-pub fn pat_col(v: f64) -> u8 {
-    let f = v.floor();
-    let i = if f.is_nan() { 0i64 } else { f as i64 };
-    (i & 0xff) as u8
+    (i & i64::from(COLOR_MASK)) as u8
 }
 
 #[inline]
@@ -93,11 +168,15 @@ fn in_bounds(x: i32, y: i32) -> bool {
     x >= 0 && y >= 0 && (x as usize) < SCREEN_W && (y as usize) < SCREEN_H
 }
 
-/// The identity 16-entry palette map: colour `i` stays colour `i`.
-pub const IDENTITY_PAL: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+/// The identity palette map: colour `i` stays colour `i`.
+pub const IDENTITY_PAL: [u8; COLOR_COUNT] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+    50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+];
 
 /// Default `palt` mask: only colour 0 is transparent in [`spr`].
-const DEFAULT_PALT: u16 = 1;
+const DEFAULT_PALT: u64 = 1;
 
 /// Default fill pattern: every bit clear = solid.
 const SOLID_FILLP: u16 = 0;
@@ -122,8 +201,8 @@ struct Fill {
     c0: u8,
     /// Colour where the pattern bit is set; only meaningful when `!hole`.
     c1: u8,
-    /// True when the colour argument carried no secondary nibble: set bits
-    /// leave the framebuffer untouched instead of drawing `c1`.
+    /// True when `fillp` has no explicit secondary colour: set bits leave the
+    /// framebuffer untouched instead of drawing `c1`.
     hole: bool,
 }
 
@@ -133,7 +212,7 @@ impl Fill {
     fn solid(c: u8) -> Fill {
         Fill {
             pat: SOLID_FILLP,
-            c0: c & 0xf,
+            c0: c & COLOR_MASK,
             c1: 0,
             hole: false,
         }
@@ -182,13 +261,15 @@ pub struct DrawState {
     clip_x1: i32,
     clip_y1: i32,
     /// Applied at draw time to the colour of every drawing op.
-    draw_pal: [u8; 16],
+    draw_pal: [u8; COLOR_COUNT],
     /// Applied at scanout by the host; never touches the framebuffer.
-    display_pal: [u8; 16],
+    display_pal: [u8; COLOR_COUNT],
     /// Bit `c` set = colour `c` is transparent in [`spr`].
-    palt: u16,
+    palt: u64,
     /// 4x4 dither pattern for the shape primitives, MSB = top-left. 0 = solid.
     fillp: u16,
+    /// Colour for set fill-pattern bits. `None` makes those bits transparent.
+    fill_secondary: Option<u8>,
     /// End-of-frame pixelation block edge; 1 = off.
     mosaic: u8,
     /// End-of-frame per-scanline horizontal shift, each already reduced to
@@ -212,6 +293,7 @@ impl Default for DrawState {
             display_pal: IDENTITY_PAL,
             palt: DEFAULT_PALT,
             fillp: SOLID_FILLP,
+            fill_secondary: None,
             mosaic: 1,
             rshift: [0; SCREEN_H],
             rshift_lines: 0,
@@ -284,12 +366,12 @@ impl DrawState {
 
     /// `pal(c0, c1)`: draw-palette remap, applied when pixels are written.
     pub fn set_draw_pal(&mut self, from: u8, to: u8) {
-        self.draw_pal[(from & 0xf) as usize] = to & 0xf;
+        self.draw_pal[(from & COLOR_MASK) as usize] = to & COLOR_MASK;
     }
 
     /// `pal(c0, c1, 1)`: display-palette remap, applied at scanout only.
     pub fn set_display_pal(&mut self, from: u8, to: u8) {
-        self.display_pal[(from & 0xf) as usize] = to & 0xf;
+        self.display_pal[(from & COLOR_MASK) as usize] = to & COLOR_MASK;
     }
 
     /// `pal()`: reset both palette maps **and** `palt`.
@@ -300,19 +382,19 @@ impl DrawState {
     }
 
     /// The draw palette: index -> index, applied at draw time.
-    pub fn draw_palette(&self) -> &[u8; 16] {
+    pub fn draw_palette(&self) -> &[u8; COLOR_COUNT] {
         &self.draw_pal
     }
 
     /// The display palette: index -> index, applied by the host when the
     /// framebuffer is converted to RGB. The framebuffer itself is untouched.
-    pub fn display_palette(&self) -> &[u8; 16] {
+    pub fn display_palette(&self) -> &[u8; COLOR_COUNT] {
         &self.display_pal
     }
 
     /// `palt(c, flag)`: mark colour `c` transparent (or not) in [`spr`].
     pub fn set_palt(&mut self, c: u8, transparent: bool) {
-        let bit = 1u16 << (c & 0xf);
+        let bit = 1u64 << (c & COLOR_MASK);
         if transparent {
             self.palt |= bit;
         } else {
@@ -326,25 +408,35 @@ impl DrawState {
     }
 
     /// Transparency bitmask; bit `c` set = colour `c` is transparent.
-    pub fn palt_mask(&self) -> u16 {
+    pub fn palt_mask(&self) -> u64 {
         self.palt
     }
 
-    /// `fillp(p)`: the 4x4 dither pattern used by the shape primitives.
-    /// Bit 15 is the top-left cell and the rows read left to right, top to
-    /// bottom. `p = 0` is solid.
-    pub fn set_fillp(&mut self, p: u16) {
+    /// `fillp(p, [secondary])`: set the 4x4 dither pattern and optional colour
+    /// used by set bits. Without a secondary colour, set bits are holes.
+    pub fn set_fillp(&mut self, p: u16, secondary: Option<u8>) {
         self.fillp = p;
+        self.fill_secondary = if p == SOLID_FILLP {
+            None
+        } else {
+            secondary.map(|color| color & COLOR_MASK)
+        };
     }
 
     /// `fillp()`: back to a solid fill.
     pub fn reset_fillp(&mut self) {
         self.fillp = SOLID_FILLP;
+        self.fill_secondary = None;
     }
 
     /// The current fill pattern. 0 = solid (the default).
     pub fn fillp(&self) -> u16 {
         self.fillp
+    }
+
+    /// Secondary fill colour, or `None` when set pattern bits punch holes.
+    pub fn fill_secondary(&self) -> Option<u8> {
+        self.fill_secondary
     }
 
     /// `mosaic(f)`: end-of-frame pixelation, `f` clamped to `1..=`[`MAX_MOSAIC`].
@@ -406,16 +498,15 @@ impl DrawState {
         self.rshift_lines != 0
     }
 
-    /// Resolve a shape colour argument (`c0 + c1 * 16`) against the current
-    /// fill pattern and draw palette. Both nibbles are remapped by `pal`.
+    /// Resolve a shape's primary colour and optional `fillp` secondary colour
+    /// against the draw palette.
     #[inline]
     fn fill(&self, c: u8) -> Fill {
-        let hi = c >> 4;
         Fill {
             pat: self.fillp,
             c0: self.remap(c),
-            c1: self.remap(hi),
-            hole: hi == 0,
+            c1: self.remap(self.fill_secondary.unwrap_or(0)),
+            hole: self.fill_secondary.is_none(),
         }
     }
 
@@ -428,12 +519,12 @@ impl DrawState {
 
     #[inline]
     fn remap(&self, c: u8) -> u8 {
-        self.draw_pal[(c & 0xf) as usize]
+        self.draw_pal[(c & COLOR_MASK) as usize]
     }
 
     #[inline]
     fn transparent(&self, c: u8) -> bool {
-        self.palt & (1u16 << (c & 0xf)) != 0
+        self.palt & (1u64 << (c & COLOR_MASK)) != 0
     }
 
     /// World -> screen for a horizontal coordinate.
@@ -465,7 +556,7 @@ fn put(fb: &mut Framebuffer, ds: &DrawState, x: i32, y: i32, f: &Fill) {
 /// `cls` ignores the camera and the draw palette (it writes `c` literally) but
 /// **respects the clip rectangle**, so it doubles as "clear this window".
 pub fn cls(fb: &mut Framebuffer, ds: &DrawState, c: u8) {
-    let c = c & 0xf;
+    let c = c & COLOR_MASK;
     if ds.clip_is_full() {
         fb.fill(c);
         return;
@@ -1023,8 +1114,9 @@ mod tests {
         assert_eq!(fl(3.9), 3);
         assert_eq!(fl(-0.1), -1);
         assert_eq!(fl(f64::NAN), 0);
-        assert_eq!(col(17.0), 1);
-        assert_eq!(col(-1.0), 15);
+        assert_eq!(col(17.0), 17);
+        assert_eq!(col(65.0), 1);
+        assert_eq!(col(-1.0), 63);
         assert_eq!(col(f64::NAN), 0);
     }
 

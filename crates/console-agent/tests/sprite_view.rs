@@ -124,6 +124,18 @@ fn render_dimensions_and_checkerboard() {
 }
 
 #[test]
+fn render_uses_the_upper_palette_indices_without_truncation() {
+    let cart =
+        Cart::parse("__lua__\n\n__sprites__\n0AZ-_\n\n__gfx_meta__\nsprite hi rect=0,0 size=1x1\n")
+            .unwrap();
+    let img = view::render(&cart, "hi", &RenderOpts::default()).unwrap();
+    assert_eq!(px(&img, 8, 0), PALETTE[36]);
+    assert_eq!(px(&img, 16, 0), PALETTE[61]);
+    assert_eq!(px(&img, 24, 0), PALETTE[62]);
+    assert_eq!(px(&img, 32, 0), PALETTE[63]);
+}
+
+#[test]
 fn render_png_matches_the_rgba_buffer() {
     let cart = cart();
     let img = view::render(&cart, "dot", &RenderOpts::default()).expect("render dot");
@@ -167,7 +179,7 @@ fn render_grid_adds_the_closing_boundary() {
 }
 
 #[test]
-fn render_indices_draws_glyph_pixels_only_from_zoom_6() {
+fn render_indices_draws_two_digit_glyphs_only_from_zoom_8() {
     let cart = cart();
     let plain = view::render(&cart, "dot", &RenderOpts::default()).expect("plain");
     let labelled = view::render(
@@ -187,9 +199,9 @@ fn render_indices_draws_glyph_pixels_only_from_zoom_6() {
         .count();
     assert!(changed > 0, "--indices drew nothing at zoom 8");
 
-    // 3x5 glyphs do not fit below zoom 6, so the flag is silently a no-op.
+    // Two 3x5 glyphs do not fit below zoom 8, so the flag is silently a no-op.
     let small = RenderOpts {
-        zoom: 5,
+        zoom: 7,
         ..RenderOpts::default()
     };
     let small_plain = view::render(&cart, "dot", &small).expect("small plain");
@@ -394,8 +406,8 @@ fn diff_marks_exactly_the_changed_pixels_in_magenta() {
     }
 
     // Unchanged frame-B content is drawn at ~35% brightness: palette 3 is
-    // (239,125,87) -> (84,44,30).
-    assert_eq!(cell(&img, 2, 1, 1), [84, 44, 30]);
+    // (69,118,163) -> (24,41,57).
+    assert_eq!(cell(&img, 2, 1, 1), [24, 41, 57]);
     // Empty in both frames -> untouched checkerboard.
     assert_eq!(px(&img, 0, 0), CHECKER_A);
 }

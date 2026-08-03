@@ -21,7 +21,7 @@
 use console_agent::sprite::view::{self, RenderOpts};
 use console_core::{Cart, PALETTE};
 
-/// Build one `__sprites__` row, `len` hex chars wide, `'0'` everywhere
+/// Build one `__sprites__` row, `len` palette chars wide, `'0'` everywhere
 /// except the given `(x, palette_index)` marks.
 fn sheet_row(len: usize, marks: &[(usize, u8)]) -> String {
     let mut row = vec![b'0'; len];

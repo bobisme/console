@@ -119,6 +119,18 @@ fn scripted_inputs_produce_identical_framebuffers() {
         first.console().unwrap().framebuffer(),
         second.console().unwrap().framebuffer()
     );
+    let colors: std::collections::BTreeSet<u8> = first
+        .console()
+        .unwrap()
+        .framebuffer()
+        .iter()
+        .copied()
+        .collect();
+    assert!(colors.iter().all(|&c| c < 64));
+    assert!(
+        colors.iter().filter(|&&c| c >= 16).count() >= 8,
+        "showcase should exercise the expanded palette, got {colors:?}"
+    );
     assert_eq!(
         serde_json::to_value(first.audio_stats(30).unwrap()).unwrap(),
         serde_json::to_value(second.audio_stats(30).unwrap()).unwrap()

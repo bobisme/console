@@ -33,11 +33,11 @@ orientation, not the spec.
 | | |
 |---|---|
 | Display | 144×256 logical pixels (9:16 portrait), 60 fps fixed timestep |
-| Palette | fixed 16 colors (Sweetie-16), one index per pixel |
+| Palette | fixed 64-color Apollo64 palette, one byte-sized index per pixel |
 | Input | 7 buttons: d-pad, A, B, menu |
 | Audio | 6 channels, waveforms: pulse 12.5%/25%, square, triangle, saw, noise, plus 8 cart-defined 32×4-bit wavetables |
 | Script | Lua 5.4 (mlua, vendored), sandboxed — no `io`/`os`/`debug`/`require` |
-| Cart | one plain-text file: Lua + sprites (hex grid) + tile map + sfx/music (tracker text) |
+| Cart | one plain-text file: Lua + sprites (64-character grid) + tile map + sfx/music (tracker text) |
 
 Draw state (`camera`, `clip`, `pal`, `palt`, `fillp`, `mosaic`, `rshift`)
 persists across frames like PICO-8's, and there's a runtime-mutable tile map

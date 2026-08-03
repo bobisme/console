@@ -455,6 +455,7 @@
   var con_init = Module.cwrap("con_init", "number", ["number", "number"]);
   var con_step = Module.cwrap("con_step", null, ["number"]);
   var con_fb = Module.cwrap("con_fb", "number", []);
+  var con_color_count = Module.cwrap("con_color_count", "number", []);
   var con_palette = Module.cwrap("con_palette", "number", []);
   var con_error = Module.cwrap("con_error", "number", []);
   // Audio is optional: engines built before the synth existed lack con_audio.
@@ -505,7 +506,9 @@
   }
 
   var palPtr = con_palette();
-  var pal = Module.HEAPU8.slice(palPtr, palPtr + 48); // 16 * RGB
+  var COLOR_COUNT = con_color_count();
+  var COLOR_MASK = COLOR_COUNT - 1;
+  var pal = Module.HEAPU8.slice(palPtr, palPtr + COLOR_COUNT * 3);
 
   // ---- audio: AudioWorklet fed one 735-sample frame per con_step ----
   // Single-file safe: the worklet module loads from a Blob URL. The context
@@ -657,12 +660,11 @@
   var imageData = ctx.createImageData(W, H);
   var rgba = imageData.data;
 
-  // 16-entry RGBA lookup, rebuilt per frame from the display palette so
-  // pal(c0, c1, 1) fades cost 16 steps, not 36864. Seeded to identity so an
-  // engine without con_dpal renders exactly as before.
-  var lut = new Uint8Array(16 * 4);
+  // RGBA lookup, rebuilt per frame from the display palette so fades do not
+  // add a palette lookup to every one of the 36864 framebuffer pixels.
+  var lut = new Uint8Array(COLOR_COUNT * 4);
   function identityLut() {
-    for (var k = 0; k < 16; k++) {
+    for (var k = 0; k < COLOR_COUNT; k++) {
       lut[k * 4] = pal[k * 3];
       lut[k * 4 + 1] = pal[k * 3 + 1];
       lut[k * 4 + 2] = pal[k * 3 + 2];
@@ -677,8 +679,8 @@
     if (con_dpal) {
       var dp = con_dpal();
       var heap = Module.HEAPU8;
-      for (var k = 0; k < 16; k++) {
-        var s = (heap[dp + k] & 15) * 3;
+      for (var k = 0; k < COLOR_COUNT; k++) {
+        var s = (heap[dp + k] & COLOR_MASK) * 3;
         lut[k * 4] = pal[s];
         lut[k * 4 + 1] = pal[s + 1];
         lut[k * 4 + 2] = pal[s + 2];
@@ -688,7 +690,7 @@
     var fbPtr = con_fb();
     var fb = Module.HEAPU8.subarray(fbPtr, fbPtr + W * H);
     for (var i = 0, j = 0; i < W * H; i++, j += 4) {
-      var c = (fb[i] & 15) * 4;
+      var c = (fb[i] & COLOR_MASK) * 4;
       rgba[j] = lut[c];
       rgba[j + 1] = lut[c + 1];
       rgba[j + 2] = lut[c + 2];

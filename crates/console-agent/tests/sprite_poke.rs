@@ -1,7 +1,7 @@
 //! Integration tests for `console-agent sprite dump` and `sprite poke`
 //! (SPEC.md "Sprite & animation authoring (PoC v1)" > "Transforms" — the
 //! write half of the pair that lets an agent write pixels directly instead
-//! of hand-editing `__sprites__` hex).
+//! of hand-editing `__sprites__` palette text).
 //!
 //! Mirrors the structure of `sprite_edit.rs`: driven directly against
 //! [`console_agent::sprite::transform::cli_poke`] and
@@ -121,8 +121,8 @@ fn poke_rows_overwrites_the_region() {
     let path = temp_cart("poke-basic", &text);
 
     let new_rows = [
-        "12345678", "9abcdef0", "11111111", "22222222", "33333333", "44444444", "55555555",
-        "66666666",
+        "12345678", "9abcdef0", "abcdefgh", "ABCDEFGH", "ZZZZZZZZ", "--------", "________",
+        "zAzAzAzA",
     ];
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
@@ -313,13 +313,13 @@ fn poke_wrong_row_length_errors_naming_expected_and_got() {
 }
 
 #[test]
-fn poke_bad_hex_char_errors_without_modifying_file() {
+fn poke_bad_palette_char_errors_without_modifying_file() {
     let text = cart("sprite player rect=0,0 size=1x1", &["00000000"; 8]);
     let path = temp_cart("poke-err-hex", &text);
     let before = read(&path);
 
     let mut rows: Vec<String> = vec!["00000000".to_string(); 8];
-    rows[4] = "0000zz00".to_string();
+    rows[4] = "0000@@00".to_string();
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
         "player",

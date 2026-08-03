@@ -11,7 +11,7 @@
 //! speeds, and a note's *length* is worth seeing), **y = semitone**, cropped
 //! to the notes the song actually uses so a two-octave bassline does not draw
 //! eight octaves of empty space. Channel colors come from the console's own
-//! Sweetie-16 palette, note brightness is velocity, C boundaries are
+//! console palette, note brightness is velocity, C boundaries are
 //! horizontal gridlines with the octave number in the gutter, pattern
 //! boundaries are vertical gridlines, and the loop point is a bright vertical
 //! bar — so the song's form reads off the picture exactly as it reads off

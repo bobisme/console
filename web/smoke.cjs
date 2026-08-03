@@ -216,6 +216,7 @@ function hex64(v) {
   const con_init = Module.cwrap("con_init", "number", ["number", "number"]);
   const con_step = Module.cwrap("con_step", null, ["number"]);
   const con_fb = Module.cwrap("con_fb", "number", []);
+  const con_color_count = Module.cwrap("con_color_count", "number", []);
   const con_palette = Module.cwrap("con_palette", "number", []);
   const con_error = Module.cwrap("con_error", "number", []);
 
@@ -236,7 +237,7 @@ function hex64(v) {
     process.exit(1);
   }
   const con_dpal = Module.cwrap("con_dpal", "number", []);
-  check(true, "all nine con_* symbols cwrap'd");
+  check(true, "all con_* symbols cwrap'd");
 
   const currentError = () => {
     const p = con_error();
@@ -259,15 +260,18 @@ function hex64(v) {
   check(currentError() === null, "con_error is null after init");
 
   // --- palette ---
-  const pal = Module.HEAPU8.slice(con_palette(), con_palette() + 48);
-  check(pal.length === 48 && distinct(pal) > 1, "con_palette gives 48 non-uniform RGB bytes");
+  const COLOR_COUNT = con_color_count();
+  check(COLOR_COUNT === 64, "con_color_count reports 64", `got ${COLOR_COUNT}`);
+  const pal = Module.HEAPU8.slice(con_palette(), con_palette() + COLOR_COUNT * 3);
+  check(pal.length === COLOR_COUNT * 3 && distinct(pal) > 1,
+        `con_palette gives ${COLOR_COUNT * 3} non-uniform RGB bytes`);
 
-  const dpalBytes = () => Module.HEAPU8.slice(con_dpal(), con_dpal() + 16);
-  const IDENTITY_PAL = Uint8Array.from({ length: 16 }, (_, i) => i);
+  const dpalBytes = () => Module.HEAPU8.slice(con_dpal(), con_dpal() + COLOR_COUNT);
+  const IDENTITY_PAL = Uint8Array.from({ length: COLOR_COUNT }, (_, i) => i);
   const initialDpal = dpalBytes();
   if (options.generic) {
-    check(initialDpal.length === 16 && initialDpal.every((c) => c <= 15),
-          "con_dpal gives 16 valid display-palette indices",
+    check(initialDpal.length === COLOR_COUNT && initialDpal.every((c) => c < COLOR_COUNT),
+          `con_dpal gives ${COLOR_COUNT} valid display-palette indices`,
           Array.from(initialDpal).join(","));
   } else {
     check(equalBytes(initialDpal, IDENTITY_PAL),
@@ -311,7 +315,7 @@ function hex64(v) {
       audioPointerChangedAt = `frame ${f}: ${audioPtrFirst} -> ${audioPtr}`;
     }
     const fb = Module.HEAPU8.slice(fbPtr, fbPtr + FB_LEN);
-    const badPixel = fb.findIndex((value) => value > 15);
+    const badPixel = fb.findIndex((value) => value >= COLOR_COUNT);
     if (badPixel !== -1 && invalidPixelAt === null) {
       invalidPixelAt = `frame ${f}, byte ${badPixel}, value ${fb[badPixel]}`;
     }
@@ -352,7 +356,8 @@ function hex64(v) {
   if (!options.generic) {
     check(!equalBytes(frame1, frameLast), `frame 1 differs from frame ${options.frames}`);
   }
-  check(invalidPixelAt === null, "all stepped palette indices are in 0..15", invalidPixelAt);
+  check(invalidPixelAt === null,
+        `all stepped palette indices are in 0..${COLOR_COUNT - 1}`, invalidPixelAt);
 
   // --- THE headline check: wasm audio is bit-identical to native ---
   // Fresh console, seed 0, 120 frames of input mask 0 — exactly the run that
@@ -408,8 +413,8 @@ function hex64(v) {
     const fadeCart =
       "__lua__\n" +
       "f = 0\n" +
-      "function _update() f = f + 1 if f == 3 then for i = 0, 15 do pal(i, 0, 1) end end end\n" +
-      "function _draw() cls(0) rectfill(0, 0, 9, 9, 7) end\n";
+      `function _update() f = f + 1 if f == 3 then for i = 0, ${COLOR_COUNT - 1} do pal(i, 0, 1) end end end\n` +
+      `function _draw() cls(0) rectfill(0, 0, 9, 9, ${COLOR_COUNT - 1}) end\n`;
     const bytes = new TextEncoder().encode(fadeCart);
     const p = con_alloc(bytes.length);
     Module.HEAPU8.set(bytes, p);
@@ -419,16 +424,18 @@ function hex64(v) {
     con_step(0);
     const before = Module.HEAPU8.slice(con_fb(), con_fb() + FB_LEN);
     check(equalBytes(dpalBytes(), IDENTITY_PAL), "dpal starts as identity");
-    check(before[0] === 7, "the cart drew colour 7 at (0, 0)", `got ${before[0]}`);
+    check(before[0] === COLOR_COUNT - 1,
+          `the cart drew colour ${COLOR_COUNT - 1} at (0, 0)`, `got ${before[0]}`);
 
     for (let f = 0; f < 5; f++) con_step(0);
     const after = Module.HEAPU8.slice(con_fb(), con_fb() + FB_LEN);
-    check(equalBytes(dpalBytes(), new Uint8Array(16)),
-          "pal(i, 0, 1) x16 drives con_dpal to all zeros",
+    check(equalBytes(dpalBytes(), new Uint8Array(COLOR_COUNT)),
+          `pal(i, 0, 1) x${COLOR_COUNT} drives con_dpal to all zeros`,
           Array.from(dpalBytes()).join(","));
     check(equalBytes(before, after),
           "the framebuffer is byte-identical through the fade");
-    check(after[0] === 7, "framebuffer still holds raw draw-space index 7",
+    check(after[0] === COLOR_COUNT - 1,
+          `framebuffer still holds raw draw-space index ${COLOR_COUNT - 1}`,
           `got ${after[0]}`);
     check(currentError() === null, "fade cart runs clean", currentError());
   }

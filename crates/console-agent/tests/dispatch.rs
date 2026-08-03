@@ -68,7 +68,7 @@ fn full_session_flow_against_demo_cart() {
     );
     let _ = fs::remove_file(&path);
 
-    // screen_text: 256 lines of 144 hex chars.
+    // screen_text: 256 lines of 144 palette characters.
     let resp = handle(
         &mut session,
         json!({"jsonrpc": "2.0", "id": 4, "method": "screen_text", "params": {}}),

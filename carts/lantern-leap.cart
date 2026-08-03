@@ -374,6 +374,13 @@ local function reset_draw_state()
   camera()
   clip()
   pal()
+  -- Apollo64 ink map for the cart's compact 0-f sprite art. Draw-palette
+  -- remaps put the expanded indices into the framebuffer, so every renderer
+  -- and authoring tool sees the real 64-color data rather than a display-only tint.
+  pal(0,48) pal(1,40) pal(2,32) pal(3,17)
+  pal(4,36) pal(5,29) pal(6,31) pal(7,63)
+  pal(8,49) pal(9,2)  pal(10,55) pal(11,13)
+  pal(12,7) pal(13,43) pal(14,46) pal(15,62)
   fillp()
   mosaic()
   rshift()
@@ -393,12 +400,12 @@ local function draw_stars(cam)
 end
 
 local function draw_backdrop()
-  cls(8)
-  rectfill(0, 12, 143, 98, 15)
-  fillp(0x5a5a)
-  rectfill(0, 76, 143, 196, 8 + 15*16)
-  fillp(0x8888)
-  rectfill(0, 176, 143, 255, 1 + 8*16)
+  cls(49)
+  rectfill(0, 12, 143, 98, 51)
+  fillp(0x5a5a, 51)
+  rectfill(0, 76, 143, 196, 8)
+  fillp(0x8888, 49)
+  rectfill(0, 176, 143, 255, 1)
   fillp()
   circfill(112, 42 + flr(game_camera/20), 18, 4)
   circfill(105, 36 + flr(game_camera/20), 14, 15)
@@ -446,9 +453,9 @@ local function draw_world()
   end
 
   if player_mode == "dash" then
-    pal(10, 11)
+    pal(10, 13)
     aspr("player.dash", player_x+4, player_y+15, dash_t0, face_left, false)
-    pal(10, 10)
+    pal(10, 55)
   elseif player_mode == "hurt" then
     aspr("player.hurt", player_x+4, player_y+15, hurt_t0, face_left, false)
   elseif player_mode == "stomp" then
@@ -467,7 +474,7 @@ end
 
 local function draw_hud()
   clip(0, 0, 144, 12)
-  cls(0)
+  cls(48)
   clip()
   spr(EMBER, 3, 2)
   print("X" .. embers .. "/" .. #ember_cells, 12, 3, 4)
@@ -478,7 +485,7 @@ end
 
 local function draw_pause()
   clip(18, 78, 108, 96)
-  cls(1)
+  cls(40)
   clip()
   rect(18, 78, 125, 173, 4)
   rect(20, 80, 123, 171, 15)
@@ -491,9 +498,9 @@ local function draw_pause()
 end
 
 local function draw_title()
-  cls(1)
-  fillp(0x5a5a)
-  rectfill(0, 0, 143, 255, 1 + 8*16)
+  cls(40)
+  fillp(0x5a5a, 8)
+  rectfill(0, 0, 143, 255, 1)
   fillp()
   for i = 0, 11 do
     local x = (i*19 + flr(t()*7)) % 160 - 8
@@ -510,8 +517,8 @@ local function draw_title()
   print("A/B  LIGHT THE TOWER", 26, 137, 12)
   print("MENU  TOGGLE GUIDE", 29, 149, 13)
   if show_help then
-    fillp(0x8888)
-    rectfill(13, 170, 130, 223, 0 + 15*16)
+    fillp(0x8888, 51)
+    rectfill(13, 170, 130, 223, 0)
     fillp()
     rect(13, 170, 130, 223, 15)
     print("3 EMBERS OPEN THE GATE", 20, 180, 5)
@@ -525,8 +532,8 @@ end
 local function draw_win()
   draw_backdrop()
   draw_world()
-  fillp(0x5a5a)
-  rectfill(10, 67, 133, 181, 0 + 1*16)
+  fillp(0x5a5a, 1)
+  rectfill(10, 67, 133, 181, 0)
   fillp()
   rect(10, 67, 133, 181, 4)
   rect(12, 69, 131, 179, 12)
@@ -564,7 +571,7 @@ function _draw()
     mosaic(factor)
   end
   if flash > 0 then
-    for c = 0, 15 do pal(c, flash%2 == 0 and 12 or 4, 1) end
+    for c = 0, 63 do pal(c, flash%2 == 0 and 7 or 36, 1) end
   end
 end
 

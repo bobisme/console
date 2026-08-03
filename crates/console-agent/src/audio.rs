@@ -464,7 +464,7 @@ fn brighten_col(rgba: &mut [u8], width: u32, height: u32, x: u32, amount: u8) {
 }
 
 /// Dark navy (`#1a1c2c`, this project's palette index 0) through blues to a
-/// warm yellow-white, matching the console's Sweetie-16 aesthetic.
+/// warm yellow-white, matching the console palette's aesthetic.
 fn ramp_color(t: f32) -> [u8; 3] {
     const STOPS: [[u8; 3]; 4] = [
         [0x1a, 0x1c, 0x2c],

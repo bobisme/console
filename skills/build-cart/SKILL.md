@@ -5,7 +5,7 @@ description: How to build, test, and ship games (carts) for this fantasy console
 
 # Building carts for this console
 
-A cart is ONE plain-text file (`*.cart`): Lua 5.4 code + sprites as hex
+A cart is ONE plain-text file (`*.cart`): Lua 5.4 code + sprites as palette text
 grids + music as tracker text. The console is deterministic to the bit: the
 same cart + seed + input sequence produces identical pixels and audio
 samples on every platform. You develop headlessly through the
@@ -21,7 +21,7 @@ format; this skill is the working knowledge.
 
 ## Console facts
 
-144×256 portrait, fixed 16-color palette (Sweetie-16, indices 0–15), 60fps
+144×256 portrait, fixed 64-color Apollo64 palette (indices 0–63), 60fps
 fixed timestep, 7 buttons (d-pad, A, B, menu), 6 audio channels, Lua 5.4 in
 a sandbox. `_update()` then `_draw()` every frame.
 
@@ -47,7 +47,8 @@ audio_stats spectrogram{path} wav{path}` plus the `sprite_*`, `map_*`
 below.
 
 Iterate in small steps: change one thing → step → screenshot/eval →
-verify. `screen_text` returns the framebuffer as 256 rows of 144 hex chars —
+verify. `screen_text` returns the framebuffer as 256 rows of 144 palette
+characters (`0-9a-zA-Z-_` maps to 0–63) —
 cheap for asserting "pixel (x,y) is color c" without vision. Save states
 are replays (`seed` + input log), so they reproduce everything, audio
 included.
@@ -57,7 +58,7 @@ included.
 ```
 __meta__          title=... author=... version=...
 __lua__           the game (Lua 5.4, sandboxed)
-__sprites__       128 lines x 128 hex chars; 1 char = 1 pixel; sprite n at (n%16*8, n//16*8)
+__sprites__       128 lines x 128 palette chars (0-9a-zA-Z-_); 1 char = 1 pixel; sprite n at (n%16*8, n//16*8)
 __map__           up to 64 lines x up to 128 cells; 2 hex chars = 1 tile id (00-ff); tile 00 = empty
 __gfx_meta__      sprite <name> rect=tx,ty size=WxH [anchor=px,py]
                   anim <sprite>.<label> frames=f0,f1,... fps=N [loop] [frames_rect=tx,ty]
@@ -99,16 +100,16 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
     resets to full screen. `cls` respects it, so it clears the window.
   - `pal(c0,c1)` — draw-palette remap: pixels are actually written as `c1`.
   - `pal(c0,c1,1)` — DISPLAY remap, applied at scanout only. The framebuffer
-    keeps its indices, so `for i=0,15 do pal(i,0,1) end` fades the whole
+    keeps its indices, so `for i=0,63 do pal(i,0,1) end` fades the whole
     screen to black with no redraw (and `screen_text` still shows the real
     pixels). Flashes: `pal(i,7,1)`. `pal()` with no args resets both maps
     AND `palt`.
   - `palt(c,flag)` — which colors `spr()` skips (default: only 0). Tested on
     the sprite's SOURCE color, before `pal()` remaps it. `palt()` resets.
-  - `fillp(p)` — 16-bit 4x4 dither pattern for SHAPES only (pset/line/rect/
+  - `fillp(p,[secondary])` — 16-bit 4x4 dither pattern for SHAPES only (pset/line/rect/
     rectfill/circ/circfill; never spr/sspr/map/print/cls). Bit 15 = top-left,
-    row-major; a set bit draws the color's high nibble (`c0 + c1*16`) or
-    nothing at all when that nibble is 0. Anchored to SCREEN space, so shapes
+    row-major; a clear bit draws the shape color and a set bit draws the
+    explicit secondary color, or nothing when it is omitted. Anchored to SCREEN space, so shapes
     shimmer as the camera scrolls. `fillp()` = solid; `pal()` does NOT reset it.
   - `mosaic(f)` — end-of-frame pixelation: each f x f block of the finished
     frame becomes its top-left pixel (f 1-32, `mosaic()` = off). Unlike the
@@ -157,12 +158,12 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
   state. It costs nothing to run and shows up in `screen_text`, so you can
   assert on it. Because it runs after `mosaic`, `mosaic(4)` plus a sine sweep
   gives chunky wobbling water rather than sliced-up blocks.
-- **Dither shading with `fillp`.** With only 16 fixed colors, the way to get a
-  third shade between two palette entries is a pattern, not a color:
-  `fillp(0x5a5a) rectfill(x0,y0,x1,y1, dark + light*16)` is a 50% blend of two
+- **Dither shading with `fillp`.** Even with 64 colors, patterns add texture
+  and shades without expanding the palette:
+  `fillp(0x5a5a, light) rectfill(x0,y0,x1,y1, dark)` is a 50% blend of two
   colors; `0x8888` is 25% secondary, `0xeeee` 75%, `0x0f0f` horizontal stripes,
-  `0x3333` vertical ones. Leave the high
-  nibble off and the pattern becomes a stencil instead — great for fog, water
+  `0x3333` vertical ones. Leave the secondary argument off and the pattern
+  becomes a stencil instead — great for fog, water
   surfaces, damage flashes and "half-there" ghosts over whatever is behind.
   Remember it is anchored to the screen: a full-screen `rectfill` under a
   scrolling `camera` shimmers, which usually looks right.
@@ -183,8 +184,9 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
 
 ## Sprite & animation authoring
 
-Draw by editing hex in `__sprites__` (one hex digit per pixel). Never
-hand-shift hex — use the transforms. Declare every sprite and anim in
+Draw with the `__sprites__` palette alphabet
+`0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_` (one
+character per pixel). Never hand-shift rows — use the transforms. Declare every sprite and anim in
 `__gfx_meta__` (anchor at the feet/contact point for characters, visual
 center for floaters) — that declaration is both what the tools below inspect
 and what `aspr()` plays at runtime, so it is the single definition of an
@@ -207,25 +209,25 @@ console-agent sprite gif    game.cart <anim> [--zoom 8] [--grid] [--anchor] -o o
 console-agent sprite lint   game.cart [anim ...] \
     [--max-drift PX] [--max-area-var PCT] [--max-changed PX] [--no-unique-colors] [--summary]  # JSON quality numbers, or a CI gate
 console-agent sprite edit   game.cart copy|shift|flip|rotate|clear ... [--dry-run]
-console-agent sprite dump   game.cart <sprite|anim|tx,ty,w,h> [--frame N]    # print pixels as hex rows
+console-agent sprite dump   game.cart <sprite|anim|tx,ty,w,h> [--frame N]    # print palette-character rows
 console-agent sprite poke   game.cart <target> [--frame N] --rows r0,r1,... # write pixels back
 console-agent sprite poke   game.cart <target> [--frame N] --stdin          # rows on stdin, one per line
 ```
 
-Write pixels with `poke` instead of hand-editing hex: `dump` a region to see
-its rows (a `#`-comment header plus one hex-digit-per-pixel row per line,
+Write pixels with `poke` instead of hand-editing rows: `dump` a region to see
+its rows (a `#`-comment header plus one palette-character-per-pixel row per line,
 same alphabet as `__sprites__`), edit the rows you got back, then `poke`
 them — `--stdin` is the better fit for agents (`sprite dump ... | sprite
 poke ... --stdin` round-trips cleanly; poke skips `#`-prefixed lines so the
 dump header passes through harmlessly). `poke` validates row count and row
-width against the target's region exactly and rejects non-hex characters;
+width against the target's region exactly and rejects characters outside the palette alphabet;
 `--dry-run` previews the changed lines without writing.
 
-Animation workflow: `copy` an existing frame → nudge pixels in the hex →
+Animation workflow: `copy` an existing frame → nudge pixels in the palette text →
 `lint` until quiet → `onion`/`strip` for the visual pass. Quality gates:
 zero/near-zero centroid drift relative to the anchor, silhouette area
 steady within ~15%, no colors unique to a single frame (usually a typo'd
-hex digit), small `changed_pixels` between adjacent frames. Every frame
+palette character), small `changed_pixels` between adjacent frames. Every frame
 entry in `lint`'s JSON also carries `sprite_id`, the sheet tile `[tx, ty]`
 that frame number actually resolved to — handy once an anim's frames don't
 all sit in one contiguous run.
@@ -326,7 +328,8 @@ is pinned at tile `(7,2)` regardless.
 
 ## Tile map authoring
 
-The map is hex text like the sprite sheet, but **2 chars per cell**, and the
+The map remains hex text (**2 chars per cell**), unlike the sprite sheet's
+64-character palette alphabet. The
 number you write is a sprite index — `01` is sprite 1, `1f` is sprite 31. Count
 in pairs, not characters: the screen is 18 cells wide (144/8) and 32 tall, so a
 screenful is 36 characters per line. Rows can be short (they pad with tile 0)
