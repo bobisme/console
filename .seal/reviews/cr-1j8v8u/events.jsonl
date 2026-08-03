@@ -10,3 +10,4 @@
 {"ts":"2026-08-03T20:12:41.108698670Z","author":"console-dev","event":"ThreadResolved","data":{"thread_id":"th-3fp50h","reason":"Addressed in 8425bcb and verified with just check plus real Chromium browser-check"}}
 {"ts":"2026-08-03T20:13:40.383162164Z","author":"console-dev","event":"ReviewerVoted","data":{"review_id":"cr-1j8v8u","vote":"lgtm","reason":"Follow-up 8425bcb fully addresses both P2 findings: request-list shape and exact self-contained URL policy now fail closed, and the harness proves both raw framebuffer evolution and changing non-uniform rendered canvas pixels. Real Chromium browser-check passes."}}
 {"ts":"2026-08-03T20:13:40.420758548Z","author":"console-dev","event":"ReviewApproved","data":{"review_id":"cr-1j8v8u"}}
+{"ts":"2026-08-03T20:14:36.653382655Z","author":"console-dev","event":"ReviewMerged","data":{"review_id":"cr-1j8v8u","final_commit":"14541bea0abc"}}
