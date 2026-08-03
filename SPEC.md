@@ -501,10 +501,27 @@ name, or raw rect `tx,ty,w,h`.
 | `sprite onion <cart> <anim> --frame N -o` | frame N full opacity; previous frame tinted red ~35%, next tinted green ~35% (loop-aware; color-0 pixels excluded from ghosts) |
 | `sprite diff <cart> <anim> <frameA> <frameB> -o` | frame B dimmed ~35%; pixels that differ from frame A in bright magenta |
 | `sprite ghost <cart> <anim> -o` | every frame overlaid at low alpha (motion accumulation) |
-| `sprite lint <cart> [anim ...]` | JSON to stdout, per frame and per consecutive pair (loop-aware): changed-pixel count, silhouette area + % drift, centroid & bbox relative to anchor + per-frame drift, per-frame palette histogram, colors unique to a single frame. Report-only; agents do the asserting. |
+| `sprite lint <cart> [anim ...] [--max-drift PX] [--max-area-var PCT] [--max-changed PX] [--no-unique-colors] [--summary]` | JSON to stdout, per frame and per consecutive pair (loop-aware): changed-pixel count, silhouette area + % drift, centroid & bbox relative to anchor + per-frame drift, per-frame palette histogram, colors unique to a single frame. Each frame entry also carries `sprite_id`, the resolved sheet tile `[tx, ty]` that frame number lives at. Report-only with no thresholds (exit 0); agents do the asserting. |
+
+`sprite lint`'s CI gate: any of `--max-drift <px>` (centroid-drift distance
+between consecutive/wrap frames), `--max-area-var <pct>` (absolute
+silhouette-area drift), `--max-changed <px>` (changed-pixel count between
+consecutive/wrap frames), `--no-unique-colors` (any color that appears in
+exactly one frame) turns the report into a gate: exit code 1 if anything
+breaches its limit, plus a top-level `violations` array, one entry per
+breach — `{"anim", "frame", "metric", "value", "limit"}` (`frame` is the
+pair's later frame, or the frame a unique color lives in). No thresholds
+given ⇒ unchanged report-only behavior (exit 0, no `violations` key).
+`--summary` prints one line per anim (name, frame count, worst drift, worst
+changed-pixel count, unique-color count) instead of the full JSON; it
+combines with the threshold flags, which still gate the exit code.
 
 RPC mirrors: `sprite_render`, `sprite_strip`, `sprite_onion`, `sprite_diff`,
 `sprite_ghost`, `sprite_lint` against the session's loaded cart.
+`sprite_lint` mirrors the CLI's threshold params (`max_drift`,
+`max_area_var`, `max_changed`, `no_unique_colors`) and `summary`; since
+JSON-RPC has no process exit code, it reports a `"violated"` boolean
+instead.
 
 ### Transforms (console-agent `sprite edit` — CLI only, rewrites the cart file)
 

@@ -535,6 +535,63 @@ fn gif_delay_from_fps(fps: u8) -> u16 {
     (hundredths as u16).max(2)
 }
 
+/// CI-gate thresholds for `sprite lint` — SPEC.md "Sprite & animation
+/// authoring (PoC v1)". Every field `None`/`false` (i.e. `default()`) means
+/// "report only": [`lint_gated`] returns `violated = false` and its JSON
+/// carries no `violations` key at all — the exact pre-existing [`lint`]
+/// behavior, so carts/callers that pass no thresholds see no change.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LintThresholds {
+    /// Max allowed centroid-drift distance, in pixels, between consecutive
+    /// (or wrap) frames.
+    pub max_drift: Option<f64>,
+    /// Max allowed silhouette-area drift, as an absolute percentage.
+    pub max_area_var: Option<f64>,
+    /// Max allowed changed-pixel count between consecutive (or wrap) frames.
+    pub max_changed: Option<u32>,
+    /// Any color that appears in exactly one frame is a violation.
+    pub no_unique_colors: bool,
+}
+
+impl LintThresholds {
+    /// `pub(crate)`: `rpc.rs`'s `sprite_lint` mirror uses this to decide
+    /// whether to include a `"violations"` key, same rule the CLI uses.
+    pub(crate) fn is_active(&self) -> bool {
+        self.max_drift.is_some()
+            || self.max_area_var.is_some()
+            || self.max_changed.is_some()
+            || self.no_unique_colors
+    }
+}
+
+/// One anim's `--summary` line worth of numbers.
+#[derive(Debug, Clone)]
+pub struct AnimSummary {
+    pub anim: String,
+    pub frame_count: usize,
+    /// Largest centroid-drift distance across the anim's pairs (`None` when
+    /// it has fewer than two comparable frames).
+    pub worst_drift: Option<f64>,
+    /// Largest changed-pixel count across the anim's pairs.
+    pub worst_changed: Option<u32>,
+    /// How many colors appear in exactly one frame.
+    pub unique_colors: usize,
+}
+
+impl AnimSummary {
+    /// The one printable line SPEC.md's `--summary` describes: name,
+    /// frames, worst drift, worst changed, unique-color count.
+    pub fn line(&self) -> String {
+        let drift = self.worst_drift.map_or_else(|| "-".to_string(), |d| format!("{:.2}px", round2(d)));
+        let changed =
+            self.worst_changed.map_or_else(|| "-".to_string(), |c| format!("{c}px"));
+        format!(
+            "{}: frames={} worst_drift={drift} worst_changed={changed} unique_colors={}",
+            self.anim, self.frame_count, self.unique_colors,
+        )
+    }
+}
+
 /// `sprite lint` — pure numbers, no judgements: per-frame silhouette area,
 /// anchor-relative bbox and centroid, palette histogram; per consecutive
 /// (loop-aware) pair the changed-pixel count and the area/centroid/bbox
@@ -542,19 +599,72 @@ fn gif_delay_from_fps(fps: u8) -> u16 {
 ///
 /// `names` empty means "every anim in the cart". The result is
 /// `{"anims": [ ... ]}` — one object per anim, in the order requested (or
-/// sorted by name when reporting all of them).
+/// sorted by name when reporting all of them). Report-only, no CI gate; see
+/// [`lint_gated`] for the thresholded form the CLI's `--max-*`/
+/// `--no-unique-colors` flags and the `sprite_lint` RPC verb use.
 pub fn lint(cart: &Cart, names: &[String]) -> Result<Value, String> {
+    lint_gated(cart, names, &LintThresholds::default()).map(|(value, _violated)| value)
+}
+
+/// [`lint`], plus a `sprite_id` (the resolved sheet tile origin `[tx, ty]`)
+/// on every frame entry, plus — when `thresholds` has anything set — a
+/// top-level `violations` array, one entry per threshold breach: `{"anim",
+/// "frame", "metric", "value", "limit"}`. The returned `bool` is `true` iff
+/// there was at least one violation; the CLI turns that into exit code 1,
+/// the RPC verb into a `"violated"` field, since JSON-RPC has no process
+/// exit code to reuse. An inactive (`default()`) `thresholds` always
+/// returns `false` with no `violations` key — [`lint`]'s report-only
+/// contract, unchanged.
+pub fn lint_gated(
+    cart: &Cart,
+    names: &[String],
+    thresholds: &LintThresholds,
+) -> Result<(Value, bool), String> {
     let wanted: Vec<String> = if names.is_empty() {
         cart.gfx_meta().anims().map(|a| a.name.clone()).collect()
     } else {
         names.to_vec()
     };
 
-    let mut out = Vec::with_capacity(wanted.len());
+    let mut anims = Vec::with_capacity(wanted.len());
+    let mut violations = Vec::new();
     for name in &wanted {
-        out.push(lint_anim(cart, name)?);
+        let (anim_json, anim_violations, _summary) = lint_anim_gated(cart, name, thresholds)?;
+        anims.push(anim_json);
+        violations.extend(anim_violations);
     }
-    Ok(json!({ "anims": out }))
+    let violated = !violations.is_empty();
+    let mut result = json!({ "anims": anims });
+    if thresholds.is_active() {
+        result["violations"] = json!(violations);
+    }
+    Ok((result, violated))
+}
+
+/// `--summary` shape: one [`AnimSummary`] per requested anim, plus the same
+/// `violations` list [`lint_gated`] would put in its JSON (computed against
+/// the identical per-frame/per-pair numbers — summarizing is a presentation
+/// choice, not a different gate).
+pub fn lint_summary(
+    cart: &Cart,
+    names: &[String],
+    thresholds: &LintThresholds,
+) -> Result<(Vec<AnimSummary>, Vec<Value>, bool), String> {
+    let wanted: Vec<String> = if names.is_empty() {
+        cart.gfx_meta().anims().map(|a| a.name.clone()).collect()
+    } else {
+        names.to_vec()
+    };
+
+    let mut summaries = Vec::with_capacity(wanted.len());
+    let mut violations = Vec::new();
+    for name in &wanted {
+        let (_json, anim_violations, summary) = lint_anim_gated(cart, name, thresholds)?;
+        summaries.push(summary);
+        violations.extend(anim_violations);
+    }
+    let violated = !violations.is_empty();
+    Ok((summaries, violations, violated))
 }
 
 /// JSON for one `frames=` entry: a plain number for the classic `frames=i`
@@ -567,7 +677,16 @@ fn frame_spec_json(spec: FrameSpec) -> Value {
     }
 }
 
-fn lint_anim(cart: &Cart, name: &str) -> Result<Value, String> {
+/// Computes one anim's full lint JSON, its threshold violations (empty when
+/// `thresholds` is inactive), and its `--summary` numbers, all from one pass
+/// over the frame data — the single place [`lint_gated`] and
+/// [`lint_summary`] both go through, so the two presentations can never
+/// disagree about what counts as a violation.
+fn lint_anim_gated(
+    cart: &Cart,
+    name: &str,
+    thresholds: &LintThresholds,
+) -> Result<(Value, Vec<Value>, AnimSummary), String> {
     let (def, sprite, frames) = anim_frames(cart, name)?;
     let anchor = sprite.anchor;
     let stats: Vec<FrameStats> = frames.iter().map(|f| frame_stats(f, anchor)).collect();
@@ -578,9 +697,15 @@ fn lint_anim(cart: &Cart, name: &str) -> Result<Value, String> {
         .zip(&stats)
         .enumerate()
         .map(|(i, (&sheet_frame, s))| {
+            // The resolved sheet tile this frame renders from — computed
+            // through `AnimDef::resolve_frame` so `frames_rect=` relocation
+            // and explicit `tx:ty` forms report the tile that actually
+            // draws, not the classic sprite-relative displacement.
+            let sprite_id = def.resolve_frame(sprite, i).map(|(x, y, _, _)| json!([x / 8, y / 8]));
             json!({
                 "index": i,
                 "sprite_frame": frame_spec_json(sheet_frame),
+                "sprite_id": sprite_id,
                 "silhouette_area": s.area,
                 "bbox": bbox_json(s.bbox),
                 "centroid": s.centroid.map(|(x, y)| json!([round2(x), round2(y)])),
@@ -591,19 +716,14 @@ fn lint_anim(cart: &Cart, name: &str) -> Result<Value, String> {
 
     // Consecutive pairs, plus the wrap-around pair when the anim loops.
     let n = frames.len();
-    let mut pairs = Vec::new();
+    let mut metrics = Vec::new();
     for i in 0..n.saturating_sub(1) {
-        pairs.push(pair_json(&frames[i], &frames[i + 1], &stats[i], &stats[i + 1], (i, i + 1)));
+        metrics.push(pair_metrics(&frames[i], &frames[i + 1], &stats[i], &stats[i + 1], (i, i + 1)));
     }
     if def.looped && n > 1 {
-        pairs.push(pair_json(
-            &frames[n - 1],
-            &frames[0],
-            &stats[n - 1],
-            &stats[0],
-            (n - 1, 0),
-        ));
+        metrics.push(pair_metrics(&frames[n - 1], &frames[0], &stats[n - 1], &stats[0], (n - 1, 0)));
     }
+    let pairs: Vec<Value> = metrics.iter().map(pair_json).collect();
 
     // A color used by exactly one frame is usually either a highlight the
     // other frames forgot or a stray pixel; report it, don't judge it.
@@ -619,13 +739,81 @@ fn lint_anim(cart: &Cart, name: &str) -> Result<Value, String> {
             e.2 = count;
         }
     }
-    let unique: Vec<Value> = seen
+    let unique_entries: Vec<(u8, usize, u32)> = seen
         .iter()
         .filter(|(_, (frames_using, _, _))| *frames_using == 1)
-        .map(|(&color, &(_, frame, count))| json!({"color": color, "frame": frame, "count": count}))
+        .map(|(&color, &(_, frame, count))| (color, frame, count))
+        .collect();
+    let unique: Vec<Value> = unique_entries
+        .iter()
+        .map(|&(color, frame, count)| json!({"color": color, "frame": frame, "count": count}))
         .collect();
 
-    Ok(json!({
+    // -----------------------------------------------------------------
+    // Threshold gate — every violation names the anim, the offending
+    // frame (the pair's "to" frame, or the frame a unique color lives in),
+    // the metric, its value and the configured limit.
+    // -----------------------------------------------------------------
+    let violation = |frame: usize, metric: &str, value: Value, limit: Value| {
+        json!({ "anim": def.name, "frame": frame, "metric": metric, "value": value, "limit": limit })
+    };
+    let mut violations = Vec::new();
+    for m in &metrics {
+        if let Some(max_drift) = thresholds.max_drift {
+            if let Some(distance) = m.centroid_drift.map(|(_, _, d)| d) {
+                if distance > max_drift {
+                    violations.push(violation(
+                        m.to,
+                        "centroid_drift",
+                        json!(round2(distance)),
+                        json!(max_drift),
+                    ));
+                }
+            }
+        }
+        if let Some(max_area_var) = thresholds.max_area_var {
+            if let Some(pct) = m.area_drift_pct {
+                if pct.abs() > max_area_var {
+                    violations.push(violation(
+                        m.to,
+                        "area_drift_pct",
+                        json!(round2(pct.abs())),
+                        json!(max_area_var),
+                    ));
+                }
+            }
+        }
+        if let Some(max_changed) = thresholds.max_changed {
+            if m.changed_pixels as u32 > max_changed {
+                violations.push(violation(
+                    m.to,
+                    "changed_pixels",
+                    json!(m.changed_pixels),
+                    json!(max_changed),
+                ));
+            }
+        }
+    }
+    if thresholds.no_unique_colors {
+        for &(color, frame, _count) in &unique_entries {
+            violations.push(violation(frame, "unique_color", json!(color), json!(0)));
+        }
+    }
+
+    let worst_drift = metrics
+        .iter()
+        .filter_map(|m| m.centroid_drift.map(|(_, _, d)| d))
+        .fold(None, |acc: Option<f64>, d| Some(acc.map_or(d, |a| a.max(d))));
+    let worst_changed = metrics.iter().map(|m| m.changed_pixels as u32).max();
+    let summary = AnimSummary {
+        anim: def.name.clone(),
+        frame_count: n,
+        worst_drift: worst_drift.map(round2),
+        worst_changed,
+        unique_colors: unique_entries.len(),
+    };
+
+    let value = json!({
         "anim": def.name,
         "sprite": def.sprite,
         "fps": def.fps,
@@ -636,7 +824,9 @@ fn lint_anim(cart: &Cart, name: &str) -> Result<Value, String> {
         "frames": frames_json,
         "pairs": pairs,
         "colors_unique_to_single_frame": unique,
-    }))
+    });
+
+    Ok((value, violations, summary))
 }
 
 /// `sprite dump` — print `target`'s resolved region as rows of hex text, top
@@ -677,7 +867,7 @@ pub fn dump(cart: &Cart, target: &str, frame: u8) -> Result<String, String> {
 /// process exit code.
 pub fn cli_view(args: &[String]) -> i32 {
     match run_view(args) {
-        Ok(()) => 0,
+        Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e}");
             eprintln!("{}", super::SPRITE_USAGE);
@@ -687,7 +877,8 @@ pub fn cli_view(args: &[String]) -> i32 {
 }
 
 /// Flags accepted across the view commands (each command validates which of
-/// them make sense for it).
+/// them make sense for it). `max_drift`/`max_area_var`/`max_changed`/
+/// `no_unique_colors`/`summary` are `lint`-only.
 struct Flags {
     frame: Option<u32>,
     zoom: u32,
@@ -696,6 +887,11 @@ struct Flags {
     anchor: bool,
     all: bool,
     out: Option<String>,
+    max_drift: Option<f64>,
+    max_area_var: Option<f64>,
+    max_changed: Option<u32>,
+    no_unique_colors: bool,
+    summary: bool,
     positional: Vec<String>,
 }
 
@@ -708,6 +904,11 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
         anchor: false,
         all: false,
         out: None,
+        max_drift: None,
+        max_area_var: None,
+        max_changed: None,
+        no_unique_colors: false,
+        summary: false,
         positional: Vec::new(),
     };
     let mut it = args.iter();
@@ -719,6 +920,11 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
             "--indices" => f.indices = true,
             "--anchor" => f.anchor = true,
             "--all" => f.all = true,
+            "--max-drift" => f.max_drift = Some(next_f64(&mut it, "--max-drift")?),
+            "--max-area-var" => f.max_area_var = Some(next_f64(&mut it, "--max-area-var")?),
+            "--max-changed" => f.max_changed = Some(next_u32(&mut it, "--max-changed")?),
+            "--no-unique-colors" => f.no_unique_colors = true,
+            "--summary" => f.summary = true,
             "-o" | "--out" => {
                 f.out = Some(
                     it.next()
@@ -741,7 +947,17 @@ fn next_u32<'a>(it: &mut impl Iterator<Item = &'a String>, what: &str) -> Result
         .map_err(|_| format!("invalid {what} value {v:?} (want a non-negative integer)"))
 }
 
-fn run_view(args: &[String]) -> Result<(), String> {
+fn next_f64<'a>(it: &mut impl Iterator<Item = &'a String>, what: &str) -> Result<f64, String> {
+    let v = it.next().ok_or_else(|| format!("{what} requires a value"))?;
+    v.parse()
+        .map_err(|_| format!("invalid {what} value {v:?} (want a number)"))
+}
+
+/// Runs one `sprite <cmd> ...` invocation and returns the process exit code
+/// on success (0 for every command except a threshold-gated `lint` that
+/// found a violation, which is 1) — errors (bad args, cart parse failures,
+/// ...) are `Err` and become exit code 2 in [`cli_view`].
+fn run_view(args: &[String]) -> Result<i32, String> {
     let cmd = args.first().map(String::as_str).unwrap_or_default();
     let flags = parse_flags(&args[1..])?;
     let cart_path = flags
@@ -754,12 +970,31 @@ fn run_view(args: &[String]) -> Result<(), String> {
     let rest = &flags.positional[1..];
 
     if cmd == "lint" {
-        let value = lint(&cart, rest)?;
+        let thresholds = LintThresholds {
+            max_drift: flags.max_drift,
+            max_area_var: flags.max_area_var,
+            max_changed: flags.max_changed,
+            no_unique_colors: flags.no_unique_colors,
+        };
+        if flags.summary {
+            let (summaries, violations, violated) = lint_summary(&cart, rest, &thresholds)?;
+            for s in &summaries {
+                println!("{}", s.line());
+            }
+            for v in &violations {
+                println!(
+                    "  violation: anim={} frame={} metric={} value={} limit={}",
+                    v["anim"], v["frame"], v["metric"], v["value"], v["limit"]
+                );
+            }
+            return Ok(i32::from(violated));
+        }
+        let (value, violated) = lint_gated(&cart, rest, &thresholds)?;
         println!(
             "{}",
             serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?
         );
-        return Ok(());
+        return Ok(i32::from(violated));
     }
 
     if cmd == "gif" {
@@ -775,7 +1010,7 @@ fn run_view(args: &[String]) -> Result<(), String> {
             "wrote {out} ({}x{}, {} frame(s), zoom {})",
             result.width, result.height, result.frames, flags.zoom
         );
-        return Ok(());
+        return Ok(0);
     }
 
     if cmd == "dump" {
@@ -785,7 +1020,7 @@ fn run_view(args: &[String]) -> Result<(), String> {
             None => 0,
         };
         print!("{}", dump(&cart, target, frame)?);
-        return Ok(());
+        return Ok(0);
     }
 
     let out = flags
@@ -853,7 +1088,7 @@ fn run_view(args: &[String]) -> Result<(), String> {
         "wrote {out} ({}x{}, {} frame(s), zoom {})",
         image.width, image.height, image.frames, flags.zoom
     );
-    Ok(())
+    Ok(0)
 }
 
 fn one_positional<'a>(rest: &'a [String], cmd: &str, what: &str) -> Result<&'a str, String> {
@@ -1450,54 +1685,79 @@ fn hist_json(hist: &BTreeMap<u8, u32>) -> Value {
     Value::Object(map)
 }
 
-fn pair_json(
-    a: &Frame,
-    b: &Frame,
-    sa: &FrameStats,
-    sb: &FrameStats,
-    (from, to): (usize, usize),
-) -> Value {
-    let changed = if a.w == b.w && a.h == b.h {
+/// The numbers behind one `pairs[]` entry, computed once and shared by
+/// [`pair_json`] (the report) and `lint_anim_gated`'s threshold gate (the
+/// CI-friendly reading of the same numbers) — so a metric's JSON rendering
+/// and its violation check can never disagree about the underlying value.
+struct PairMetrics {
+    from: usize,
+    to: usize,
+    changed_pixels: usize,
+    area_from: u32,
+    area_to: u32,
+    area_drift_pct: Option<f64>,
+    /// `(dx, dy, distance)`, unrounded.
+    centroid_drift: Option<(f64, f64, f64)>,
+    /// `[dx0, dy0, dx1, dy1, dw, dh]`.
+    bbox_drift: Option<[i32; 6]>,
+}
+
+fn pair_metrics(a: &Frame, b: &Frame, sa: &FrameStats, sb: &FrameStats, (from, to): (usize, usize)) -> PairMetrics {
+    let changed_pixels = if a.w == b.w && a.h == b.h {
         a.px.iter().zip(&b.px).filter(|(x, y)| x != y).count()
     } else {
         // Different-sized frames cannot happen for one sprite today, but be
         // explicit rather than panicking if that ever changes.
         a.px.len().max(b.px.len())
     };
-    let area_drift = (sa.area > 0).then(|| {
-        round2((f64::from(sb.area) - f64::from(sa.area)) / f64::from(sa.area) * 100.0)
-    });
+    let area_drift_pct = (sa.area > 0)
+        .then(|| (f64::from(sb.area) - f64::from(sa.area)) / f64::from(sa.area) * 100.0);
     let centroid_drift = match (sa.centroid, sb.centroid) {
         (Some(ca), Some(cb)) => {
             let (dx, dy) = (cb.0 - ca.0, cb.1 - ca.1);
-            json!({
-                "dx": round2(dx),
-                "dy": round2(dy),
-                "distance": round2((dx * dx + dy * dy).sqrt()),
-            })
+            Some((dx, dy, (dx * dx + dy * dy).sqrt()))
         }
-        _ => Value::Null,
+        _ => None,
     };
     let bbox_drift = match (sa.bbox, sb.bbox) {
-        (Some(ba), Some(bb)) => json!({
-            "dx0": bb[0] - ba[0],
-            "dy0": bb[1] - ba[1],
-            "dx1": bb[2] - ba[2],
-            "dy1": bb[3] - ba[3],
-            "dw": (bb[2] - bb[0]) - (ba[2] - ba[0]),
-            "dh": (bb[3] - bb[1]) - (ba[3] - ba[1]),
-        }),
-        _ => Value::Null,
+        (Some(ba), Some(bb)) => Some([
+            bb[0] - ba[0],
+            bb[1] - ba[1],
+            bb[2] - ba[2],
+            bb[3] - ba[3],
+            (bb[2] - bb[0]) - (ba[2] - ba[0]),
+            (bb[3] - bb[1]) - (ba[3] - ba[1]),
+        ]),
+        _ => None,
     };
+    PairMetrics {
+        from,
+        to,
+        changed_pixels,
+        area_from: sa.area,
+        area_to: sb.area,
+        area_drift_pct,
+        centroid_drift,
+        bbox_drift,
+    }
+}
+
+fn pair_json(m: &PairMetrics) -> Value {
     json!({
-        "from": from,
-        "to": to,
-        "changed_pixels": changed,
-        "area_from": sa.area,
-        "area_to": sb.area,
-        "area_drift_pct": area_drift,
-        "centroid_drift": centroid_drift,
-        "bbox_drift": bbox_drift,
+        "from": m.from,
+        "to": m.to,
+        "changed_pixels": m.changed_pixels,
+        "area_from": m.area_from,
+        "area_to": m.area_to,
+        "area_drift_pct": m.area_drift_pct.map(round2),
+        "centroid_drift": m.centroid_drift.map(|(dx, dy, distance)| json!({
+            "dx": round2(dx),
+            "dy": round2(dy),
+            "distance": round2(distance),
+        })).unwrap_or(Value::Null),
+        "bbox_drift": m.bbox_drift.map(|[dx0, dy0, dx1, dy1, dw, dh]| json!({
+            "dx0": dx0, "dy0": dy0, "dx1": dx1, "dy1": dy1, "dw": dw, "dh": dh,
+        })).unwrap_or(Value::Null),
     })
 }
 

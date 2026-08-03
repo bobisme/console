@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::map;
 use crate::session::{Session, SessionError};
-use crate::sprite::view::{self, Image, OverlayOpts, RenderOpts};
+use crate::sprite::view::{self, Image, LintThresholds, OverlayOpts, RenderOpts};
 use crate::value::lua_to_json;
 
 /// A JSON-RPC error: `code` + `message` are always present, `data` carries
@@ -381,6 +381,10 @@ fn u32_param(params: &Value, name: &str) -> Option<u32> {
     params.get(name).and_then(Value::as_u64).map(|v| v as u32)
 }
 
+fn f64_param(params: &Value, name: &str) -> Option<f64> {
+    params.get(name).and_then(Value::as_f64)
+}
+
 fn bool_param(params: &Value, name: &str) -> bool {
     params.get(name).and_then(Value::as_bool).unwrap_or(false)
 }
@@ -483,6 +487,13 @@ fn m_sprite_ghost(session: &Session, params: &Value) -> Result<Value, RpcErr> {
     write_image(path, &image)
 }
 
+/// `sprite_lint` mirrors the CLI's `sprite lint` exactly, including its
+/// `--max-*`/`--no-unique-colors`/`--summary` gate (SPEC.md "Sprite &
+/// animation authoring (PoC v1)"). JSON-RPC has no process exit code, so a
+/// `"violated"` boolean stands in for the CLI's exit-code-1-on-violation
+/// convention; it is only meaningful (and only non-`false`) once at least
+/// one threshold param is given, same as the CLI's "no thresholds given ⇒
+/// current behavior" rule.
 fn m_sprite_lint(session: &Session, params: &Value) -> Result<Value, RpcErr> {
     let anims: Vec<String> = match params.get("anims") {
         None | Some(Value::Null) => Vec::new(),
@@ -500,7 +511,40 @@ fn m_sprite_lint(session: &Session, params: &Value) -> Result<Value, RpcErr> {
             ));
         }
     };
-    view::lint(session.console()?.cart(), &anims).map_err(RpcErr::bad_params)
+    let thresholds = LintThresholds {
+        max_drift: f64_param(params, "max_drift"),
+        max_area_var: f64_param(params, "max_area_var"),
+        max_changed: u32_param(params, "max_changed"),
+        no_unique_colors: bool_param(params, "no_unique_colors"),
+    };
+    let cart = session.console()?.cart();
+
+    if bool_param(params, "summary") {
+        let (summaries, violations, violated) =
+            view::lint_summary(cart, &anims, &thresholds).map_err(RpcErr::bad_params)?;
+        let anims_json: Vec<Value> = summaries
+            .iter()
+            .map(|s| {
+                json!({
+                    "anim": s.anim,
+                    "frames": s.frame_count,
+                    "worst_drift": s.worst_drift,
+                    "worst_changed": s.worst_changed,
+                    "unique_colors": s.unique_colors,
+                })
+            })
+            .collect();
+        let mut result = json!({ "anims": anims_json, "violated": violated });
+        if thresholds.is_active() {
+            result["violations"] = json!(violations);
+        }
+        return Ok(result);
+    }
+
+    let (mut result, violated) =
+        view::lint_gated(cart, &anims, &thresholds).map_err(RpcErr::bad_params)?;
+    result["violated"] = json!(violated);
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------

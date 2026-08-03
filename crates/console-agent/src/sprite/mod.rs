@@ -129,7 +129,7 @@ usage:
   console-agent sprite diff   <cart> <anim> <frameA> <frameB> [--zoom Z] -o out.png
   console-agent sprite ghost  <cart> <anim> [--zoom Z] [--grid] [--anchor] -o out.png
   console-agent sprite gif    <cart> <anim> [--zoom Z] [--grid] [--anchor] -o out.gif
-  console-agent sprite lint   <cart> [anim ...]
+  console-agent sprite lint   <cart> [anim ...] [--max-drift PX] [--max-area-var PCT] [--max-changed PX] [--no-unique-colors] [--summary]
   console-agent sprite edit   <cart> <shift|flip|rotate|copy|clear> ... [--dry-run]
   console-agent sprite dump   <cart> <target> [--frame N]
   console-agent sprite poke   <cart> <target> [--frame N] (--rows <hex,hex,...> | --stdin) [--dry-run]

@@ -195,7 +195,8 @@ console-agent sprite onion  game.cart <anim> --all [--grid] [--anchor] -o out.pn
 console-agent sprite diff   game.cart <anim> A B -o out.png                 # magenta = changed pixels
 console-agent sprite ghost  game.cart <anim> [--grid] [--anchor] -o out.png # motion accumulation
 console-agent sprite gif    game.cart <anim> [--zoom 8] [--grid] [--anchor] -o out.gif  # animated preview at declared fps
-console-agent sprite lint   game.cart [anim ...]                            # JSON quality numbers
+console-agent sprite lint   game.cart [anim ...] \
+    [--max-drift PX] [--max-area-var PCT] [--max-changed PX] [--no-unique-colors] [--summary]  # JSON quality numbers, or a CI gate
 console-agent sprite edit   game.cart copy|shift|flip|rotate|clear ... [--dry-run]
 console-agent sprite dump   game.cart <sprite|anim|tx,ty,w,h> [--frame N]    # print pixels as hex rows
 console-agent sprite poke   game.cart <target> [--frame N] --rows r0,r1,... # write pixels back
@@ -215,7 +216,25 @@ Animation workflow: `copy` an existing frame → nudge pixels in the hex →
 `lint` until quiet → `onion`/`strip` for the visual pass. Quality gates:
 zero/near-zero centroid drift relative to the anchor, silhouette area
 steady within ~15%, no colors unique to a single frame (usually a typo'd
-hex digit), small `changed_pixels` between adjacent frames. At runtime,
+hex digit), small `changed_pixels` between adjacent frames. Every frame
+entry in `lint`'s JSON also carries `sprite_id`, the sheet tile `[tx, ty]`
+that frame number actually resolved to — handy once an anim's frames don't
+all sit in one contiguous run.
+
+`lint` doubles as a CI gate: pass any of `--max-drift <px>`, `--max-area-var
+<pct>`, `--max-changed <px>`, `--no-unique-colors` and it exits 1 (with a
+`violations` array naming the anim/frame/metric/value/limit) the moment one
+of those quality numbers crosses the line, instead of leaving the judgement
+to whoever reads the report — the idiom for wiring this into a script or CI
+step is `console-agent sprite lint game.cart --max-drift 3 --max-area-var 20
+--max-changed 40 --no-unique-colors || fail "sprite lint gate failed"`.
+`--summary` swaps the full JSON for one line per anim (frame count, worst
+drift, worst changed-pixel count, unique-color count) — the shape you want
+once the full per-frame dump is more noise than signal; it still combines
+with the threshold flags above and still gates the exit code. Omit every
+threshold flag and `lint` is exactly the old report-only tool (exit 0,
+no `violations` key) — nothing here changes behavior for a bare `sprite
+lint`. At runtime,
 drive frames from your own Lua table + `t()` (the runtime does not read
 `__gfx_meta__`; keep the two in sync).
 
