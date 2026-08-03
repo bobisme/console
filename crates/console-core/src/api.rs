@@ -364,6 +364,22 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         })?,
     )?;
 
+    // `master(drive, [tone], [hiss])`: the cart-global output stage. Omitted
+    // arguments are 0, so `master(0)` is "clean" and overrides whatever the
+    // cart's `__instruments__` master line asked for.
+    let st = state.clone();
+    g.set(
+        "master",
+        lua.create_function(
+            move |_, (drive, tone, hiss): (f64, Option<f64>, Option<f64>)| {
+                st.borrow_mut()
+                    .audio
+                    .lua_master(fl(drive), tone.map_or(0, fl), hiss.map_or(0, fl))
+                    .map_err(mlua::Error::RuntimeError)
+            },
+        )?,
+    )?;
+
     // ---- host --------------------------------------------------------------
     let st = state.clone();
     g.set(

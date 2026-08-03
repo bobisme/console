@@ -38,16 +38,36 @@ local entries = {
     d1 = "CH0 MELODY, CH1 THE SAME TWO",  d2 = "ROWS LATER AND QUIETER." },
   { n = "FULL GROOVE", p = 12,
     d1 = "BASS, VIBRATO LEAD, DRUMS AND", d2 = "AN ARP BED. ALL FOUR CHANNELS." },
+  { n = "SATURATION A/B", p = 12,
+    d1 = "THE GROOVE, TWO BARS CLEAN THEN", d2 = "TWO DRIVEN. MASTER() FROM LUA." },
 }
+
+-- The A/B entry is the last one: it plays the groove and flips the master bus
+-- underneath it. `master` is cart-global, so a dry-bar/wet-bar comparison can
+-- only come from the runtime setter, never from the __instruments__ line -
+-- which is why this cart declares no master line at all and every other entry
+-- renders exactly as it did before the output stage existed.
+local AB = #entries
+
+-- 112 BPM, 4 rows/beat, speed=auto=8 frames/row -> 16 rows = 128 frames = one
+-- bar. The groove's patterns are 32 rows, so flipping every two bars lands the
+-- change exactly on the pattern's own loop point.
+local BAR_FRAMES = 128
+local AB_BARS = 2
 
 local sel = 1
 local playing = 0     -- 0 = stopped, else the entry index
 local frame = 0
+local started = 0     -- frame the current entry began, for the A/B clock
+local driven = false  -- which half of the A/B cycle we are in
 
 function _init()
   sel = 1
   playing = 0
   frame = 0
+  started = 0
+  driven = false
+  master(0)
 end
 
 function _update()
@@ -63,15 +83,28 @@ function _update()
   if btnp(4) then
     music(entries[sel].p)
     playing = sel
+    started = frame
   end
   if btnp(5) then
     music(-1)
     playing = 0
   end
+
+  -- The only place in the cart that touches the output stage. Every entry but
+  -- the last one is explicitly clean, so switching away from the A/B entry
+  -- restores the legacy path on the very next frame.
+  if playing == AB then
+    driven = flr((frame - started) / (AB_BARS * BAR_FRAMES)) % 2 == 1
+    if driven then master(4, 2) else master(0) end
+  else
+    driven = false
+    master(0)
+  end
 end
 
--- A level meter driven by nothing fancier than the entry index: 13 bars, the
--- first `sel` of them lit, the lit tip blinking while something is playing.
+-- A level meter driven by nothing fancier than the entry index: one bar per
+-- entry, the first `sel` of them lit, the lit tip blinking while something is
+-- playing.
 local function meter(y)
   for i = 1, #entries do
     local x = 6 + (i - 1) * 10
@@ -129,8 +162,19 @@ function _draw()
     print("STOPPED", 4, 214, 8)
     print("UP/DOWN BROWSE   A AUDITIONS", 4, 222, 13)
   end
-  print("13 ENTRIES  " .. sel .. "/" .. #entries, 4, 236, 6)
+  print(#entries .. " ENTRIES  " .. sel .. "/" .. #entries, 4, 236, 6)
   print("112 BPM  4 ROWS/BEAT  SPEED=AUTO", 4, 244, 6)
+
+  -- A/B banner: the label has to flip on the same frame the bus does, so it
+  -- reads straight off `driven` rather than recomputing the clock.
+  if playing == AB then
+    rectfill(2, 168, 141, 174, 15)
+    if driven then
+      print("DRIVEN  MASTER(4,2)", 5, 168, 8)
+    else
+      print("DRY     MASTER(0)", 5, 168, 11)
+    end
+  end
 end
 
 __instruments__
@@ -154,7 +198,13 @@ inst echo      wave=1 env=0,6,2
 
 # Percussion is just instruments: an ordinary note row gives the sweep its
 # start pitch and the envelope does the rest.
-inst kick      wave=3 sweep=-18,4 env=0,8,0
+#
+# `duck=3,8` makes the kick a sidechain trigger: every kick row pulls the OTHER
+# three channels down by 3/7 over ~1ms and lets them climb back over 8 frames.
+# The kick's own channel is exempt, so it punches through instead of fighting
+# the bass. Entry 11 (DRUM KIT) uses the same instrument, so its snare and hat
+# duck under the kick too - which is the effect in isolation, worth hearing.
+inst kick      wave=3 sweep=-18,4 env=0,8,0 duck=3,8
 inst snare     wave=5 sweep=-8,3  env=0,5,0
 inst hat       wave=5 env=0,2,0
 

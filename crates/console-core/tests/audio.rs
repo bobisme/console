@@ -2,8 +2,9 @@
 //! determinism contract.
 
 use console_core::{
-    CHANNEL_COUNT, Cart, Console, Env, Error, Fx, PatternEnd, SAMPLE_RATE, SAMPLES_PER_FRAME,
-    SfxRow, Sweep, Vib, freq_at, input,
+    CHANNEL_COUNT, Cart, Console, DUCK_ATTACK_SAMPLES, Duck, Env, Error, Fx, MASTER_REF_LEVEL,
+    MAX_DRIVE, MAX_DUCK_DEPTH, MAX_HISS, MAX_TONE, Master, PatternEnd, SAMPLE_RATE,
+    SAMPLES_PER_FRAME, SfxRow, Sweep, Vib, freq_at, input,
 };
 
 const DEMO: &str = include_str!("../../../carts/demo.cart");
@@ -1393,8 +1394,690 @@ A4 2 7
 }
 
 // ---------------------------------------------------------------------------
+// Master bus: grammar
+// ---------------------------------------------------------------------------
+
+fn inst_cart(instruments: &str) -> Result<Cart, Error> {
+    Cart::parse(&format!("__lua__\nx = 1\n\n__instruments__\n{instruments}\n"))
+}
+
+fn inst_err(instruments: &str) -> String {
+    inst_cart(instruments).unwrap_err().to_string()
+}
+
+#[test]
+fn master_line_parses_every_field() {
+    let cart = inst_cart("inst lead wave=1\nmaster drive=5 tone=3 hiss=2").unwrap();
+    assert_eq!(
+        cart.master(),
+        Master {
+            drive: 5,
+            tone: 3,
+            hiss: 2
+        }
+    );
+    // `Cart::master()` and `AudioBank::master()` agree.
+    assert_eq!(cart.master(), cart.audio().master());
+    // The instruments around it are untouched.
+    assert_eq!(cart.instruments().len(), 1);
+    assert_eq!(cart.instrument("lead").unwrap().wave, 1);
+}
+
+#[test]
+fn master_fields_are_individually_optional() {
+    assert_eq!(
+        inst_cart("master drive=8").unwrap().master(),
+        Master {
+            drive: 8,
+            tone: 0,
+            hiss: 0
+        }
+    );
+    assert_eq!(
+        inst_cart("master tone=4").unwrap().master(),
+        Master {
+            drive: 0,
+            tone: 4,
+            hiss: 0
+        }
+    );
+    assert_eq!(
+        inst_cart("master hiss=1").unwrap().master(),
+        Master {
+            drive: 0,
+            tone: 0,
+            hiss: 1
+        }
+    );
+    assert_eq!(
+        inst_cart("master hiss=3 drive=2").unwrap().master(),
+        Master {
+            drive: 2,
+            tone: 0,
+            hiss: 3
+        }
+    );
+    // `master drive=0` is legal and means exactly "bypassed".
+    assert_eq!(inst_cart("master drive=0").unwrap().master(), Master::OFF);
+    assert!(inst_cart("master drive=0").unwrap().master().is_bypass());
+    // Keyword and keys are case-insensitive, like the rest of the format.
+    assert_eq!(inst_cart("MASTER DRIVE=1 Tone=2").unwrap().master().tone, 2);
+}
+
+#[test]
+fn a_cart_without_a_master_line_is_all_zero() {
+    assert_eq!(Cart::parse(PARSE_CART).unwrap().master(), Master::default());
+    assert_eq!(Master::default(), Master::OFF);
+    assert_eq!(Cart::parse(DEMO).unwrap().master(), Master::OFF);
+    // The soundtest cart deliberately declares none: entry 14 drives the bus
+    // from Lua instead, so every other entry keeps the legacy output path.
+    assert_eq!(Cart::parse(SOUNDTEST).unwrap().master(), Master::OFF);
+}
+
+#[test]
+fn master_line_errors_are_line_numbered() {
+    let e = inst_err("inst a wave=1\nmaster drive=1\nmaster tone=1");
+    assert!(e.contains("__instruments__ line 3"), "{e}");
+    assert!(e.contains("at most one"), "{e}");
+
+    let e = inst_err("inst a wave=1\nmaster");
+    assert!(e.contains("__instruments__ line 2"), "{e}");
+    assert!(e.contains("at least one"), "{e}");
+
+    let e = inst_err("master drive=9");
+    assert!(e.contains("master drive must be 0-8, found 9"), "{e}");
+    let e = inst_err("master tone=9");
+    assert!(e.contains("master tone must be 0-8, found 9"), "{e}");
+    let e = inst_err("master hiss=5");
+    assert!(e.contains("master hiss must be 0-4, found 5"), "{e}");
+    let e = inst_err("master drive=x");
+    assert!(e.contains("master drive must be a number"), "{e}");
+
+    let e = inst_err("\nmaster gain=2");
+    assert!(e.contains("__instruments__ line 2"), "{e}");
+    assert!(e.contains("unknown master key \"gain\""), "{e}");
+
+    let e = inst_err("master drive");
+    assert!(e.contains("unexpected \"drive\" in master line"), "{e}");
+
+    // A line that is neither `inst` nor `master` still says so, and now
+    // mentions both.
+    let e = inst_err("mastr drive=1");
+    assert!(e.contains("expected `inst"), "{e}");
+    assert!(e.contains("`master drive="), "{e}");
+}
+
+// ---------------------------------------------------------------------------
+// Master bus: the signal path
+// ---------------------------------------------------------------------------
+
+/// The soft clipper, respelled from the documented formula so these tests pin
+/// the *curve* rather than whatever the implementation happens to compute.
+fn shaper(x: f32) -> f32 {
+    if x >= 3.0 {
+        return 1.0;
+    }
+    if x <= -3.0 {
+        return -1.0;
+    }
+    let x2 = x * x;
+    (x * (27.0 + x2) / (27.0 + 9.0 * x2)).clamp(-1.0, 1.0)
+}
+
+/// `1 + drive * 0.35`. Index 0 is the unused bypass slot.
+const PRE_GAIN: [f32; 9] = [1.0, 1.35, 1.7, 2.05, 2.4, 2.75, 3.1, 3.45, 3.8];
+
+/// The documented makeup rule: `REF / R(pre * REF)` at the reference level.
+fn makeup(drive: u8) -> f32 {
+    if drive == 0 {
+        return 1.0;
+    }
+    let x = f64::from(PRE_GAIN[usize::from(drive)]) * MASTER_REF_LEVEL;
+    let r = if x >= 3.0 {
+        1.0
+    } else {
+        x * (27.0 + x * x) / (27.0 + 9.0 * x * x)
+    };
+    (MASTER_REF_LEVEL / r) as f32
+}
+
+/// The whole drive stage: pre-gain, soft clip, makeup.
+fn drive_stage(v: f32, drive: u8) -> f32 {
+    if drive == 0 {
+        return v;
+    }
+    shaper(v * PRE_GAIN[usize::from(drive)]) * makeup(drive)
+}
+
+/// A cart that holds one square-wave note for a long time, optionally with a
+/// master line.
+fn tone_cart(master: &str) -> String {
+    format!(
+        "__lua__
+function _init() sfx(0, 0) end
+
+__instruments__
+{master}
+
+__sfx__
+sfx 0 speed=200
+A4 2 7
+"
+    )
+}
+
+#[test]
+fn drive_is_the_documented_stage_applied_to_the_channel_sum() {
+    // Same cart, same channels; the only difference is the master line. Every
+    // sample of the driven render must be the dry sample pushed through the
+    // documented pre-gain / shaper / makeup - which pins both the formula and
+    // the insertion point (after `sum * 0.25`, instead of the plain clamp).
+    for drive in 1..=MAX_DRIVE {
+        let dry = run_audio(&tone_cart(""), 0, &[0u8; 12]);
+        let wet = run_audio(&tone_cart(&format!("master drive={drive}")), 0, &[0u8; 12]);
+        assert_eq!(dry.len(), wet.len());
+        let mut differed = 0;
+        for (i, (&d, &w)) in dry.iter().zip(&wet).enumerate() {
+            assert_eq!(
+                w.to_bits(),
+                drive_stage(d, drive).to_bits(),
+                "drive {drive}, sample {i}: {w} is not shape({d} * {}) * {}",
+                PRE_GAIN[usize::from(drive)],
+                makeup(drive)
+            );
+            differed += u32::from(w != d);
+        }
+        assert!(differed > 1000, "drive {drive} barely changed anything");
+    }
+}
+
+#[test]
+fn drive_zero_is_the_bit_identical_legacy_path() {
+    let plain = run_audio(&tone_cart(""), 0, &[0u8; 20]);
+    // An explicit all-zero master line, and a Lua `master(0)`, must both land
+    // on exactly the same samples as having no master at all.
+    let explicit = run_audio(&tone_cart("master drive=0"), 0, &[0u8; 20]);
+    let lua_cart = tone_cart("").replace(
+        "function _init()",
+        "function _update() master(0) end\nfunction _init()",
+    );
+    let via_lua = run_audio(&lua_cart, 0, &[0u8; 20]);
+    for (i, ((a, b), c)) in plain.iter().zip(&explicit).zip(&via_lua).enumerate() {
+        assert_eq!(a.to_bits(), b.to_bits(), "sample {i}: master drive=0 changed the mix");
+        assert_eq!(a.to_bits(), c.to_bits(), "sample {i}: master(0) changed the mix");
+    }
+    assert!(plain.iter().any(|&s| s != 0.0));
+}
+
+#[test]
+fn silence_in_is_silence_out_at_every_drive_and_tone() {
+    // Nothing playing: whatever the shaper and the filter do, they must do it
+    // to zero and produce zero. (hiss = 0; hiss is the one stage that is
+    // *supposed* to make sound out of nothing.)
+    for drive in 0..=MAX_DRIVE {
+        for tone in 0..=MAX_TONE {
+            let cart = format!(
+                "__lua__\nx = 1\n\n__instruments__\nmaster drive={drive} tone={tone} hiss=0\n"
+            );
+            let samples = run_audio(&cart, 0, &[0u8; 8]);
+            assert!(
+                samples.iter().all(|&s| s == 0.0),
+                "drive {drive} tone {tone} made noise out of silence"
+            );
+        }
+    }
+    // And a playing cart that is *ramped down* to silence still lands on
+    // exact zeros rather than a denormal tail.
+    let cart = "__lua__
+function _init() sfx(0, 0) end
+function _update() if t() * 60 >= 2 then sfx(-1, 0) end end
+
+__instruments__
+master drive=6 tone=8
+
+__sfx__
+sfx 0 speed=200
+A4 2 7
+";
+    let samples = run_audio(cart, 0, &[0u8; 90]);
+    let tail = &samples[60 * SAMPLES_PER_FRAME..];
+    assert!(
+        tail.iter().all(|&s| s == 0.0),
+        "the tone filter never settled to exact zero"
+    );
+}
+
+/// Mean square of the sample-to-sample difference: a crude but honest
+/// high-frequency energy meter.
+fn delta_rms(samples: &[f32]) -> f64 {
+    let mut acc = 0.0f64;
+    for w in samples.windows(2) {
+        let d = f64::from(w[1] - w[0]);
+        acc += d * d;
+    }
+    (acc / (samples.len() - 1) as f64).sqrt()
+}
+
+#[test]
+fn tone_darkens_a_square_wave_monotonically() {
+    // A square wave is nothing but high-frequency edges, so the roughness of
+    // the rendered signal has to fall as `tone` rises.
+    let mut prev = f64::INFINITY;
+    let mut measures = Vec::new();
+    for tone in 0..=MAX_TONE {
+        let samples = run_audio(&tone_cart(&format!("master drive=0 tone={tone}")), 0, &[0u8; 12]);
+        let hf = delta_rms(&samples);
+        assert!(
+            hf < prev,
+            "tone {tone} ({hf}) is not darker than tone {} ({prev})",
+            tone - 1
+        );
+        prev = hf;
+        measures.push(hf);
+    }
+    // The darkest setting has to be a real change, not a rounding wobble: a
+    // one-pole at 3 kHz takes about half the edge energy out of a 440 Hz
+    // square (the filter's own decay tails put some of it back).
+    assert!(
+        measures[usize::from(MAX_TONE)] < measures[0] * 0.6,
+        "tone {MAX_TONE} only removed {:.1}% of the edge energy",
+        100.0 * (1.0 - measures[usize::from(MAX_TONE)] / measures[0])
+    );
+    // Tone alone must not clip or blow up the level.
+    let dark = run_audio(&tone_cart("master tone=8"), 0, &[0u8; 12]);
+    assert!(dark.iter().all(|s| (-1.0..=1.0).contains(s)));
+    assert!(dark.iter().any(|&s| s != 0.0));
+}
+
+#[test]
+fn hiss_is_a_tiny_deterministic_noise_floor() {
+    // With nothing playing the output *is* the hiss: a two-level signal at
+    // exactly `hiss / 2048`.
+    for hiss in 0..=MAX_HISS {
+        let cart = format!("__lua__\nx = 1\n\n__instruments__\nmaster hiss={hiss}\n");
+        let samples = run_audio(&cart, 0, &[0u8; 4]);
+        let level = f32::from(hiss) / 2048.0;
+        if hiss == 0 {
+            assert!(samples.iter().all(|&s| s == 0.0), "hiss=0 must be silent");
+            continue;
+        }
+        assert!(
+            samples.iter().all(|&s| s.abs() == level),
+            "hiss {hiss} is not exactly +-{level}"
+        );
+        assert!(samples.iter().any(|&s| s > 0.0) && samples.iter().any(|&s| s < 0.0));
+        // Loud enough to hear on a quiet passage, quiet enough to be a floor.
+        assert!(level > 0.0 && level <= 4.0 / 2048.0);
+        // Bit-identical between two fresh consoles.
+        let again = run_audio(&cart, 999, &[0u8; 4]);
+        for (i, (a, b)) in samples.iter().zip(&again).enumerate() {
+            assert_eq!(a.to_bits(), b.to_bits(), "hiss sample {i} diverged");
+        }
+    }
+}
+
+#[test]
+fn the_hiss_stream_does_not_depend_on_the_channels() {
+    // The dedicated LFSR is clocked once per rendered sample no matter what
+    // the voices are doing, so subtracting a dry render from a hissing one
+    // must reproduce the hiss-only stream exactly.
+    let frames = [0u8; 10];
+    let dry = run_audio(&tone_cart(""), 0, &frames);
+    let hissing = run_audio(&tone_cart("master hiss=3"), 0, &frames);
+    let floor = run_audio("__lua__\nx = 1\n\n__instruments__\nmaster hiss=3\n", 0, &frames);
+    for (i, ((&d, &h), &f)) in dry.iter().zip(&hissing).zip(&floor).enumerate() {
+        assert_eq!(
+            (h - d).to_bits(),
+            f.to_bits(),
+            "sample {i}: the hiss stream drifted with the channels"
+        );
+    }
+}
+
+#[test]
+fn lua_master_validates_its_ranges() {
+    let mut con = console("__lua__\nx = 1\n");
+    assert_eq!(con.master(), Master::OFF);
+
+    con.eval("master(4)").unwrap();
+    assert_eq!(
+        con.master(),
+        Master {
+            drive: 4,
+            tone: 0,
+            hiss: 0
+        },
+        "omitted arguments default to 0"
+    );
+    con.eval("master(4, 2)").unwrap();
+    assert_eq!(con.master().tone, 2);
+    con.eval("master(8, 8, 4)").unwrap();
+    assert_eq!(
+        con.master(),
+        Master {
+            drive: 8,
+            tone: 8,
+            hiss: 4
+        }
+    );
+    con.eval("master(0)").unwrap();
+    assert_eq!(con.master(), Master::OFF, "master(0) is a full reset");
+
+    for (code, want) in [
+        ("master(9)", "drive 9 out of range (expected 0-8)"),
+        ("master(-1)", "drive -1 out of range (expected 0-8)"),
+        ("master(0, 9)", "tone 9 out of range (expected 0-8)"),
+        ("master(0, -3)", "tone -3 out of range (expected 0-8)"),
+        ("master(0, 0, 5)", "hiss 5 out of range (expected 0-4)"),
+    ] {
+        let err = con.eval(code).unwrap_err().to_string();
+        assert!(err.contains(want), "{code}: {err}");
+        assert_eq!(con.master(), Master::OFF, "{code} must not have applied");
+    }
+}
+
+#[test]
+fn the_master_bus_is_deterministic_across_consoles() {
+    // Every stage engaged at once, including the hiss LFSR and the filter
+    // memory, over a cart that is actually playing.
+    let cart = tone_cart("master drive=6 tone=4 hiss=2");
+    let inputs = [0u8; 60];
+    let a = run_audio(&cart, 0, &inputs);
+    let b = run_audio(&cart, 0, &inputs);
+    let c = run_audio(&cart, 4_242_424_242, &inputs);
+    for (i, ((x, y), z)) in a.iter().zip(&b).zip(&c).enumerate() {
+        assert_eq!(x.to_bits(), y.to_bits(), "sample {i} diverged between consoles");
+        assert_eq!(x.to_bits(), z.to_bits(), "sample {i} depends on the seed");
+    }
+    assert!(a.iter().any(|&s| s != 0.0));
+    assert!(a.iter().all(|s| (-1.0..=1.0).contains(s)));
+}
+
+// ---------------------------------------------------------------------------
+// Sidechain ducking
+// ---------------------------------------------------------------------------
+
+#[test]
+fn duck_field_parses_and_is_range_checked() {
+    let cart = inst_cart("inst kick wave=3 sweep=-18,4 env=0,8,0 duck=4,10").unwrap();
+    let kick = cart.instrument("kick").unwrap();
+    assert_eq!(
+        kick.duck,
+        Some(Duck {
+            depth: 4,
+            release: 10
+        })
+    );
+    // `duck` is a mixer property, so it does not make the voice "modulated".
+    assert_eq!(inst_cart("inst k wave=3 duck=1,1").unwrap().instrument("k").unwrap().duck,
+        Some(Duck { depth: 1, release: 1 }));
+    assert!(inst_cart("inst k wave=3 duck=1,1").unwrap().instrument("k").unwrap().is_flat());
+    // Absent by default.
+    assert_eq!(inst_cart("inst k wave=3").unwrap().instrument("k").unwrap().duck, None);
+    assert_eq!(
+        inst_cart("inst k wave=3 duck=7,255").unwrap().instrument("k").unwrap().duck,
+        Some(Duck { depth: MAX_DUCK_DEPTH, release: 255 })
+    );
+
+    for (line, want) in [
+        ("inst k wave=3 duck=4", "duck must be `duck=<depth>,<release>`"),
+        ("inst k wave=3 duck=0,4", "duck depth must be 1-7, found 0"),
+        ("inst k wave=3 duck=8,4", "duck depth must be 1-7, found 8"),
+        ("inst k wave=3 duck=4,0", "duck release must be 1-255, found 0"),
+        ("inst k wave=3 duck=4,256", "duck release must be 1-255, found 256"),
+        ("inst k wave=3 duck=x,4", "duck depth must be a number"),
+        ("inst k wave=3 ducky=1,2", "unknown inst key \"ducky\""),
+    ] {
+        let e = inst_err(line);
+        assert!(e.contains("__instruments__ line 1"), "{line}: {e}");
+        assert!(e.contains(want), "{line}: {e}");
+    }
+    // The "what keys are there" hints mention duck now.
+    assert!(inst_err("inst k wave=3 nope=1").contains("`duck`"));
+    assert!(inst_err("inst k wave=3 nope").contains("`duck=`"));
+}
+
+/// Channel 1 holds a square wave at full volume; a silent `duck=` trigger
+/// fires on channel 0 at the start of frame 2, so every sample is a direct
+/// readout of the duck envelope.
+///
+/// The dry level is exactly `1.0 * 0.25`, so `|sample| = 0.25 * (1 - atten)`.
+fn duck_probe_cart(depth: u8, release: u8, master: &str) -> String {
+    format!(
+        "__lua__
+local f = 0
+function _init() sfx(1, 1) end
+function _update()
+  f = f + 1
+  if f == 3 then sfx(0, 0) end
+end
+
+__instruments__
+inst thump wave=2 duck={depth},{release}
+{master}
+
+__sfx__
+sfx 0 speed=200
+C4 thump 0
+
+sfx 1 speed=200
+A4 2 7
+"
+    )
+}
+
+/// Attenuation implied by a sample of the probe cart.
+fn probe_atten(sample: f32) -> f32 {
+    1.0 - sample.abs() / 0.25
+}
+
+#[test]
+fn a_duck_trigger_dips_the_other_channels_by_exactly_depth_over_seven() {
+    let (depth, release) = (4u8, 4u8);
+    let samples = run_audio(&duck_probe_cart(depth, release, ""), 0, &[0u8; 12]);
+    let trigger = 2 * SAMPLES_PER_FRAME; // frame index 2, where `sfx(0, 0)` fires
+    let peak = f32::from(depth) / 7.0;
+
+    // Before the trigger the mix is untouched: a full-scale square at 0.25.
+    for (i, &s) in samples[..trigger].iter().enumerate().skip(SAMPLES_PER_FRAME) {
+        assert_eq!(s.abs(), 0.25, "sample {i} was ducked before the trigger");
+    }
+    // The very first sample of the trigger is still dry - the ramp is the
+    // anti-click - and the attenuation arrives over the attack window.
+    assert_eq!(samples[trigger].abs(), 0.25);
+    let attack = DUCK_ATTACK_SAMPLES as usize;
+    let mut prev = 0.0f32;
+    for k in 1..attack {
+        let a = probe_atten(samples[trigger + k]);
+        assert!(a >= prev - 1e-6, "the attack ramp went backwards at {k}");
+        assert!(a < peak + 1e-6);
+        prev = a;
+    }
+    // ...landing on exactly depth/7 at the end of it.
+    let want = (1.0f32 - f32::from(depth) / 7.0) * 0.25;
+    assert_eq!(
+        samples[trigger + attack].abs(),
+        want,
+        "attenuation is not exactly {depth}/7 after {attack} samples"
+    );
+
+    // Linear recovery: half the attenuation is gone half way through the
+    // release, a quarter of it three quarters of the way through.
+    let span = usize::from(release) * SAMPLES_PER_FRAME;
+    let half = probe_atten(samples[trigger + attack + span / 2]);
+    assert!(
+        (half - peak / 2.0).abs() < 1e-3,
+        "at release/2 the attenuation was {half}, wanted {}",
+        peak / 2.0
+    );
+    let three_quarters = probe_atten(samples[trigger + attack + 3 * span / 4]);
+    assert!(
+        (three_quarters - peak / 4.0).abs() < 1e-3,
+        "at 3*release/4 the attenuation was {three_quarters}"
+    );
+    // And it is fully recovered afterwards.
+    for (i, &s) in samples.iter().enumerate().skip(trigger + attack + span + 8) {
+        assert_eq!(s.abs(), 0.25, "sample {i} never recovered");
+    }
+}
+
+#[test]
+fn duck_depth_seven_mutes_the_other_channels_outright() {
+    let samples = run_audio(&duck_probe_cart(7, 4, ""), 0, &[0u8; 6]);
+    let floor = 2 * SAMPLES_PER_FRAME + DUCK_ATTACK_SAMPLES as usize;
+    assert_eq!(samples[floor], 0.0, "depth 7 should silence the other channels");
+    // The release starts immediately afterwards, so the next samples are only
+    // a hair above zero rather than exactly on it.
+    assert!(samples[floor + 1].abs() < 1e-4, "{}", samples[floor + 1]);
+    // Two frames later the recovery is well under way again.
+    assert!(samples[floor + 2 * SAMPLES_PER_FRAME].abs() > 0.1);
+}
+
+#[test]
+fn the_trigger_channel_is_never_ducked() {
+    // The trigger instrument alone, at full volume, with and without `duck=`:
+    // if the envelope touched its own channel the two would differ.
+    let cart = |duck: &str| {
+        format!(
+            "__lua__
+function _init() sfx(0, 0) end
+
+__instruments__
+inst thump wave=2{duck}
+
+__sfx__
+sfx 0 speed=8
+C4 thump 7
+C4 thump 7
+C4 thump 7
+C4 thump 7
+"
+        )
+    };
+    let plain = run_audio(&cart(""), 0, &[0u8; 30]);
+    let ducking = run_audio(&cart(" duck=7,20"), 0, &[0u8; 30]);
+    assert!(plain.iter().any(|&s| s != 0.0));
+    for (i, (a, b)) in plain.iter().zip(&ducking).enumerate() {
+        assert_eq!(
+            a.to_bits(),
+            b.to_bits(),
+            "sample {i}: the trigger channel ducked itself"
+        );
+    }
+}
+
+#[test]
+fn a_retrigger_restores_full_depth() {
+    // Two triggers a few frames apart: the second dip must be as deep as the
+    // first even though the first had not finished releasing.
+    let cart = "__lua__
+local f = 0
+function _init() sfx(1, 1) end
+function _update()
+  f = f + 1
+  if f == 3 or f == 6 then sfx(0, 0) end
+end
+
+__instruments__
+inst thump wave=2 duck=5,20
+
+__sfx__
+sfx 0 speed=200
+C4 thump 0
+
+sfx 1 speed=200
+A4 2 7
+";
+    let samples = run_audio(cart, 0, &[0u8; 12]);
+    let attack = DUCK_ATTACK_SAMPLES as usize;
+    let peak = 5.0f32 / 7.0;
+    let first = probe_atten(samples[2 * SAMPLES_PER_FRAME + attack]);
+    assert_eq!(first, peak);
+    // Mid-release it has partly recovered...
+    let between = probe_atten(samples[4 * SAMPLES_PER_FRAME]);
+    assert!(between > 0.0 && between < peak, "mid-release: {between}");
+    // ...and the re-trigger takes it all the way back down.
+    let second = probe_atten(samples[5 * SAMPLES_PER_FRAME + attack]);
+    assert_eq!(second, peak, "the re-trigger did not reach full depth");
+}
+
+#[test]
+fn ducking_happens_before_the_shaper() {
+    // Order matters: `shape(duck * x)` compresses the dip back up, while
+    // `duck * shape(x)` would not. Rendering the same duck scenario with and
+    // without `master drive=8` must relate by the drive stage alone.
+    let dry = run_audio(&duck_probe_cart(6, 6, ""), 0, &[0u8; 14]);
+    let wet = run_audio(&duck_probe_cart(6, 6, "master drive=8"), 0, &[0u8; 14]);
+    for (i, (&d, &w)) in dry.iter().zip(&wet).enumerate() {
+        assert_eq!(
+            w.to_bits(),
+            drive_stage(d, 8).to_bits(),
+            "sample {i}: the duck and the shaper are in the wrong order"
+        );
+    }
+    // Sanity: the drive really did squash the dip. Reference against a
+    // settled pre-trigger sample, not sample 0 (the voice is still ramping in).
+    let reference = 2 * SAMPLES_PER_FRAME - 1;
+    let floor = 2 * SAMPLES_PER_FRAME + DUCK_ATTACK_SAMPLES as usize;
+    let dip_dry = dry[floor].abs() / dry[reference].abs();
+    let dip_wet = wet[floor].abs() / wet[reference].abs();
+    assert!(dip_dry < 0.5, "the dry dip should be deep: {dip_dry}");
+    assert!(
+        dip_wet > dip_dry,
+        "drive should shrink the dip: dry {dip_dry}, driven {dip_wet}"
+    );
+}
+
+#[test]
+fn ducking_is_deterministic_across_consoles() {
+    let cart = duck_probe_cart(3, 8, "master drive=4 tone=2 hiss=1");
+    let inputs = [0u8; 40];
+    let a = run_audio(&cart, 0, &inputs);
+    let b = run_audio(&cart, 0, &inputs);
+    let c = run_audio(&cart, 7, &inputs);
+    for (i, ((x, y), z)) in a.iter().zip(&b).zip(&c).enumerate() {
+        assert_eq!(x.to_bits(), y.to_bits(), "sample {i} diverged between consoles");
+        assert_eq!(x.to_bits(), z.to_bits(), "sample {i} depends on the seed");
+    }
+    // Two consoles also agree on the envelope state itself.
+    let mut p = Console::new(&cart, 0).unwrap();
+    let mut q = Console::new(&cart, 123).unwrap();
+    for _ in 0..40 {
+        p.step(0).unwrap();
+        q.step(0).unwrap();
+        assert_eq!(p.duck_state().1, q.duck_state().1);
+        assert_eq!(p.duck_state().0.to_bits(), q.duck_state().0.to_bits());
+    }
+}
+
+#[test]
+fn a_cart_with_no_duck_instrument_never_leaves_the_legacy_path() {
+    // The whole PoC v1/v2 corpus: no `duck=`, no `master`, so `duck_state`
+    // stays idle and the mixer keeps taking the untouched statement.
+    let mut con = Console::new(DEMO, 0).unwrap();
+    for &mask in &script() {
+        con.step(mask).unwrap();
+        assert_eq!(con.duck_state(), (0.0, None));
+        assert_eq!(con.master(), Master::OFF);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // PoC v2: the soundtest cart
 // ---------------------------------------------------------------------------
+
+/// Menu entries in `carts/soundtest.cart`.
+const SOUNDTEST_ENTRIES: usize = 14;
+
+/// Zero-based menu index of "FULL GROOVE".
+const SOUNDTEST_GROOVE: usize = 12;
+
+/// Zero-based menu index of "SATURATION A/B" (the last entry).
+const SOUNDTEST_AB: usize = 13;
+
+/// Frames the A/B entry spends on each side of the comparison: two bars at
+/// 112 BPM / 4 rows per beat / speed 8 = 2 * 16 * 8.
+const SOUNDTEST_AB_SPAN: usize = 256;
 
 /// Menu navigation: `entry` presses of DOWN (with a release between them, so
 /// `btnp` sees each one), then A to play.
@@ -1413,7 +2096,8 @@ fn soundtest_script(entry: usize, play_frames: usize) -> Vec<u8> {
 fn the_soundtest_cart_loads_and_describes_itself() {
     let cart = Cart::parse(SOUNDTEST).unwrap();
     assert_eq!(cart.title(), "Sound Test");
-    // 11 instruments, 20 sfx, one self-looping pattern per menu entry.
+    // 11 instruments, 20 sfx, one self-looping pattern per audition entry (the
+    // A/B entry re-uses the groove's pattern 12).
     assert_eq!(cart.instruments().len(), 11);
     assert_eq!(cart.audio().sfx_ids().count(), 20);
     let pats: Vec<u8> = cart.audio().pattern_ids().collect();
@@ -1452,16 +2136,37 @@ fn the_soundtest_cart_loads_and_describes_itself() {
     assert!(cart.instruments().iter().any(|i| i.vib.is_some()));
     assert!(cart.instruments().iter().any(|i| i.sweep.is_some()));
     assert_eq!(cart.instrument("kick").unwrap().sweep.unwrap().semis, -18);
+    // The kick is the cart's sidechain trigger.
+    assert_eq!(
+        cart.instrument("kick").unwrap().duck,
+        Some(Duck {
+            depth: 3,
+            release: 8
+        })
+    );
+    assert_eq!(
+        cart.instruments().iter().filter(|i| i.duck.is_some()).count(),
+        1,
+        "only the kick should duck"
+    );
     // Tempo sugar drives most of it.
     let tempo = cart.audio().tempo().unwrap();
     assert_eq!((tempo.bpm, tempo.rows_per_beat, tempo.speed), (112, 4, 8));
+    // ...and the A/B entry's flip period really is two bars of it.
+    assert_eq!(
+        SOUNDTEST_AB_SPAN,
+        2 * 4 * usize::from(tempo.rows_per_beat) * usize::from(tempo.speed)
+    );
 }
 
 #[test]
 fn every_soundtest_entry_makes_a_different_noise() {
     let mut seen: Vec<u64> = Vec::new();
-    for entry in 0..13 {
-        let samples = run_audio(SOUNDTEST, 0, &soundtest_script(entry, 90));
+    for entry in 0..SOUNDTEST_ENTRIES {
+        // The A/B entry spends its first two bars dry, so it needs to run long
+        // enough to reach the driven half before it sounds like anything else.
+        let frames = if entry == SOUNDTEST_AB { 600 } else { 90 };
+        let samples = run_audio(SOUNDTEST, 0, &soundtest_script(entry, frames));
         // Percussive entries are mostly gaps, so the bar is "clearly audible",
         // not "always ringing".
         let audible = samples.iter().filter(|s| **s != 0.0).count();
@@ -1518,20 +2223,181 @@ fn the_soundtest_menu_navigates_and_stops() {
 /// This is the PoC v2 counterpart of [`DEMO_AUDIO_GOLDEN`]: it pins the
 /// envelope, vibrato, sweep, arpeggio, slide and fade paths all at once. If it
 /// changes, the new synth vocabulary changed.
-const SOUNDTEST_GROOVE_GOLDEN: u64 = 0x386a_fe87_02ce_af73;
+///
+/// Re-recorded when the groove's `kick` gained `duck=3,8`: sidechain ducking
+/// is the only thing that moved it. The master bus does *not* touch this
+/// number, because the cart declares no `master` line and this entry sets
+/// `master(0)` every frame - see
+/// [`soundtest_ab_is_bit_identical_to_the_groove_while_it_is_dry`].
+const SOUNDTEST_GROOVE_GOLDEN: u64 = 0x993e_e511_8be1_bec4;
 
 #[test]
 fn soundtest_groove_matches_the_golden_hash() {
-    let hash = hash_samples(&run_audio(SOUNDTEST, 0, &soundtest_script(12, 150)));
+    let hash = hash_samples(&run_audio(
+        SOUNDTEST,
+        0,
+        &soundtest_script(SOUNDTEST_GROOVE, 150),
+    ));
     assert_eq!(
         hash, SOUNDTEST_GROOVE_GOLDEN,
         "soundtest groove audio changed; new hash is {hash:#018x}"
     );
 }
 
+/// Golden hash of the soundtest cart's "SATURATION A/B" entry (menu index 13):
+/// the same groove pattern, with the cart's `_update` flipping the master bus
+/// between `master(0)` and `master(4, 2)` every two bars. 600 played frames
+/// covers a dry span, a driven span and part of the next dry one, so this pins
+/// the shaper, the makeup table, the tone coefficients *and* the Lua setter.
+const SOUNDTEST_AB_GOLDEN: u64 = 0xba78_0b63_7bd9_4ac3;
+
+#[test]
+fn soundtest_saturation_ab_matches_the_golden_hash() {
+    let hash = hash_samples(&run_audio(SOUNDTEST, 0, &soundtest_script(SOUNDTEST_AB, 600)));
+    assert_eq!(
+        hash, SOUNDTEST_AB_GOLDEN,
+        "soundtest A/B audio changed; new hash is {hash:#018x}"
+    );
+}
+
+/// Samples of one soundtest entry, with the menu-navigation frames dropped so
+/// two entries can be compared from the moment A is pressed.
+fn soundtest_played(entry: usize, play_frames: usize) -> Vec<f32> {
+    let all = run_audio(SOUNDTEST, 0, &soundtest_script(entry, play_frames));
+    all[entry * 2 * SAMPLES_PER_FRAME..].to_vec()
+}
+
+#[test]
+fn soundtest_ab_is_bit_identical_to_the_groove_while_it_is_dry() {
+    // The cart has no `master` line, so entry 13's first two bars must be the
+    // plain groove down to the last bit - this is the backward-compatibility
+    // guarantee, measured rather than asserted.
+    // Three full spans: dry, driven, dry again.
+    let groove = soundtest_played(SOUNDTEST_GROOVE, 3 * SOUNDTEST_AB_SPAN);
+    let ab = soundtest_played(SOUNDTEST_AB, 3 * SOUNDTEST_AB_SPAN);
+    let dry = SOUNDTEST_AB_SPAN * SAMPLES_PER_FRAME;
+    for i in 0..dry {
+        assert_eq!(
+            groove[i].to_bits(),
+            ab[i].to_bits(),
+            "sample {i} (frame {}) of the dry half is not the plain groove",
+            i / SAMPLES_PER_FRAME
+        );
+    }
+    // The driven half is a different signal, and a denser one: the shaper
+    // trades peak for RMS, so the driven bars have to be louder on average.
+    let driven = &ab[dry..dry * 2];
+    let same_span = &groove[dry..dry * 2];
+    assert!(
+        driven
+            .iter()
+            .zip(same_span)
+            .any(|(a, b)| a.to_bits() != b.to_bits()),
+        "the driven half did not change anything"
+    );
+    let rms = |xs: &[f32]| -> f64 {
+        (xs.iter().map(|&s| f64::from(s) * f64::from(s)).sum::<f64>() / xs.len() as f64).sqrt()
+    };
+    assert!(
+        rms(driven) > rms(same_span) * 1.1,
+        "driven RMS {} is not meaningfully above dry RMS {}",
+        rms(driven),
+        rms(same_span)
+    );
+    assert!(driven.iter().all(|s| (-1.0..=1.0).contains(s)));
+    // ...and the third span is dry again, so it really does alternate.
+    let third = &ab[dry * 2..dry * 3];
+    let groove_third = &groove[dry * 2..dry * 3];
+    for (i, (a, b)) in third.iter().zip(groove_third).enumerate() {
+        assert_eq!(
+            a.to_bits(),
+            b.to_bits(),
+            "sample {i} of the second dry span is not the plain groove"
+        );
+    }
+}
+
+#[test]
+fn soundtest_ab_flips_the_master_bus_on_the_bar() {
+    let mut con = Console::new(SOUNDTEST, 0).unwrap();
+    for mask in soundtest_script(SOUNDTEST_AB, 0) {
+        con.step(mask).unwrap();
+    }
+    assert_eq!(con.music_pattern(), Some(12), "the A/B entry plays the groove");
+    assert_eq!(con.master(), Master::OFF, "it starts dry");
+
+    // Two bars of dry...
+    for _ in 0..SOUNDTEST_AB_SPAN - 1 {
+        con.step(0).unwrap();
+        assert_eq!(con.master(), Master::OFF);
+    }
+    // ...then two bars of drive.
+    for _ in 0..SOUNDTEST_AB_SPAN {
+        con.step(0).unwrap();
+        assert_eq!(
+            con.master(),
+            Master {
+                drive: 4,
+                tone: 2,
+                hiss: 0
+            }
+        );
+    }
+    // ...and back.
+    con.step(0).unwrap();
+    assert_eq!(con.master(), Master::OFF);
+
+    // Leaving the entry (B, or picking another one) restores the clean path.
+    con.step(input::B).unwrap();
+    assert_eq!(con.master(), Master::OFF);
+    for mask in [input::UP, 0, input::A, 0, 0] {
+        con.step(mask).unwrap();
+    }
+    assert_eq!(con.music_pattern(), Some(12));
+    for _ in 0..SOUNDTEST_AB_SPAN + 4 {
+        con.step(0).unwrap();
+        assert_eq!(
+            con.master(),
+            Master::OFF,
+            "only the A/B entry may touch the master bus"
+        );
+    }
+}
+
+#[test]
+fn the_soundtest_kick_ducks_the_rest_of_the_kit() {
+    // Entry 10 is the drum kit: kick on channel 0, snare on 1, hat on 2. The
+    // kick's `duck=3,8` has to show up as a live envelope that exempts
+    // channel 0 and never anything else.
+    let mut con = Console::new(SOUNDTEST, 0).unwrap();
+    for mask in soundtest_script(10, 0) {
+        con.step(mask).unwrap();
+    }
+    let mut saw_duck = false;
+    let mut deepest = 0.0f32;
+    for _ in 0..240 {
+        con.step(0).unwrap();
+        let (atten, ch) = con.duck_state();
+        if let Some(ch) = ch {
+            saw_duck = true;
+            assert_eq!(ch, 0, "only the kick's channel may be exempt");
+            deepest = deepest.max(atten);
+        }
+        assert!((0.0..=1.0).contains(&atten));
+    }
+    assert!(saw_duck, "the kick never fired the sidechain");
+    // `duck_state` is only sampled on frame boundaries and the release is 8
+    // frames long, so the deepest *observed* attenuation is about 7/8 of the
+    // 3/7 peak - close to it, and never past it.
+    assert!(
+        (0.35..=3.0 / 7.0).contains(&deepest),
+        "the duck should approach 3/7, reached {deepest}"
+    );
+}
+
 #[test]
 fn the_soundtest_groove_is_deterministic_across_consoles_and_seeds() {
-    let script = soundtest_script(12, 150);
+    let script = soundtest_script(SOUNDTEST_GROOVE, 150);
     let a = run_audio(SOUNDTEST, 0, &script);
     let b = run_audio(SOUNDTEST, 0, &script);
     let c = run_audio(SOUNDTEST, 999_999, &script);

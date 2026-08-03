@@ -20,6 +20,12 @@
 //! All of it is strictly additive: a row with a bare wave digit and no effect
 //! never allocates a [`Modulation`] and reaches the synth through exactly the
 //! PoC v1 statements, so old carts render the same samples bit for bit.
+//!
+//! On top of that sits the optional [`Master`] bus (`master` line in
+//! `__instruments__`, or the Lua `master()` setter): pre-gain into an odd
+//! polynomial soft clipper, a one-pole tone lowpass and a tape-style hiss
+//! floor. It is off by default and, when off, the mix takes literally the same
+//! statement it always did — see [`Audio::render`].
 
 use std::collections::BTreeMap;
 
@@ -209,6 +215,314 @@ fn div_round(n: i32, d: i32) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
+// Sidechain ducking
+// ---------------------------------------------------------------------------
+
+/// Deepest `duck` depth: 7/7, i.e. the other channels are muted outright at
+/// the trigger instant.
+pub const MAX_DUCK_DEPTH: u8 = 7;
+
+/// Samples the duck attack takes to reach full depth (~1.1 ms at 44100).
+///
+/// The same anti-click spirit as [`RAMP_SAMPLES`], and short enough that the
+/// dip still lands *with* the transient rather than after it. The ramp is
+/// linear and lands exactly on the target (the last step assigns rather than
+/// accumulates), so it is bit-reproducible.
+pub const DUCK_ATTACK_SAMPLES: u32 = 48;
+
+/// The one global duck envelope.
+///
+/// A note-on of a `duck=` instrument on channel `t` [`DuckBus::trigger`]s it:
+/// the attenuation ramps to `depth/7` over [`DUCK_ATTACK_SAMPLES`] samples and
+/// then recovers linearly to zero across `release` frames. While it runs, the
+/// mix multiplies every channel *except* `t` by `1 - atten`.
+///
+/// Everything is per-sample linear — adds, subtracts and comparisons, plus one
+/// division per trigger to size the ramps — so it is bit-identical everywhere.
+///
+/// There is exactly one envelope, not one per trigger: if two `duck`
+/// instruments fire on different channels in the same frame, the **last one
+/// applied wins** (channels are visited in index order, so the highest-numbered
+/// channel's trigger is the one that survives) and it owns the un-ducked slot
+/// until it releases.
+#[derive(Debug, Clone, Copy)]
+struct DuckBus {
+    /// Attenuation applied to the non-trigger channels right now, 0..=1.
+    atten: f32,
+    /// Attenuation the current attack ramp is heading for.
+    peak: f32,
+    /// Per-sample attack increment (may be negative if a shallower trigger
+    /// interrupts a deeper one).
+    attack_step: f32,
+    /// Attack samples still to go; 0 means the envelope is releasing.
+    attack_left: u32,
+    /// Per-sample release decrement.
+    release_step: f32,
+    /// The channel that fired the live trigger. Never ducked; `None` when the
+    /// envelope is idle.
+    trigger_ch: Option<u8>,
+}
+
+impl DuckBus {
+    const fn new() -> DuckBus {
+        DuckBus {
+            atten: 0.0,
+            peak: 0.0,
+            attack_step: 0.0,
+            attack_left: 0,
+            release_step: 0.0,
+            trigger_ch: None,
+        }
+    }
+
+    /// True when nothing is ducking, so the mixer can take the legacy path.
+    fn is_idle(&self) -> bool {
+        self.trigger_ch.is_none()
+    }
+
+    /// Fire (or re-fire) the envelope from channel `ch`.
+    ///
+    /// A re-trigger during the release restarts the attack from wherever the
+    /// attenuation currently is and re-aims it at full depth — the classic
+    /// pumping gesture — and hands the un-ducked slot to the new channel.
+    fn trigger(&mut self, ch: usize, d: Duck) {
+        // depth/7: exactly the volume ladder, reused so the two agree.
+        let peak = VOL_LEVELS[usize::from(d.depth.min(MAX_DUCK_DEPTH))];
+        let attack = DUCK_ATTACK_SAMPLES.max(1);
+        self.peak = peak;
+        self.attack_step = (peak - self.atten) / attack as f32;
+        self.attack_left = attack;
+        // `release` frames from full depth back to unity.
+        let frames = u32::from(d.release).max(1);
+        self.release_step = peak / (frames * SAMPLES_PER_FRAME as u32) as f32;
+        self.trigger_ch = Some(ch as u8);
+    }
+
+    /// The gain the non-trigger channels are multiplied by this sample.
+    fn gain(&self) -> f32 {
+        1.0 - self.atten
+    }
+
+    /// Advance one sample. Called once per rendered sample while the envelope
+    /// is live; a no-op once it has recovered.
+    fn tick(&mut self) {
+        if self.trigger_ch.is_none() {
+            return;
+        }
+        if self.attack_left > 0 {
+            self.attack_left -= 1;
+            // The final step *assigns* the target so the ramp lands exactly on
+            // `peak` no matter how the increments rounded.
+            self.atten = if self.attack_left == 0 {
+                self.peak
+            } else {
+                self.atten + self.attack_step
+            };
+            return;
+        }
+        self.atten -= self.release_step;
+        if self.atten <= 0.0 {
+            self.atten = 0.0;
+            self.trigger_ch = None;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Master bus: drive / tone / hiss
+// ---------------------------------------------------------------------------
+
+/// Highest `drive` setting.
+pub const MAX_DRIVE: u8 = 8;
+
+/// Highest `tone` setting.
+pub const MAX_TONE: u8 = 8;
+
+/// Highest `hiss` setting.
+pub const MAX_HISS: u8 = 4;
+
+/// `master drive=<0-8> [tone=<0-8>] [hiss=<0-4>]` — the cart-global output
+/// stage, applied to the channel sum *instead of* the plain clamp.
+///
+/// All-zero (the [`Default`]) means "no master line": the mix takes the PoC v1
+/// statement unchanged and the samples are bit-identical to a console without
+/// this feature. A cart may declare one `master` line in `__instruments__`,
+/// and the Lua `master(drive, [tone], [hiss])` setter overrides it at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Master {
+    /// Pre-gain into the soft clipper, 0..=[`MAX_DRIVE`]. 0 = bypass.
+    pub drive: u8,
+    /// One-pole lowpass darkness, 0..=[`MAX_TONE`]. 0 = bypass.
+    pub tone: u8,
+    /// Noise-floor level, 0..=[`MAX_HISS`]. 0 = silent.
+    pub hiss: u8,
+}
+
+impl Master {
+    /// The all-zero master: every stage bypassed.
+    pub const OFF: Master = Master {
+        drive: 0,
+        tone: 0,
+        hiss: 0,
+    };
+
+    /// True when no stage is engaged, i.e. the render loop must take the
+    /// legacy `(sum * 0.25).clamp(-1, 1)` path.
+    pub fn is_bypass(&self) -> bool {
+        *self == Master::OFF
+    }
+}
+
+/// Where the soft clipper stops curving and becomes a hard clip.
+///
+/// The shaper is the rational odd cubic `R(x) = x * (27 + x^2) / (27 + 9x^2)`
+/// (SPEC's second option) rather than `1.5x - 0.5x^3`, for four reasons:
+///
+/// 1. **Harmonic profile.** `R` is odd, so it makes *only* odd harmonics — no
+///    even-order buzz and no DC offset, which is what a push-pull output stage
+///    does. Its series is `x - (8/27)x^3 + ...`, a third-harmonic coefficient
+///    of -0.296 against the plain cubic's -0.5, so the first few drive
+///    settings are audibly *warm* rather than immediately gritty.
+/// 2. **A long soft region.** `R` only reaches full scale at `|x| = 3`, where
+///    the plain cubic hard-clips at `|x| = 1`. The whole drive range therefore
+///    sweeps through progressive compression instead of falling off a cliff
+///    after one setting — the "console pushed into its ceiling" feel.
+/// 3. **Clean seams.** `R(3) = 1` exactly *and* `R'(3) = 0`, because
+///    `R'(x) = 9 (x^2 - 9)^2 / (27 + 9x^2)^2`. The hard-clip point is C1, so
+///    there is no derivative discontinuity to spray aliasing.
+/// 4. That same derivative is a square over a square: `R' >= 0` everywhere, so
+///    the shaper is monotonic (strictly so inside the knee) and can never fold
+///    the waveform back on itself.
+///
+/// `R'(0) = 1`, so drive 1 starts from unity small-signal gain.
+///
+/// Only `*`, `+`, `/` and comparisons are involved. IEEE-754 specifies all
+/// three exactly, so native and wasm agree bit for bit.
+const SHAPER_KNEE: f32 = 3.0;
+
+/// The soft clipper. `|shape(x)| <= 1` for every finite `x`.
+fn shape(x: f32) -> f32 {
+    if x >= SHAPER_KNEE {
+        return 1.0;
+    }
+    if x <= -SHAPER_KNEE {
+        return -1.0;
+    }
+    let x2 = x * x;
+    // In exact arithmetic the quotient cannot leave [-1, 1] inside the knee,
+    // but f32 rounding can land a single ULP past it just short of ±3. The
+    // clamp restores the invariant without touching the curve anywhere else.
+    (x * (27.0 + x2) / (27.0 + 9.0 * x2)).clamp(-1.0, 1.0)
+}
+
+/// Pre-gain per drive setting: `1 + drive * 0.35`, written out as decimal
+/// literals so nothing depends on how `0.35` accumulates. Index 0 is unused
+/// (drive 0 bypasses the stage) and is 1.0 so the table is still an identity.
+const PRE_GAIN: [f32; 9] = [1.0, 1.35, 1.7, 2.05, 2.4, 2.75, 3.1, 3.45, 3.8];
+
+/// Reference level the makeup gain is normalised at: 0.7, a hot-but-unclipped
+/// mix (the console's ceiling is 1.0 and a busy four-channel groove peaks
+/// around here).
+///
+/// `f64` because it is an *authoring-time* number — it appears in the
+/// generator below and never in the render path.
+pub const MASTER_REF_LEVEL: f64 = 0.7;
+
+/// Makeup gain per drive setting, `MAKEUP[d] = REF / R(PRE_GAIN[d] * REF)`
+/// with `REF = 0.7`: a signal sitting exactly at the reference level comes out
+/// of the stage at the level it went in, so raising `drive` adds density
+/// rather than volume.
+///
+/// Generated once and pasted in (never computed at runtime) with:
+///
+/// ```text
+/// python3 -c "
+/// import struct
+/// f32 = lambda x: struct.unpack('<f', struct.pack('<f', x))[0]
+/// R = lambda x: 1.0 if x >= 3 else (-1.0 if x <= -3 else x*(27+x*x)/(27+9*x*x))
+/// for g in [1.0, 1.35, 1.7, 2.05, 2.4, 2.75, 3.1, 3.45, 3.8]:
+///     print(f32(0.7 / R(f32(g) * 0.7)))"
+/// ```
+///
+/// Consequences, all intentional: the ceiling drops from 0.930 (drive 1) to
+/// 0.700 (drive 8) while the small-signal gain climbs from 1.26 to 2.66, i.e.
+/// up to +8.5 dB of level for quiet material against -3 dB of peak. That is
+/// glue: the loud stays put, the quiet comes up.
+#[allow(clippy::excessive_precision)]
+const MAKEUP: [f32; 9] = [
+    1.0, 0.9304656, 0.8227502, 0.76434356, 0.7321342, 0.7147121, 0.7058169, 0.70176744, 0.70030355,
+];
+
+/// One-pole lowpass coefficient per tone setting, `y += a * (x - y)`.
+///
+/// `a = 1 - exp(-2*pi*fc/44100)`, evaluated **at authoring time** — there is no
+/// `exp` anywhere in the render path. The cutoffs are a roughly 1/3-octave
+/// ladder from "just takes the fizz off" to "behind a curtain":
+///
+/// | tone | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+/// |------|---|---|---|---|---|---|---|---|---|
+/// | fc Hz | off | 16000 | 12600 | 9900 | 7800 | 6100 | 4800 | 3800 | 3000 |
+///
+/// Generated once and pasted in with:
+///
+/// ```text
+/// python3 -c "
+/// import math, struct
+/// f32 = lambda x: struct.unpack('<f', struct.pack('<f', x))[0]
+/// for fc in [16000, 12600, 9900, 7800, 6100, 4800, 3800, 3000]:
+///     print(f32(1.0 - math.exp(-2.0 * math.pi * fc / 44100.0)))"
+/// ```
+#[allow(clippy::excessive_precision)]
+const TONE_A: [f32; 9] = [
+    0.0, 0.8976763, 0.8339051, 0.75598145, 0.67087305, 0.5806724, 0.49534696, 0.41807184,
+    0.34781536,
+];
+
+/// Cutoff in Hz behind each [`TONE_A`] entry, for documentation and tests.
+pub const TONE_CUTOFF_HZ: [u32; 9] = [0, 16000, 12600, 9900, 7800, 6100, 4800, 3800, 3000];
+
+/// Hiss amplitude per setting: `hiss / 2048`, so setting 4 is 2^-9 ≈ -54 dBFS
+/// and setting 1 is -66 dBFS. Every value is an exact power-of-two multiple,
+/// so the table is representable to the last bit on every target.
+const HISS_LEVEL: [f32; 5] = [
+    0.0,
+    1.0 / 2048.0,
+    2.0 / 2048.0,
+    3.0 / 2048.0,
+    4.0 / 2048.0,
+];
+
+/// Seed of the dedicated hiss LFSR. Distinct from [`LFSR_SEED`] so the noise
+/// waveform and the noise floor never lock into the same pattern.
+const HISS_SEED: u16 = 0x5EED;
+
+/// Below this magnitude the tone filter's memory is snapped to zero. A
+/// geometric decay never reaches exactly 0, and letting it trail off into
+/// denormals costs cycles on some hosts for a signal 190 dB below anything
+/// audible. A plain comparison, so it stays deterministic.
+const DENORM_FLOOR: f32 = 1.0e-30;
+
+/// The master bus' per-console runtime state: filter memory and hiss LFSR.
+/// Reset by [`Audio::new`] (hence by `Console::new`) and never by anything
+/// else, so two consoles fed the same cart and inputs see the same state.
+#[derive(Debug, Clone, Copy)]
+struct MasterState {
+    /// One-pole lowpass memory.
+    y: f32,
+    /// Hiss LFSR, advanced once per rendered sample while the bus is engaged.
+    lfsr: u16,
+}
+
+impl MasterState {
+    const fn new() -> MasterState {
+        MasterState {
+            y: 0.0,
+            lfsr: HISS_SEED,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Data model
 // ---------------------------------------------------------------------------
 
@@ -261,7 +575,21 @@ pub struct Sweep {
     pub frames: u8,
 }
 
-/// One `inst <name> wave=<0-5> [env=...] [vib=...] [sweep=...]` entry.
+/// `duck=<depth>,<release>`: makes the instrument a *sidechain trigger*.
+///
+/// Every note-on row that names the instrument ducks the mix gain of the other
+/// three channels; the channel that fired keeps its full level, so a kick
+/// punches a hole for itself. See [`DuckBus`] for the envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Duck {
+    /// Attenuation applied to the other channels at the trigger instant,
+    /// 1..=[`MAX_DUCK_DEPTH`], as sevenths (7 = the others go silent).
+    pub depth: u8,
+    /// Frames the linear recovery back to unity takes, 1..=255.
+    pub release: u8,
+}
+
+/// One `inst <name> wave=<0-5> [env=...] [vib=...] [sweep=...] [duck=...]` entry.
 ///
 /// A bare wave digit on a sfx row means the *implicit flat instrument*: that
 /// waveform with no envelope, vibrato or sweep, which is exactly the PoC v1
@@ -275,11 +603,18 @@ pub struct Instrument {
     pub env: Option<Env>,
     pub vib: Option<Vib>,
     pub sweep: Option<Sweep>,
+    /// Sidechain trigger: every note-on of this instrument ducks the other
+    /// channels. Independent of [`Instrument::is_flat`] — ducking costs the
+    /// voice itself nothing per frame.
+    pub duck: Option<Duck>,
 }
 
 impl Instrument {
     /// True when the instrument needs per-frame modulation. A flat instrument
     /// (`inst x wave=2`) takes exactly the same code path as a bare digit.
+    ///
+    /// `duck` is deliberately not part of this: it is a *mixer* property, so a
+    /// `duck`-only instrument still renders through the PoC v1 statements.
     pub fn is_flat(&self) -> bool {
         self.env.is_none() && self.vib.is_none() && self.sweep.is_none()
     }
@@ -391,6 +726,8 @@ pub struct AudioBank {
     instruments: Vec<Instrument>,
     inst_by_name: BTreeMap<String, u8>,
     tempo: Option<Tempo>,
+    /// The `master` line from `__instruments__`; all-zero when absent.
+    master: Master,
 }
 
 impl AudioBank {
@@ -421,6 +758,14 @@ impl AudioBank {
         self.tempo
     }
 
+    /// The `master` line from `__instruments__`. All-zero (every stage
+    /// bypassed) when the cart has none — which is the bit-identical legacy
+    /// output path. Lua's `master()` overrides this at runtime without
+    /// touching the bank.
+    pub fn master(&self) -> Master {
+        self.master
+    }
+
     /// Pattern `id`, if the cart defines it.
     pub fn pattern(&self, id: u8) -> Option<&Pattern> {
         self.patterns.get(&id)
@@ -436,9 +781,12 @@ impl AudioBank {
         self.patterns.keys().copied()
     }
 
-    /// True when the cart has no instruments, sfx or patterns.
+    /// True when the cart has no instruments, sfx, patterns or master line.
     pub fn is_empty(&self) -> bool {
-        self.sfx.is_empty() && self.patterns.is_empty() && self.instruments.is_empty()
+        self.sfx.is_empty()
+            && self.patterns.is_empty()
+            && self.instruments.is_empty()
+            && self.master.is_bypass()
     }
 
     /// The lowest pattern id greater than `id`.
@@ -458,9 +806,9 @@ impl AudioBank {
         sfx_text: Option<&str>,
         music_text: Option<&str>,
     ) -> Result<AudioBank, Error> {
-        let (instruments, inst_by_name) = match inst_text {
+        let (instruments, inst_by_name, master) = match inst_text {
             Some(t) => parse_instruments_section(t)?,
-            None => (Vec::new(), BTreeMap::new()),
+            None => (Vec::new(), BTreeMap::new(), Master::OFF),
         };
         let tempo = match music_text {
             Some(t) => parse_tempo_line(t)?,
@@ -494,6 +842,7 @@ impl AudioBank {
             instruments,
             inst_by_name,
             tempo,
+            master,
         })
     }
 }
@@ -605,12 +954,13 @@ fn is_wave_digit(token: &str) -> bool {
 
 // ---- `__instruments__` -----------------------------------------------------
 
-type InstTable = (Vec<Instrument>, BTreeMap<String, u8>);
+type InstTable = (Vec<Instrument>, BTreeMap<String, u8>, Master);
 
 fn parse_instruments_section(text: &str) -> Result<InstTable, Error> {
     const SEC: &str = "__instruments__";
     let mut list: Vec<Instrument> = Vec::new();
     let mut by_name: BTreeMap<String, u8> = BTreeMap::new();
+    let mut master: Option<Master> = None;
 
     for (i, raw) in text.lines().enumerate() {
         let line = i + 1;
@@ -619,11 +969,26 @@ fn parse_instruments_section(text: &str) -> Result<InstTable, Error> {
             continue;
         }
         let tokens: Vec<&str> = body.split_whitespace().collect();
+        if tokens[0].eq_ignore_ascii_case("master") {
+            if master.is_some() {
+                return Err(cart_err(
+                    SEC,
+                    line,
+                    "a cart may declare at most one `master` line",
+                ));
+            }
+            master = Some(parse_master_line(line, &tokens)?);
+            continue;
+        }
         if !tokens[0].eq_ignore_ascii_case("inst") {
             return Err(cart_err(
                 SEC,
                 line,
-                format!("expected `inst <name> wave=<0-5> ...`, found {:?}", tokens[0]),
+                format!(
+                    "expected `inst <name> wave=<0-5> ...` or \
+                     `master drive=<0-{MAX_DRIVE}> ...`, found {:?}",
+                    tokens[0]
+                ),
             ));
         }
         let inst = parse_inst_line(line, &tokens)?;
@@ -640,7 +1005,52 @@ fn parse_instruments_section(text: &str) -> Result<InstTable, Error> {
         by_name.insert(inst.name.clone(), list.len() as u8);
         list.push(inst);
     }
-    Ok((list, by_name))
+    Ok((list, by_name, master.unwrap_or_default()))
+}
+
+/// `master drive=<0-8> [tone=<0-8>] [hiss=<0-4>]`.
+///
+/// Every field is optional, but the line has to say *something*: a bare
+/// `master` is almost certainly a typo for a line the author meant to fill in.
+fn parse_master_line(line: usize, tokens: &[&str]) -> Result<Master, Error> {
+    const SEC: &str = "__instruments__";
+    let mut m = Master::OFF;
+    let mut seen = false;
+
+    for tok in &tokens[1..] {
+        let Some((key, value)) = tok.split_once('=') else {
+            return Err(cart_err(
+                SEC,
+                line,
+                format!("unexpected {tok:?} in master line (want `drive=`, `tone=` or `hiss=`)"),
+            ));
+        };
+        match key.to_ascii_lowercase().as_str() {
+            "drive" => m.drive = parse_u8_in(SEC, line, "master drive", value, MAX_DRIVE)?,
+            "tone" => m.tone = parse_u8_in(SEC, line, "master tone", value, MAX_TONE)?,
+            "hiss" => m.hiss = parse_u8_in(SEC, line, "master hiss", value, MAX_HISS)?,
+            other => {
+                return Err(cart_err(
+                    SEC,
+                    line,
+                    format!("unknown master key {other:?} (want `drive`, `tone` or `hiss`)"),
+                ));
+            }
+        }
+        seen = true;
+    }
+
+    if !seen {
+        return Err(cart_err(
+            SEC,
+            line,
+            format!(
+                "master needs at least one of `drive=<0-{MAX_DRIVE}>`, `tone=<0-{MAX_TONE}>` or \
+                 `hiss=<0-{MAX_HISS}>`"
+            ),
+        ));
+    }
+    Ok(m)
 }
 
 fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
@@ -650,7 +1060,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
             SEC,
             line,
             "expected `inst <name> wave=<0-5> [env=<a>,<d>,<s>] [vib=<cents>,<rate>,<delay>] \
-             [sweep=<semis>,<frames>]`",
+             [sweep=<semis>,<frames>] [duck=<depth>,<release>]`",
         ));
     }
     let name = tokens[1];
@@ -673,13 +1083,17 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
     let mut env: Option<Env> = None;
     let mut vib: Option<Vib> = None;
     let mut sweep: Option<Sweep> = None;
+    let mut duck: Option<Duck> = None;
 
     for tok in &tokens[2..] {
         let Some((key, value)) = tok.split_once('=') else {
             return Err(cart_err(
                 SEC,
                 line,
-                format!("unexpected {tok:?} in inst line (want `wave=`, `env=`, `vib=` or `sweep=`)"),
+                format!(
+                    "unexpected {tok:?} in inst line \
+                     (want `wave=`, `env=`, `vib=`, `sweep=` or `duck=`)"
+                ),
             ));
         };
         match key.to_ascii_lowercase().as_str() {
@@ -729,11 +1143,26 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
                     frames,
                 });
             }
+            "duck" => {
+                let Some((d, r)) = value.split_once(',') else {
+                    return Err(cart_err(
+                        SEC,
+                        line,
+                        format!("duck must be `duck=<depth>,<release>`, found {value:?}"),
+                    ));
+                };
+                duck = Some(Duck {
+                    depth: parse_u8_range(SEC, line, "duck depth", d, 1, MAX_DUCK_DEPTH)?,
+                    release: parse_u8_range(SEC, line, "duck release", r, 1, u8::MAX)?,
+                });
+            }
             other => {
                 return Err(cart_err(
                     SEC,
                     line,
-                    format!("unknown inst key {other:?} (want `wave`, `env`, `vib` or `sweep`)"),
+                    format!(
+                        "unknown inst key {other:?} (want `wave`, `env`, `vib`, `sweep` or `duck`)"
+                    ),
                 ));
             }
         }
@@ -752,6 +1181,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
         env,
         vib,
         sweep,
+        duck,
     })
 }
 
@@ -1581,6 +2011,13 @@ pub struct Audio {
     channels: [Channel; CHANNEL_COUNT],
     music: Option<MusicState>,
     lfsr: u16,
+    /// The live master setting: the cart's `master` line until Lua's
+    /// `master()` overrides it.
+    master: Master,
+    /// Master bus memory (tone filter, hiss LFSR).
+    mstate: MasterState,
+    /// The single global sidechain duck envelope.
+    duck: DuckBus,
     out: Box<AudioFrame>,
 }
 
@@ -1595,13 +2032,29 @@ impl std::fmt::Debug for Audio {
 
 impl Audio {
     pub fn new(bank: AudioBank) -> Audio {
+        let master = bank.master();
         Audio {
             bank,
             channels: [const { Channel::new() }; CHANNEL_COUNT],
             music: None,
             lfsr: LFSR_SEED,
+            master,
+            mstate: MasterState::new(),
+            duck: DuckBus::new(),
             out: Box::new([0.0; SAMPLES_PER_FRAME]),
         }
+    }
+
+    /// The master bus setting in force right now: the cart's `master` line
+    /// unless Lua's `master()` has overridden it.
+    pub fn master(&self) -> Master {
+        self.master
+    }
+
+    /// Current sidechain attenuation (0 = not ducking) and the channel that is
+    /// exempt from it. Exposed for tests and host inspection.
+    pub fn duck_state(&self) -> (f32, Option<u8>) {
+        (self.duck.atten, self.duck.trigger_ch)
     }
 
     /// The samples produced by the most recent [`Audio::render`].
@@ -1671,6 +2124,34 @@ impl Audio {
         Ok(())
     }
 
+    /// `master(drive, [tone], [hiss])`: replace the cart's `__instruments__`
+    /// master line for the rest of the session. Omitted arguments are 0, so
+    /// `master(0)` is a full reset to the clean legacy output path.
+    ///
+    /// Takes effect immediately, like `sfx()`/`music()`: a call from `_update`
+    /// colours the same frame's 735 samples. The tone filter's memory and the
+    /// hiss LFSR are *not* reset — only `Console::new` does that — so flipping
+    /// the setting mid-note is a change of processing, not a restart.
+    pub fn lua_master(&mut self, drive: i32, tone: i32, hiss: i32) -> Result<(), String> {
+        for (what, v, max) in [
+            ("drive", drive, MAX_DRIVE),
+            ("tone", tone, MAX_TONE),
+            ("hiss", hiss, MAX_HISS),
+        ] {
+            if !(0..=i32::from(max)).contains(&v) {
+                return Err(format!(
+                    "master: {what} {v} out of range (expected 0-{max})"
+                ));
+            }
+        }
+        self.master = Master {
+            drive: drive as u8,
+            tone: tone as u8,
+            hiss: hiss as u8,
+        };
+        Ok(())
+    }
+
     /// `music(n)`. `n == -1` stops music and releases its channels.
     pub fn lua_music(&mut self, n: i32) -> Result<(), String> {
         if !(-1..=i32::from(MAX_ID)).contains(&n) {
@@ -1719,7 +2200,12 @@ impl Audio {
     }
 
     fn start_sfx(&mut self, ch: usize, id: u8, owner: Owner) {
-        let Audio { bank, channels, .. } = self;
+        let Audio {
+            bank,
+            channels,
+            duck,
+            ..
+        } = self;
         let Some(sfx) = bank.sfx.get(&id) else {
             return;
         };
@@ -1730,7 +2216,7 @@ impl Audio {
             frames_left: u32::from(sfx.speed),
         });
         c.owner = owner;
-        apply_row(c, sfx, 0, &bank.instruments);
+        apply_row(c, ch, sfx, 0, &bank.instruments, duck);
     }
 
     fn stop_music(&mut self) {
@@ -1770,8 +2256,13 @@ impl Audio {
     /// rendered, so a `sfx()` issued from `_update` is audible immediately and
     /// row changes land on the following frame.
     pub fn advance(&mut self) {
-        let Audio { bank, channels, .. } = self;
-        for c in channels.iter_mut() {
+        let Audio {
+            bank,
+            channels,
+            duck,
+            ..
+        } = self;
+        for (ch, c) in channels.iter_mut().enumerate() {
             let Some(mut cur) = c.cursor else { continue };
             cur.frames_left -= 1;
             if cur.frames_left > 0 {
@@ -1806,7 +2297,7 @@ impl Audio {
             cur.row = next;
             cur.frames_left = u32::from(sfx.speed);
             c.cursor = Some(cur);
-            apply_row(c, sfx, usize::from(next), &bank.instruments);
+            apply_row(c, ch, sfx, usize::from(next), &bank.instruments, duck);
         }
 
         if let Some(mut m) = self.music {
@@ -1834,19 +2325,93 @@ impl Audio {
     }
 
     /// Render exactly [`SAMPLES_PER_FRAME`] samples from the current channel state.
+    ///
+    /// The signal path, in order:
+    ///
+    /// ```text
+    /// channels -> duck gain -> sum * 0.25 -> drive/shaper -> tone LP -> hiss -> clamp
+    /// ```
+    ///
+    /// The **insertion point** is the `acc * MIX_GAIN` product: everything new
+    /// consumes that value and replaces the plain `clamp(-1, 1)` that used to
+    /// be applied to it (the clamp survives as a final safety net, because the
+    /// hiss adds after the shaper has already bounded the signal). Ducking
+    /// sits one step earlier still, on the per-channel samples going into the
+    /// sum, so a driven mix pumps — the shaper sees the ducked signal.
+    ///
+    /// When nothing is engaged — no `master` line / `master(0)` *and* no duck
+    /// envelope running — the loop is the PoC v1 statement, character for
+    /// character, so old carts render bit-identical samples. (The general path
+    /// would agree anyway: its duck gain is exactly `1.0` when idle and `x *
+    /// 1.0 == x` in IEEE-754. The split is for clarity and speed, not safety.)
     pub fn render(&mut self) {
         let Audio {
             channels,
             lfsr,
+            master,
+            mstate,
+            duck,
             out,
             ..
         } = self;
-        for slot in out.iter_mut() {
-            let mut acc = 0.0f32;
-            for c in channels.iter_mut() {
-                acc += c.next_sample(lfsr);
+
+        if master.is_bypass() && duck.is_idle() {
+            for slot in out.iter_mut() {
+                let mut acc = 0.0f32;
+                for c in channels.iter_mut() {
+                    acc += c.next_sample(lfsr);
+                }
+                *slot = (acc * MIX_GAIN).clamp(-1.0, 1.0);
             }
-            *slot = (acc * MIX_GAIN).clamp(-1.0, 1.0);
+            return;
+        }
+
+        let pre = PRE_GAIN[usize::from(master.drive)];
+        let makeup = MAKEUP[usize::from(master.drive)];
+        let a = TONE_A[usize::from(master.tone)];
+        let hiss = HISS_LEVEL[usize::from(master.hiss)];
+
+        for slot in out.iter_mut() {
+            // ---- sidechain duck, then the channel sum ----------------------
+            let g = duck.gain();
+            let exempt = duck.trigger_ch;
+            let mut acc = 0.0f32;
+            for (i, c) in channels.iter_mut().enumerate() {
+                let s = c.next_sample(lfsr);
+                acc += if exempt == Some(i as u8) { s } else { s * g };
+            }
+            duck.tick();
+
+            let mut v = acc * MIX_GAIN;
+
+            // ---- drive: pre-gain, soft clip, makeup ------------------------
+            if master.drive != 0 {
+                v = shape(v * pre) * makeup;
+            }
+
+            // ---- tone: one-pole lowpass ------------------------------------
+            if master.tone != 0 {
+                mstate.y += a * (v - mstate.y);
+                if mstate.y.abs() < DENORM_FLOOR {
+                    mstate.y = 0.0;
+                }
+                v = mstate.y;
+            } else {
+                // Keep the memory tracking the signal even while the filter is
+                // bypassed, so turning `tone` on mid-note does not thump.
+                mstate.y = v;
+            }
+
+            // ---- hiss: dedicated LFSR, clocked every sample ----------------
+            // Unconditionally advanced while the bus is engaged, so the noise
+            // floor is a function of elapsed time and not of what the channels
+            // happen to be doing.
+            mstate.lfsr = lfsr_next(mstate.lfsr);
+            if master.hiss != 0 {
+                v += if mstate.lfsr & 1 != 0 { hiss } else { -hiss };
+            }
+
+            *slot = v.clamp(-1.0, 1.0);
         }
     }
 
@@ -1856,8 +2421,16 @@ impl Audio {
     }
 }
 
-/// Start `row` on `c`: set the voice and arm this row's modulation, if any.
-fn apply_row(c: &mut Channel, sfx: &Sfx, row: usize, instruments: &[Instrument]) {
+/// Start `row` on channel `ch`: set the voice, arm this row's modulation (if
+/// any) and fire the sidechain if the row's instrument is a duck trigger.
+fn apply_row(
+    c: &mut Channel,
+    ch: usize,
+    sfx: &Sfx,
+    row: usize,
+    instruments: &[Instrument],
+    duck: &mut DuckBus,
+) {
     match sfx.rows[row] {
         SfxRow::Rest => {
             c.md = None;
@@ -1865,10 +2438,13 @@ fn apply_row(c: &mut Channel, sfx: &Sfx, row: usize, instruments: &[Instrument])
         }
         SfxRow::Note { note, wave, vol } => {
             let m = sfx.row_mod(row);
-            let inst = m
-                .inst
-                .and_then(|i| instruments.get(usize::from(i)))
-                .filter(|i| !i.is_flat());
+            let named = m.inst.and_then(|i| instruments.get(usize::from(i)));
+            // Any note-on of a `duck=` instrument re-fires the envelope, even a
+            // silent one: the row is what triggers, not the audible level.
+            if let Some(d) = named.and_then(|i| i.duck) {
+                duck.trigger(ch, d);
+            }
+            let inst = named.filter(|i| !i.is_flat());
             if inst.is_none() && m.fx.is_none() {
                 // PoC v1 path, bit-for-bit: no per-frame work at all.
                 c.md = None;
@@ -2252,6 +2828,274 @@ mod tests {
         assert_eq!(div_round(0, 3), 0);
         assert_eq!(div_round(7, 3), 2);
         assert_eq!(div_round(-7, 3), -2);
+    }
+
+    // -----------------------------------------------------------------
+    // Master bus: shaper, makeup, tone table, hiss
+    // -----------------------------------------------------------------
+
+    /// The shaper written out in f64, exactly as the doc comment and the
+    /// offline generator spell it.
+    fn shape64(x: f64) -> f64 {
+        if x >= 3.0 {
+            1.0
+        } else if x <= -3.0 {
+            -1.0
+        } else {
+            x * (27.0 + x * x) / (27.0 + 9.0 * x * x)
+        }
+    }
+
+    #[test]
+    fn shaper_is_odd_monotonic_and_bounded() {
+        // Fixed points and the documented clip point.
+        assert_eq!(shape(0.0), 0.0);
+        assert_eq!(shape(3.0), 1.0);
+        assert_eq!(shape(-3.0), -1.0);
+        assert_eq!(shape(1000.0), 1.0);
+        assert_eq!(shape(-1000.0), -1.0);
+        // R(1) = 1*(27+1)/(27+9) = 28/36 = 7/9.
+        assert_eq!(shape(1.0), 28.0 / 36.0);
+
+        let mut prev = f32::NEG_INFINITY;
+        for i in -4000..=4000 {
+            let x = i as f32 * 0.001;
+            let y = shape(x);
+            // Odd symmetry, to the bit: every operation in the formula is
+            // sign-symmetric.
+            assert_eq!(y, -shape(-x), "not odd at {x}");
+            assert!((-1.0..=1.0).contains(&y), "shape({x}) = {y} escaped [-1, 1]");
+            // Monotonic. `R' >= 0` exactly, so the only way the sampled curve
+            // can step backwards is f32 rounding right at the knee - allow one
+            // epsilon of that and nothing more.
+            assert!(
+                y >= prev - f32::EPSILON,
+                "not monotonic at {x}: {y} < {prev}"
+            );
+            prev = y;
+        }
+        // Unity small-signal gain: R'(0) = 1, so tiny inputs pass through.
+        assert!((shape(1e-4) / 1e-4 - 1.0).abs() < 1e-6);
+        // Compressive above that: the shaper only ever pulls level down.
+        for i in 1..3000 {
+            let x = i as f32 * 0.001;
+            assert!(shape(x) <= x, "shape({x}) should sit below the input");
+        }
+        assert!(shape(0.5) < 0.5);
+        assert!(shape(2.0) < 2.0);
+    }
+
+    #[test]
+    fn makeup_table_matches_its_generator() {
+        assert_eq!(PRE_GAIN.len(), usize::from(MAX_DRIVE) + 1);
+        assert_eq!(MAKEUP.len(), PRE_GAIN.len());
+        assert_eq!(PRE_GAIN[0], 1.0);
+        assert_eq!(MAKEUP[0], 1.0);
+        for d in 1..=usize::from(MAX_DRIVE) {
+            // pre-gain is `1 + drive * 0.35`...
+            let want = 1.0 + d as f64 * 0.35;
+            assert!(
+                (f64::from(PRE_GAIN[d]) - want).abs() < 1e-6,
+                "PRE_GAIN[{d}] = {} but 1 + {d}*0.35 = {want}",
+                PRE_GAIN[d]
+            );
+            // ...and makeup is REF / R(pre * REF), bit for bit.
+            let m = (MASTER_REF_LEVEL
+                / shape64(f64::from(PRE_GAIN[d]) * MASTER_REF_LEVEL))
+                as f32;
+            assert_eq!(
+                MAKEUP[d].to_bits(),
+                m.to_bits(),
+                "MAKEUP[{d}] = {} but the generator says {m}",
+                MAKEUP[d]
+            );
+        }
+        // Drive raises the pre-gain and lowers the ceiling, monotonically.
+        for d in 1..usize::from(MAX_DRIVE) {
+            assert!(PRE_GAIN[d] < PRE_GAIN[d + 1]);
+            assert!(MAKEUP[d] > MAKEUP[d + 1]);
+        }
+        // A signal at the reference level comes out at the reference level.
+        for d in 1..=usize::from(MAX_DRIVE) {
+            let out = f64::from(shape(PRE_GAIN[d] * 0.7) * MAKEUP[d]);
+            assert!(
+                (out - MASTER_REF_LEVEL).abs() < 1e-6,
+                "drive {d}: reference level came out at {out}"
+            );
+        }
+        // ...while quiet material gets louder as drive rises (that is glue).
+        let quiet = 0.05f32;
+        let mut prev = quiet;
+        for d in 1..=usize::from(MAX_DRIVE) {
+            let out = shape(quiet * PRE_GAIN[d]) * MAKEUP[d];
+            assert!(out > prev, "drive {d} did not lift quiet material");
+            prev = out;
+        }
+    }
+
+    #[test]
+    fn tone_table_matches_its_generator_and_darkens_monotonically() {
+        assert_eq!(TONE_A.len(), usize::from(MAX_TONE) + 1);
+        assert_eq!(TONE_CUTOFF_HZ.len(), TONE_A.len());
+        assert_eq!(TONE_A[0], 0.0, "tone 0 is bypass");
+        assert_eq!(TONE_CUTOFF_HZ[0], 0);
+        for t in 1..=usize::from(MAX_TONE) {
+            let fc = f64::from(TONE_CUTOFF_HZ[t]);
+            // The authoring-time formula. `exp` lives here, in a test, and
+            // never in the render path.
+            let a = (1.0 - (-2.0 * std::f64::consts::PI * fc / 44100.0).exp()) as f32;
+            assert_eq!(
+                TONE_A[t].to_bits(),
+                a.to_bits(),
+                "TONE_A[{t}] = {} but 1 - exp(-2*pi*{fc}/44100) = {a}",
+                TONE_A[t]
+            );
+            assert!((0.0..1.0).contains(&TONE_A[t]));
+        }
+        // Higher setting = darker: lower cutoff, smaller coefficient.
+        for t in 1..usize::from(MAX_TONE) {
+            assert!(
+                TONE_CUTOFF_HZ[t] > TONE_CUTOFF_HZ[t + 1],
+                "tone {t} is not brighter than {}",
+                t + 1
+            );
+            assert!(TONE_A[t] > TONE_A[t + 1]);
+        }
+        assert_eq!(TONE_CUTOFF_HZ[usize::from(MAX_TONE)], 3000);
+    }
+
+    #[test]
+    fn hiss_levels_are_exact_and_tiny() {
+        assert_eq!(HISS_LEVEL.len(), usize::from(MAX_HISS) + 1);
+        assert_eq!(HISS_LEVEL[0], 0.0);
+        for h in 1..=usize::from(MAX_HISS) {
+            assert_eq!(HISS_LEVEL[h], h as f32 / 2048.0);
+            assert!(HISS_LEVEL[h] > HISS_LEVEL[h - 1]);
+        }
+        // The loudest hiss is still ~54 dB below full scale.
+        assert!(HISS_LEVEL[usize::from(MAX_HISS)] < 0.002);
+        // ...and its LFSR is a different stream from the noise waveform's.
+        assert_ne!(HISS_SEED, LFSR_SEED);
+        assert_ne!(HISS_SEED, 0);
+    }
+
+    #[test]
+    fn master_defaults_to_a_full_bypass() {
+        assert_eq!(Master::default(), Master::OFF);
+        assert!(Master::default().is_bypass());
+        assert!(!Master { drive: 1, tone: 0, hiss: 0 }.is_bypass());
+        assert!(!Master { drive: 0, tone: 1, hiss: 0 }.is_bypass());
+        assert!(!Master { drive: 0, tone: 0, hiss: 1 }.is_bypass());
+    }
+
+    // -----------------------------------------------------------------
+    // Sidechain ducking
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn duck_attack_lands_exactly_on_depth() {
+        for depth in 1..=MAX_DUCK_DEPTH {
+            let mut d = DuckBus::new();
+            assert!(d.is_idle());
+            assert_eq!(d.gain(), 1.0);
+            d.trigger(2, Duck { depth, release: 8 });
+            assert_eq!(d.trigger_ch, Some(2));
+            // The first sample is still un-ducked: the ramp is the anti-click.
+            assert_eq!(d.atten, 0.0);
+            let mut prev = 0.0;
+            for k in 1..=DUCK_ATTACK_SAMPLES {
+                d.tick();
+                assert!(d.atten >= prev, "attack went backwards at {k}");
+                prev = d.atten;
+            }
+            // Exactly depth/7 after the ramp, to the bit.
+            assert_eq!(d.atten, VOL_LEVELS[usize::from(depth)]);
+            assert_eq!(d.gain(), 1.0 - VOL_LEVELS[usize::from(depth)]);
+        }
+    }
+
+    #[test]
+    fn duck_release_is_linear_and_ends_idle() {
+        let release = 4u8;
+        let mut d = DuckBus::new();
+        d.trigger(0, Duck { depth: 7, release });
+        for _ in 0..DUCK_ATTACK_SAMPLES {
+            d.tick();
+        }
+        assert_eq!(d.atten, 1.0);
+
+        let span = u32::from(release) * SAMPLES_PER_FRAME as u32;
+        for _ in 0..span / 2 {
+            d.tick();
+        }
+        // Half the release has run, so half the attenuation is gone.
+        assert!((d.atten - 0.5).abs() < 1e-4, "half-recovered: {}", d.atten);
+        assert!(!d.is_idle());
+
+        // A quarter more and three quarters are recovered.
+        for _ in 0..span / 4 {
+            d.tick();
+        }
+        assert!((d.atten - 0.25).abs() < 1e-4, "3/4-recovered: {}", d.atten);
+
+        for _ in 0..span {
+            d.tick();
+        }
+        assert_eq!(d.atten, 0.0);
+        assert!(d.is_idle(), "the envelope must let go of the channel");
+        assert_eq!(d.gain(), 1.0);
+        // Ticking an idle bus is a no-op forever.
+        for _ in 0..10_000 {
+            d.tick();
+        }
+        assert_eq!(d.atten, 0.0);
+        assert_eq!(d.trigger_ch, None);
+    }
+
+    #[test]
+    fn retrigger_restores_full_depth_and_hands_over_the_channel() {
+        let mut d = DuckBus::new();
+        d.trigger(0, Duck { depth: 7, release: 4 });
+        for _ in 0..DUCK_ATTACK_SAMPLES + 2000 {
+            d.tick();
+        }
+        assert!(d.atten < 1.0 && d.atten > 0.0, "mid-release: {}", d.atten);
+
+        // Re-fire from a different channel: full depth again after one attack
+        // window, and the new channel is the exempt one.
+        d.trigger(3, Duck { depth: 7, release: 4 });
+        assert_eq!(d.trigger_ch, Some(3));
+        for _ in 0..DUCK_ATTACK_SAMPLES {
+            d.tick();
+        }
+        assert_eq!(d.atten, 1.0, "re-trigger must reach full depth again");
+
+        // A shallower trigger over a deeper one ramps *down* to the new depth.
+        d.trigger(1, Duck { depth: 2, release: 4 });
+        for _ in 0..DUCK_ATTACK_SAMPLES {
+            d.tick();
+        }
+        assert_eq!(d.atten, VOL_LEVELS[2]);
+    }
+
+    #[test]
+    fn duck_depth_is_the_volume_ladder() {
+        // depth/7 and vol/7 are deliberately the same numbers.
+        for depth in 1..=MAX_DUCK_DEPTH {
+            let mut d = DuckBus::new();
+            d.trigger(0, Duck { depth, release: 1 });
+            for _ in 0..DUCK_ATTACK_SAMPLES {
+                d.tick();
+            }
+            assert_eq!(d.atten, f32::from(depth) / 7.0);
+        }
+        // Depth 7 is a full mute of the other channels.
+        let mut d = DuckBus::new();
+        d.trigger(0, Duck { depth: 7, release: 1 });
+        for _ in 0..DUCK_ATTACK_SAMPLES {
+            d.tick();
+        }
+        assert_eq!(d.gain(), 0.0);
     }
 
     #[test]

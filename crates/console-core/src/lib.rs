@@ -36,10 +36,12 @@ use mlua::{Function, Lua, StdLib, Value};
 
 pub use crate::api::BUTTON_COUNT;
 pub use crate::audio::{
-    ARP_FRAMES_PER_STEP, AudioBank, AudioFrame, CENTS_TO_RATIO, CHANNEL_COUNT, ChannelInfo, Env,
-    Fx, Instrument, LFO_STEPS, MAX_FX_SEMIS, MAX_ID, MAX_SFX_ROWS, MAX_VIB_CENTS, MAX_VIB_RATE,
-    MAX_VOL, NOTE_FREQ, Pattern, PatternEnd, RAMP_SAMPLES, RowMod, SAMPLE_RATE, SAMPLES_PER_FRAME,
-    Sfx, SfxRow, Sweep, Tempo, Vib, WAVE_COUNT, freq_at, parse_note,
+    ARP_FRAMES_PER_STEP, AudioBank, AudioFrame, CENTS_TO_RATIO, CHANNEL_COUNT, ChannelInfo,
+    DUCK_ATTACK_SAMPLES, Duck, Env, Fx, Instrument, LFO_STEPS, MASTER_REF_LEVEL, MAX_DRIVE,
+    MAX_DUCK_DEPTH, MAX_FX_SEMIS, MAX_HISS, MAX_ID, MAX_SFX_ROWS, MAX_TONE, MAX_VIB_CENTS,
+    MAX_VIB_RATE, MAX_VOL, Master, NOTE_FREQ, Pattern, PatternEnd, RAMP_SAMPLES, RowMod,
+    SAMPLE_RATE, SAMPLES_PER_FRAME, Sfx, SfxRow, Sweep, TONE_CUTOFF_HZ, Tempo, Vib, WAVE_COUNT,
+    freq_at, parse_note,
 };
 pub use crate::cart::Cart;
 pub use crate::error::Error;
@@ -234,6 +236,19 @@ impl Console {
     /// The music pattern currently playing, if any.
     pub fn music_pattern(&self) -> Option<u8> {
         self.state.borrow().audio.music_pattern()
+    }
+
+    /// The master bus setting in force: the cart's `__instruments__` `master`
+    /// line unless Lua's `master()` has overridden it. All-zero means the
+    /// output stage is bypassed entirely.
+    pub fn master(&self) -> Master {
+        self.state.borrow().audio.master()
+    }
+
+    /// Sidechain state: how much the non-trigger channels are attenuated right
+    /// now (0 = not ducking) and which channel is exempt.
+    pub fn duck_state(&self) -> (f32, Option<u8>) {
+        self.state.borrow().audio.duck_state()
     }
 
     /// Number of completed frames. `t()` in Lua is this divided by 60.

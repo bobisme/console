@@ -35,7 +35,7 @@ const AUDIO_LEN = 735; // console_core::SAMPLES_PER_FRAME (44100 / 60)
 //     Audio must never perturb video; if the synth ever leaks into game logic
 //     (RNG draws, frame counters) this is what catches it.
 const AUDIO_GOLDEN = 0xbc2bd5e1f8c7f31en;
-const FB_GOLDEN = 0xf9ff4bd0;
+const FB_GOLDEN = 0x5e743aea;
 
 // The 64-bit multiplier used by console-core's test hasher (tests/audio.rs,
 // tests/determinism.rs). This is the canonical FNV-1a-64 prime; the golden

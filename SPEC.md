@@ -340,6 +340,30 @@ inst <name> wave=<0-5> [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate>,<del
 - Percussion is just instruments: `inst kick wave=3 sweep=-14,5 env=0,6,0`,
   triggered by an ordinary note row giving the sweep's start pitch.
 
+### Master bus & sidechain ducking (phase 1.5)
+
+```
+master drive=<0-8> [tone=<0-8>] [hiss=<0-4>]     # in __instruments__, at most one
+inst <name> ... [duck=<depth 1-7>,<release 1-255>]
+```
+
+Signal order: channels → duck gain → sum×0.25 → drive/soft-clip → tone
+lowpass → hiss → clamp. All defaults zero = bit-identical legacy path.
+
+- `drive`: pre-gain (1 + 0.35·drive) into the rational odd shaper
+  `x·(27+x²)/(27+9x²)` (odd harmonics only, monotonic, C¹ hard-clip at ±3)
+  with equal-loudness makeup normalized at the 0.7 reference level. Warm
+  glue at 1–3, obvious drive at 5+.
+- `tone`: one-pole lowpass, baked coefficient table (off, 16 kHz … 3 kHz).
+- `hiss`: dedicated-LFSR tape floor, ≈−54 dBFS at 4.
+- `duck=depth,release` marks an instrument as a sidechain **trigger**: its
+  note-ons dip every *other* channel by depth/7 (≈1 ms anti-click attack,
+  linear recovery over `release` frames, re-trigger restarts). The classic
+  kick-pump.
+- Lua: `master(drive, [tone], [hiss])` overrides the cart's master line at
+  runtime (omitted args = 0; `master(0)` = clean). Game-scriptable — e.g.
+  underwater = high tone, boss = drive up.
+
 ### Effects column (phase 1; optional 4th token on a note row)
 
 | fx | behavior |

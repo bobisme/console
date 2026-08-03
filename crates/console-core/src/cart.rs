@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::audio::{AudioBank, Instrument, Pattern, Sfx};
+use crate::audio::{AudioBank, Instrument, Master, Pattern, Sfx};
 use crate::error::Error;
 use crate::gfx::{SHEET_LEN, SHEET_W, SpriteSheet};
 use crate::gfx_meta::GfxMeta;
@@ -114,6 +114,12 @@ impl Cart {
     /// One instrument by name.
     pub fn instrument(&self, name: &str) -> Option<&Instrument> {
         self.audio.instrument(name)
+    }
+
+    /// The cart's `master` line from `__instruments__`, or the all-zero
+    /// default (every master stage bypassed) when it has none.
+    pub fn master(&self) -> Master {
+        self.audio.master()
     }
 
     /// The cart's `__gfx_meta__` sprite/anim authoring data (empty if the

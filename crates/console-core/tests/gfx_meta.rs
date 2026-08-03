@@ -279,32 +279,161 @@ fn demo_cart_gfx_meta_has_the_declared_sprites() {
     assert!(!meta.is_empty());
 
     let names: Vec<&str> = meta.sprites().map(|s| s.name.as_str()).collect();
-    assert_eq!(names, vec!["gem", "player", "star"]);
+    assert_eq!(names, vec!["gem", "moth", "player", "star"]);
 
+    // Player: tiles 0-5 of band 0. Anchor is the feet, so the walk cycle's
+    // stride reads as ground contact.
     let player = meta.sprite("player").unwrap();
     assert_eq!(player.rect, (1, 0));
     assert_eq!(player.size, (1, 1));
     assert_eq!(player.anchor, (4, 7));
 
-    assert_eq!(meta.sprite("star").unwrap().rect, (2, 0));
-    assert_eq!(meta.sprite("gem").unwrap().rect, (3, 0));
+    // Floating pickups anchor at their visual centre, not bottom-centre.
+    let star = meta.sprite("star").unwrap();
+    assert_eq!(star.rect, (8, 0));
+    assert_eq!(star.size, (1, 1));
+    assert_eq!(star.anchor, (4, 4));
 
-    // The 2-frame walk cycle authored via the sprite tools (frame 0 = tile
-    // (1,0), frame 3 offset = the stride pose copied to tile (4,0)).
+    let gem = meta.sprite("gem").unwrap();
+    assert_eq!(gem.rect, (12, 0));
+    assert_eq!(gem.size, (1, 1));
+    assert_eq!(gem.anchor, (4, 4));
+
+    // The moth is a 2x2 megatile anchored on its thorax (centre of mass).
+    let moth = meta.sprite("moth").unwrap();
+    assert_eq!(moth.rect, (12, 2));
+    assert_eq!(moth.size, (2, 2));
+    assert_eq!(moth.anchor, (8, 8));
+}
+
+#[test]
+fn demo_cart_gfx_meta_has_the_declared_anims() {
+    let cart = Cart::parse(DEMO).unwrap();
+    let meta = cart.gfx_meta();
+
+    let names: Vec<&str> = meta.anims().map(|a| a.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "gem.sparkle",
+            "moth.flap",
+            "player.idle",
+            "player.walk",
+            "star.twinkle",
+        ]
+    );
+
+    // 4-frame walk: contact / passing / contact' / passing'.
     let walk = meta.anim("player.walk").expect("player.walk anim");
-    assert_eq!(walk.frames, vec![0, 3]);
-    assert_eq!(walk.fps, 6);
+    assert_eq!(walk.sprite, "player");
+    assert_eq!(walk.frames, vec![0, 1, 2, 3]);
+    assert_eq!(walk.fps, 8);
     assert!(walk.looped);
+
+    // 2-frame breathing idle, deliberately much slower than the walk.
+    let idle = meta.anim("player.idle").expect("player.idle anim");
+    assert_eq!(idle.frames, vec![4, 5]);
+    assert_eq!(idle.fps, 2);
+    assert!(idle.looped);
+    assert!(idle.fps < walk.fps);
+
+    let twinkle = meta.anim("star.twinkle").expect("star.twinkle anim");
+    assert_eq!(twinkle.frames, vec![0, 1, 2, 3]);
+    assert_eq!(twinkle.fps, 8);
+    assert!(twinkle.looped);
+
+    let sparkle = meta.anim("gem.sparkle").expect("gem.sparkle anim");
+    assert_eq!(sparkle.frames, vec![0, 1]);
+    assert_eq!(sparkle.fps, 4);
+    assert!(sparkle.looped);
+
+    let flap = meta.anim("moth.flap").expect("moth.flap anim");
+    assert_eq!(flap.frames, vec![0, 1, 2, 3]);
+    assert_eq!(flap.fps, 6);
+    assert!(flap.looped);
+}
+
+/// The moth's frame offsets deliberately run off the right edge of its row
+/// band so the wrap rule (`tx' = (tx + i*w) % 16`, `ty' += h`) is exercised by
+/// a real cart, not just by unit tests.
+#[test]
+fn demo_cart_moth_frames_wrap_to_the_next_row_band() {
+    let cart = Cart::parse(DEMO).unwrap();
+    let moth = cart.gfx_meta().sprite("moth").unwrap();
+
+    // Frames 0 and 1 sit in band ty=2 at tx=12 and tx=14 ...
+    assert_eq!(moth.frame_rect(0), Some((96, 16, 16, 16)));
+    assert_eq!(moth.frame_rect(1), Some((112, 16, 16, 16)));
+    // ... and frames 2 and 3 wrap into band ty=4 at tx=0 and tx=2.
+    assert_eq!(moth.frame_rect(2), Some((0, 32, 16, 16)));
+    assert_eq!(moth.frame_rect(3), Some((16, 32, 16, 16)));
+}
+
+/// Every frame the Lua actually draws must be backed by non-empty pixels, and
+/// the sprite ids in the cart's ANIM_* tables must line up with the tiles the
+/// metadata resolves to. Guards the one thing `__gfx_meta__` cannot: that the
+/// hand-duplicated Lua frame lists still point at the right art.
+#[test]
+fn demo_cart_anim_frames_have_pixels_at_the_expected_sprite_ids() {
+    let cart = Cart::parse(DEMO).unwrap();
+    let meta = cart.gfx_meta();
+    let sheet = cart.sprites();
+
+    let cases: [(&str, &[u16]); 5] = [
+        ("player.walk", &[1, 2, 3, 4]),
+        ("player.idle", &[5, 6]),
+        ("star.twinkle", &[8, 9, 10, 11]),
+        ("gem.sparkle", &[12, 13]),
+        ("moth.flap", &[44, 46, 64, 66]),
+    ];
+
+    for (name, ids) in cases {
+        let anim = meta.anim(name).unwrap_or_else(|| panic!("{name} missing"));
+        let sprite = meta.sprite(&anim.sprite).unwrap();
+        assert_eq!(anim.frames.len(), ids.len(), "{name} frame count");
+
+        for (&frame, &id) in anim.frames.iter().zip(ids) {
+            let (x, y, w, h) = sprite
+                .frame_rect(frame)
+                .unwrap_or_else(|| panic!("{name} frame {frame} off-sheet"));
+
+            // Sprite id n lives at (n % 16 * 8, n / 16 * 8) -- the address the
+            // Lua passes to spr().
+            assert_eq!(
+                (x, y),
+                (u32::from(id) % 16 * 8, u32::from(id) / 16 * 8),
+                "{name} frame {frame} should be sprite id {id}"
+            );
+
+            let opaque = (0..h)
+                .flat_map(|dy| (0..w).map(move |dx| (dx, dy)))
+                .filter(|&(dx, dy)| sheet[((y + dy) * 128 + (x + dx)) as usize] != 0)
+                .count();
+            assert!(opaque > 0, "{name} frame {frame} is blank");
+        }
+    }
 }
 
 #[test]
 fn demo_cart_rendering_is_unaffected_by_gfx_meta() {
     // Strip just the `__gfx_meta__` section back out and confirm the
     // framebuffer (and printh log) is byte-identical, frame by frame.
-    let start = DEMO.find("__gfx_meta__").expect("demo cart has a __gfx_meta__ section");
-    let end = DEMO.find("__sfx__").expect("demo cart has a __sfx__ section");
+    //
+    // Match the *headers*, not the first occurrence of the name: the cart's
+    // Lua comments legitimately mention `__gfx_meta__` when explaining why the
+    // frame lists are duplicated in Lua, and a bare `find` would splice the
+    // cart apart mid-source.
+    let header = |name: &str| {
+        let pat = format!("\n{name}\n");
+        DEMO.find(&pat)
+            .map(|i| i + 1)
+            .unwrap_or_else(|| panic!("demo cart has a {name} section header"))
+    };
+    let start = header("__gfx_meta__");
+    let end = header("__sfx__");
+    assert!(start < end, "__gfx_meta__ must precede __sfx__");
     let without = format!("{}{}", &DEMO[..start], &DEMO[end..]);
-    assert!(!without.contains("__gfx_meta__"));
+    assert!(!without.contains("\n__gfx_meta__\n"));
     assert!(Cart::parse(&without).unwrap().gfx_meta().is_empty());
 
     let mut a = Console::new(DEMO, 0).unwrap();
