@@ -42,7 +42,10 @@ orientation, not the spec.
 Draw state (`camera`, `clip`, `pal`, `palt`, `fillp`, `mosaic`, `rshift`)
 persists across frames like PICO-8's, and there's a runtime-mutable tile map
 (`map()`, `mget`, `mset`) plus scaled blits (`sspr`) as part of the core
-drawing API — see SPEC.md for exact semantics.
+drawing API. Animations are declared once in the cart's `__gfx_meta__` and
+played by `aspr(name, x, y, [t0])`, which is stateless (the frame is a pure
+function of the frame counter) and draws from the sprite's declared anchor —
+see SPEC.md for exact semantics.
 
 ## Repo layout
 

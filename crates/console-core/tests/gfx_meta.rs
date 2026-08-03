@@ -1,4 +1,4 @@
-//! `__gfx_meta__`: sprite/anim authoring metadata parsing.
+//! `__gfx_meta__`: sprite/anim declaration parsing.
 
 use console_core::{Cart, Console, Error, FrameSpec};
 
@@ -424,15 +424,15 @@ fn demo_cart_anim_frames_have_pixels_at_the_expected_sprite_ids() {
     }
 }
 
+/// `__gfx_meta__` used to be inert, and this test used to assert that stripping
+/// it changed nothing. Since `aspr` it is load-bearing for any cart that plays
+/// a declared anim — so what has to hold instead is that losing the section
+/// fails *loudly*, naming the anim, rather than quietly drawing an empty sky.
 #[test]
-fn demo_cart_rendering_is_unaffected_by_gfx_meta() {
-    // Strip just the `__gfx_meta__` section back out and confirm the
-    // framebuffer (and printh log) is byte-identical, frame by frame.
-    //
+fn demo_cart_without_gfx_meta_halts_naming_the_missing_anim() {
     // Match the *headers*, not the first occurrence of the name: the cart's
-    // Lua comments legitimately mention `__gfx_meta__` when explaining why the
-    // frame lists are duplicated in Lua, and a bare `find` would splice the
-    // cart apart mid-source.
+    // Lua comments legitimately mention `__gfx_meta__`, and a bare `find` would
+    // splice the cart apart mid-source.
     let header = |name: &str| {
         let pat = format!("\n{name}\n");
         DEMO.find(&pat)
@@ -446,18 +446,11 @@ fn demo_cart_rendering_is_unaffected_by_gfx_meta() {
     assert!(!without.contains("\n__gfx_meta__\n"));
     assert!(Cart::parse(&without).unwrap().gfx_meta().is_empty());
 
-    let mut a = Console::new(DEMO, 0).unwrap();
-    let mut b = Console::new(&without, 0).unwrap();
-    for i in 0..120 {
-        let ra = a.step(if i == 20 { console_core::input::A } else { 0 });
-        let rb = b.step(if i == 20 { console_core::input::A } else { 0 });
-        ra.unwrap();
-        rb.unwrap();
-        assert_eq!(
-            fnv1a(a.framebuffer()),
-            fnv1a(b.framebuffer()),
-            "gfx_meta section perturbed frame {i}"
-        );
-    }
-    assert_eq!(a.take_logs(), b.take_logs());
+    // The cart still loads (nothing draws until `_draw`), then halts on the
+    // first `aspr`.
+    let mut con = Console::new(&without, 0).unwrap();
+    let err = con.step(0).unwrap_err().to_string();
+    assert!(err.contains("aspr"), "{err}");
+    assert!(err.contains("moth.flap"), "{err}");
+    assert!(err.contains("no __gfx_meta__ section"), "{err}");
 }

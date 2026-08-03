@@ -61,6 +61,7 @@ __sprites__       128 lines x 128 hex chars; 1 char = 1 pixel; sprite n at (n%16
 __map__           up to 64 lines x up to 128 cells; 2 hex chars = 1 tile id (00-ff); tile 00 = empty
 __gfx_meta__      sprite <name> rect=tx,ty size=WxH [anchor=px,py]
                   anim <sprite>.<label> frames=f0,f1,... fps=N [loop] [frames_rect=tx,ty]
+                  # played at runtime by aspr("<sprite>.<label>", x, y, [t0])
 __instruments__   inst <name> wave=<0-6|w0-w7> [fm=ratio,index[,decay]] [env=a,d,s] [vib=cents,rate,delay] [sweep=semis,frames] [duck=depth,release] [echo=0-8]
                   wavetable <slot 0-7> <32 hex nibbles>   # custom single-cycle wave
                   master drive=0-8 [tone=0-8] [hiss=0-4]
@@ -82,6 +83,10 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
     rectangle into any screen rectangle, nearest-neighbor scaled (`dw,dh`
     default to `sw,sh`; any size <= 0 draws nothing, negatives do NOT mirror).
     Same camera/clip/pal/palt rules as `spr`; at 1:1 it *is* `spr`.
+  - `aspr(name,x,y,[t0],[flip_x,flip_y])` — play an anim declared in
+    `__gfx_meta__`. `(x,y)` is the sprite's **anchor**, not its top-left.
+    Plus `anim_len(name)` and `anim_done(name,[t0])`. See "Sprite &
+    animation authoring" below — this is how you animate.
 - Tile map: `map([cel_x,cel_y,sx,sy,cel_w,cel_h])` draws a block of map cells as
   sprites (bare `map()` = the whole 128x64 map at 0,0; tile 0 cells are skipped;
   camera/clip/pal/palt apply exactly as to `spr`), `mget(cx,cy)` reads a tile id
@@ -180,7 +185,9 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
 Draw by editing hex in `__sprites__` (one hex digit per pixel). Never
 hand-shift hex — use the transforms. Declare every sprite and anim in
 `__gfx_meta__` (anchor at the feet/contact point for characters, visual
-center for floaters). Anim frame `i` = the sprite's rect displaced `i`
+center for floaters) — that declaration is both what the tools below inspect
+and what `aspr()` plays at runtime, so it is the single definition of an
+animation. Anim frame `i` = the sprite's rect displaced `i`
 widths rightward, wrapping down a row band. Leave tile 0 blank — sprite 0
 is reserved as the empty tile by convention (color 0 is already `spr()`'s
 transparent color, so an all-zero sprite 0 is a natural no-op/placeholder
@@ -235,9 +242,74 @@ once the full per-frame dump is more noise than signal; it still combines
 with the threshold flags above and still gates the exit code. Omit every
 threshold flag and `lint` is exactly the old report-only tool (exit 0,
 no `violations` key) — nothing here changes behavior for a bare `sprite
-lint`. At runtime,
-drive frames from your own Lua table + `t()` (the runtime does not read
-`__gfx_meta__`; keep the two in sync).
+lint`.
+
+### Playing anims at runtime: `aspr`
+
+The runtime reads `__gfx_meta__`, so the frame list you authored *is* the one
+that plays — never restate it in Lua.
+
+```lua
+aspr(name, x, y, [t0], [flip_x], [flip_y])   -- draw the anim's current frame
+anim_len(name)                               -- frame count
+anim_done(name, [t0])                        -- one-shot finished? (loops: never)
+```
+
+Two things to internalize:
+
+- **`(x,y)` is the sprite's declared `anchor=`, not its top-left.** That is
+  what anchors are for: position a walker by its feet, a floater by its
+  centre, a 2x2 megatile by its thorax, and frames of different extent stop
+  jittering against a corner. `spr()` is unchanged and still takes a
+  top-left, so `aspr("p.walk", x+4, y+7, ...)` is the old
+  `spr(id, x, y, ...)` for a sprite with `anchor=4,7`.
+- **`aspr` is stateless.** The frame is a pure function of
+  `frame_count - t0` — `floor(elapsed * fps / 60)`, wrapped for `loop` anims
+  and clamped for one-shots. There is no animation object to tick, nothing to
+  reset, and nothing new in the replay state. `t0` is the frame count you
+  captured when the state changed; omit it and the anim phase-locks to the
+  global clock, which is what ambient loops want.
+
+```lua
+-- Ambient loops: no t0, no bookkeeping at all.
+aspr("star.twinkle", 24, 44)
+aspr("moth.flap", mx, my, 0, facing_left, false)   -- pass t0=0 to reach the flips
+
+-- Walk/idle: store one ORIGIN per state, captured the frame it changes.
+function _update()
+  local f = flr(t() * 60)
+  local moving = btn(0) or btn(1)
+  if moving ~= walking then
+    walking = moving
+    if moving then walk_t0 = f else idle_t0 = f end
+  end
+end
+function _draw()
+  if walking then aspr("player.walk", px, py, walk_t0, face_left, false)
+  else            aspr("player.idle", px, py, idle_t0, face_left, false) end
+end
+
+-- One-shot attack: start it on the press, end it with anim_done.
+if btnp(4) and state == "idle" then
+  state, atk_t0 = "attack", flr(t() * 60)
+end
+if state == "attack" then
+  aspr("player.slash", px, py, atk_t0)
+  if anim_done("player.slash", atk_t0) then state = "idle" end
+end
+```
+
+A typo'd anim name is a hard error (the cart halts and the message lists the
+anims you did declare), so a mis-spelled cycle can never quietly draw nothing.
+Camera, clip, `pal` and `palt` apply exactly as they do to `spr`, and
+`frames_rect=`/explicit `tx:ty` frames resolve identically at runtime and in
+the tools.
+
+Hand-rolled frame tables are still legal and still the answer for the exotic
+cases `aspr` deliberately does not cover — non-uniform frame durations, an
+anim that ping-pongs or plays backwards, frame-dependent hitboxes, a cycle
+whose speed follows the player's velocity. Those want your own index math and
+plain `spr()`; everything else wants `aspr`.
 
 An anim's frames don't have to be a contiguous run starting at its sprite's
 own `rect` — that's just the default. `frames_rect=tx,ty` relocates where

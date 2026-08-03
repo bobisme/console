@@ -57,6 +57,47 @@ fn demo_cart_is_reproducible_across_fresh_consoles() {
     assert!(!logs1.is_empty(), "demo should log on button presses");
 }
 
+/// FNV-1a, 32-bit — the hash `web/smoke.cjs` runs over the framebuffer.
+fn fnv1a32(bytes: &[u8]) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for &b in bytes {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h
+}
+
+/// The **native twin** of `web/smoke.cjs`'s `FB_GOLDEN`: demo cart, seed 0,
+/// 120 frames of input mask 0, FNV-1a-32 over the 144x256 palette indices.
+///
+/// smoke.cjs asserts the wasm build reproduces this exact number, but until
+/// now nothing pinned it on the native side, so a change to the demo cart
+/// could only be caught by rebuilding the engine and running Node. Keeping the
+/// constant here as well means `cargo test` alone tells you the picture moved,
+/// and the pair of assertions is what proves native == wasm.
+///
+/// Re-record (both places, in this order) only when the demo's pixels are
+/// *meant* to change:
+///   1. run this test, take the "got" value from the failure message;
+///   2. update `DEMO_FB_GOLDEN` here and `FB_GOLDEN` in `web/smoke.cjs`;
+///   3. rebuild `web/engine.js` and run `node web/smoke.cjs` to re-prove the
+///      wasm build still agrees.
+const DEMO_FB_GOLDEN: u32 = 0x5e74_3aea;
+
+#[test]
+fn demo_cart_framebuffer_matches_the_web_smoke_golden() {
+    let mut con = Console::new(DEMO, 0).unwrap();
+    for _ in 0..120 {
+        con.step(0).unwrap();
+    }
+    let got = fnv1a32(con.framebuffer());
+    assert_eq!(
+        got, DEMO_FB_GOLDEN,
+        "demo framebuffer hash moved: got 0x{got:08x}, expected 0x{DEMO_FB_GOLDEN:08x} \
+         (see this constant's docs before re-recording; web/smoke.cjs must match)"
+    );
+}
+
 #[test]
 fn every_frame_matches_frame_by_frame() {
     let inputs = script();

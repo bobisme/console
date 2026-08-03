@@ -132,6 +132,7 @@ impl Console {
         let st = Rc::new(RefCell::new(state::State::new(
             Box::new(*cart.sprites()),
             Box::new(*cart.map()),
+            Rc::new(cart.gfx_meta().clone()),
             seed,
             cart.audio().clone(),
         )));

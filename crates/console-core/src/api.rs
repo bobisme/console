@@ -6,6 +6,7 @@ use std::rc::Rc;
 use mlua::{Lua, Result as LuaResult, Table, Value, Variadic};
 
 use crate::gfx::{self, MAP_H, MAP_W, col, fl, pat_col};
+use crate::gfx_meta::{AnimDef, GfxMeta, SpriteDef};
 use crate::state::State;
 
 /// Number of buttons in the input mask.
@@ -70,6 +71,43 @@ fn tile(v: f64) -> u8 {
     let f = v.floor();
     let i = if f.is_nan() { 0i64 } else { f as i64 };
     (i & 0xff) as u8
+}
+
+/// Console frames of playback for an anim whose origin is `t0`.
+///
+/// `t0` is floored like every other Lua number the API takes; omitting it means
+/// 0, i.e. "phase-locked to the global frame counter".
+fn elapsed(frame: u64, t0: Option<f64>) -> i64 {
+    frame as i64 - i64::from(fl(t0.unwrap_or(0.0)))
+}
+
+/// Look up `name` ("sprite.label") in the cart's `__gfx_meta__`, together with
+/// the sprite its frames are relative to.
+///
+/// An unknown name is a Lua error, not a silent no-op: a typo'd anim name that
+/// simply drew nothing would be a nightmare to spot in a 60fps picture, so it
+/// halts the cart the way every other cart-authoring mistake does.
+fn anim_and_sprite<'a>(
+    meta: &'a GfxMeta,
+    who: &str,
+    name: &str,
+) -> LuaResult<(&'a AnimDef, &'a SpriteDef)> {
+    let Some(anim) = meta.anim(name) else {
+        let hint = if meta.is_empty() {
+            "; this cart has no __gfx_meta__ section".to_string()
+        } else {
+            let names: Vec<&str> = meta.anims().map(|a| a.name.as_str()).collect();
+            format!("; declared anims: {}", names.join(", "))
+        };
+        return Err(mlua::Error::RuntimeError(format!(
+            "{who}: no anim named {name:?} in __gfx_meta__{hint}"
+        )));
+    };
+    // Parse-time validation guarantees the sprite exists.
+    let sprite = meta
+        .sprite(&anim.sprite)
+        .ok_or_else(|| mlua::Error::RuntimeError(format!("{who}: anim {name:?} has no sprite")))?;
+    Ok((anim, sprite))
 }
 
 /// Globals removed by [`sandbox`].
@@ -313,6 +351,91 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                 (truthy(fx.as_ref()), truthy(fy.as_ref())),
             );
             Ok(())
+        })?,
+    )?;
+
+    // ---- declared animations ------------------------------------------------
+    // `aspr(name, x, y, [t0=0], [flip_x], [flip_y])`: draw the `__gfx_meta__`
+    // anim `name` ("sprite.label") with its frame chosen by elapsed time.
+    //
+    // Stateless by construction: the frame is a pure function of
+    // `frame_count - t0`, so there is no per-instance animation object, no new
+    // console state, and a replay of the same inputs replays the same pixels.
+    // `t0` is the frame-count origin — pass the frame a state change happened
+    // on to restart the cycle there, or leave it out to phase-lock the anim to
+    // the global clock (what ambient loops want).
+    //
+    // Unlike `spr`, `(x, y)` is the sprite's declared `anchor=` — the feet of a
+    // walker, the centre of a floater — not its top-left. The anchor does NOT
+    // mirror under `flip_x`: the destination rect is the same either way and
+    // the flip only mirrors pixels inside it, exactly like `spr`.
+    type AsprArgs = (
+        mlua::LuaString,
+        f64,
+        f64,
+        Option<f64>,
+        Option<Value>,
+        Option<Value>,
+    );
+    let st = state.clone();
+    g.set(
+        "aspr",
+        lua.create_function(move |_, (name, x, y, t0, fx, fy): AsprArgs| {
+            let name = name.to_str()?;
+            let mut s = st.borrow_mut();
+            let State {
+                fb,
+                draw,
+                sheet,
+                gfx_meta,
+                frame,
+                ..
+            } = &mut *s;
+            let (anim, sprite) = anim_and_sprite(gfx_meta, "aspr", &name)?;
+            let pos = anim.frame_at(elapsed(*frame, t0));
+            // Every frame is validated against the sheet at parse time, so a
+            // `None` here would be a core bug rather than a cart error.
+            let (sx, sy, w, h) = anim.resolve_frame(sprite, pos).ok_or_else(|| {
+                mlua::Error::RuntimeError(format!(
+                    "aspr: anim {name:?} frame {pos} does not resolve to a sheet rect"
+                ))
+            })?;
+            gfx::spr_rect(
+                fb,
+                draw,
+                sheet,
+                (sx as i32, sy as i32),
+                (fl(x) - sprite.anchor.0, fl(y) - sprite.anchor.1),
+                (w as i32, h as i32),
+                (truthy(fx.as_ref()), truthy(fy.as_ref())),
+            );
+            Ok(())
+        })?,
+    )?;
+
+    // `anim_len(name)`: how many frames the anim declares.
+    let st = state.clone();
+    g.set(
+        "anim_len",
+        lua.create_function(move |_, name: mlua::LuaString| {
+            let name = name.to_str()?;
+            let s = st.borrow();
+            let (anim, _) = anim_and_sprite(&s.gfx_meta, "anim_len", &name)?;
+            Ok(anim.len())
+        })?,
+    )?;
+
+    // `anim_done(name, [t0=0])`: true once a ONE-SHOT anim has shown its last
+    // frame for its full duration and playback has clamped there. Looping
+    // anims are never done. The one-line end condition for an attack state.
+    let st = state.clone();
+    g.set(
+        "anim_done",
+        lua.create_function(move |_, (name, t0): (mlua::LuaString, Option<f64>)| {
+            let name = name.to_str()?;
+            let s = st.borrow();
+            let (anim, _) = anim_and_sprite(&s.gfx_meta, "anim_done", &name)?;
+            Ok(anim.done_at(elapsed(s.frame, t0)))
         })?,
     )?;
 

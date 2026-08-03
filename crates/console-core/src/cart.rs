@@ -151,8 +151,9 @@ impl Cart {
         self.audio.echo()
     }
 
-    /// The cart's `__gfx_meta__` sprite/anim authoring data (empty if the
-    /// section is absent). Purely descriptive: the runtime never reads it.
+    /// The cart's `__gfx_meta__` sprite/anim declarations (empty if the
+    /// section is absent). Read by the sprite tools and, at runtime, by Lua's
+    /// `aspr`/`anim_len`/`anim_done`; nothing else in the console looks at it.
     pub fn gfx_meta(&self) -> &GfxMeta {
         &self.gfx_meta
     }

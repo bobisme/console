@@ -17,43 +17,40 @@ local bursts = 0        -- how many times A has been pressed
 local PW = 8            -- player sprite size
 local SPEED = 2
 
--- ANIM TABLES --------------------------------------------------------------
--- These duplicate the frame lists in __gfx_meta__ by hand: the runtime cannot
--- read that section (it is authoring metadata only), and there is no aspr()
--- helper yet -- SPEC lists it as out of scope for the PoC, "revisit once
--- __gfx_meta__ proves out". If aspr(name, x, y, ...) ever lands, every
--- ANIM_* table and the frame() helper below collapse into one call each.
+-- ANIMATIONS ---------------------------------------------------------------
+-- Every frame list, fps and loop flag lives in __gfx_meta__; aspr() plays it
+-- straight from there, so nothing about the sheet layout is duplicated here.
 --
--- Each entry is {sprite ids..., fps = N}. Sprite id = ty*16 + tx, so the
--- frame-offset convention in __gfx_meta__ (tx' = (tx + i*w) % 16) shows up
--- here as literal sheet indices.
-local ANIM_WALK    = { 1, 2, 3, 4,    fps = 8 }   -- player.walk   tiles 1-4
-local ANIM_IDLE    = { 5, 6,          fps = 2 }   -- player.idle   tiles 5-6
-local ANIM_TWINKLE = { 8, 9, 10, 11,  fps = 8 }   -- star.twinkle  tiles 8-11
-local ANIM_SPARKLE = { 12, 13,        fps = 4 }   -- gem.sparkle   tiles 12-13
--- moth is 2x2, so its frames wrap off the right edge of band ty=2 into band
--- ty=4: tiles (12,2),(14,2),(0,4),(2,4) => ids 44, 46, 64, 66.
-local ANIM_FLAP    = { 44, 46, 64, 66, fps = 6 }  -- moth.flap
+-- aspr is STATELESS: the frame is a pure function of (frame_count - t0), so a
+-- cart stores an ORIGIN -- the frame a state change happened on -- rather than
+-- a tick counter or an animation object. Ambient loops leave t0 out entirely
+-- and phase-lock to the global clock (the star, the gem, the moth below).
+--
+-- The other difference from spr(): aspr draws from the sprite's declared
+-- anchor=, not its top-left. player is anchored at the feet (4,7), star and
+-- gem at their centres (4,4), the moth on its thorax (8,8), so every position
+-- below is the meaningful point rather than a corner.
+local WALK_FPS = 8      -- __gfx_meta__'s `anim player.walk ... fps=8`
 
--- Which entry of an anim is showing at `ticks`; integer-only, so the result is
--- bit-identical on every target.
-local function anim_index(a, ticks)
-  return flr(ticks * a.fps / 60) % #a
+local walking           -- true = playing player.walk, false = player.idle
+local walk_t0, idle_t0  -- frame-count origins for those two anims
+
+-- Which walk frame is showing: aspr does this internally, but the 1px bob
+-- needs to know, so it repeats the same integer math -- floor(elapsed * fps /
+-- 60) wrapped by the frame count -- rather than tracking a second counter.
+local function walk_frame(f)
+  return flr((f - walk_t0) * WALK_FPS / 60) % anim_len("player.walk")
 end
-
-local function frame(a, ticks)
-  return a[anim_index(a, ticks) + 1]
-end
-
-local walk_t = 0        -- ticks spent moving (drives player.walk)
-local idle_t = 0        -- ticks spent standing (drives player.idle)
 
 function _init()
   px, py = 68, 176
   face_left = false
   burst_col = 10
   show_help = true
-  walk_t, idle_t = 0, 0
+  -- Standing still from frame 0. The origins sit one frame back so that the
+  -- first drawn frame is already one frame into the cycle.
+  walking = false
+  walk_t0, idle_t0 = -1, -1
   for i = 1, 28 do
     stars[i] = {
       x = flr(rnd(144)),
@@ -84,6 +81,7 @@ local function spawn_burst()
 end
 
 function _update()
+  local f = flr(t() * 60)
   local dx, dy = 0, 0
   if btn(0) then dx = dx - SPEED end
   if btn(1) then dx = dx + SPEED end
@@ -94,13 +92,14 @@ function _update()
   px = mid(0, px + dx, 144 - PW)
   py = mid(0, py + dy, 256 - PW)
 
-  -- Walk vs idle: the cycles advance on their own tick counters (not on t())
-  -- so the stride freezes mid-step when you stop instead of teleporting to
-  -- whatever phase the global clock happens to be at.
-  if dx ~= 0 or dy ~= 0 then
-    walk_t, idle_t = walk_t + 1, 0
-  else
-    idle_t = idle_t + 1
+  -- Walk vs idle. Each cycle gets its own origin, captured the frame the
+  -- state changes, so neither one teleports to whatever phase the global
+  -- clock happens to be at: setting off always starts on the contact frame
+  -- and stopping always starts the breathing idle from its first frame.
+  local moving = dx ~= 0 or dy ~= 0
+  if moving ~= walking then
+    walking = moving
+    if moving then walk_t0 = f - 1 else idle_t0 = f - 1 end
   end
 
   if btnp(4) then
@@ -114,7 +113,8 @@ function _update()
   if btnp(5) then
     px, py = 68, 176
     parts = {}
-    walk_t, idle_t = 0, 0
+    -- Restart the walk cycle here: t0 = this frame means aspr shows frame 0.
+    walking, walk_t0 = true, f
     sfx(5)                    -- low thud, auto channel (2 or 3)
     printh("reset at frame " .. flr(t() * 60))
   end
@@ -168,11 +168,13 @@ function _draw()
     mx, mflip = 164 - (mph - 0.5) * 2 * 184, true
   end
   local my = 76 + sin(t() * 0.11) * 16   -- clear of the moon and the star
-  spr(frame(ANIM_FLAP, f), flr(mx) - 8, flr(my) - 8, 2, 2, mflip, false)
+  -- No t0: the flap is ambient, so it phase-locks to the global frame count.
+  -- (x, y) is the thorax anchor, so the 2x2 megatile centres itself.
+  aspr("moth.flap", flr(mx), flr(my), 0, mflip, false)
 
-  -- collectible star sprite, bobbing + spinning
-  spr(frame(ANIM_TWINKLE, f), 20, 40 + flr(sin(t() * 0.5) * 4))
-  spr(frame(ANIM_SPARKLE, f), 118, 150 + flr(cos(t() * 0.35) * 5))
+  -- collectible star sprite, bobbing + spinning; anchored at its centre
+  aspr("star.twinkle", 24, 44 + flr(sin(t() * 0.5) * 4))
+  aspr("gem.sparkle", 122, 154 + flr(cos(t() * 0.35) * 5))
 
   -- ground
   rectfill(0, 200, 143, 255, 7)
@@ -198,15 +200,14 @@ function _draw()
   -- passing frames (kept out of the pixels so `sprite lint` still reports
   -- zero centroid drift); standing runs the 2 fps breathing idle.
   circfill(px + 4, py + 9, 3, 15)
-  local pspr, bob
-  if idle_t == 0 then
-    local wi = anim_index(ANIM_WALK, walk_t)
-    pspr = ANIM_WALK[wi + 1]
-    bob = (wi % 2 == 1) and -1 or 0     -- passing frames ride 1px higher
+  -- (px + 4, py + 7) is the feet anchor of the 8x8 player tile, so this draws
+  -- exactly where the old top-left spr(pspr, px, py) call did.
+  if walking then
+    local bob = (walk_frame(f) % 2 == 1) and -1 or 0  -- passing frames ride 1px higher
+    aspr("player.walk", px + 4, py + 7 + bob, walk_t0, face_left, false)
   else
-    pspr, bob = frame(ANIM_IDLE, idle_t), 0
+    aspr("player.idle", px + 4, py + 7, idle_t0, face_left, false)
   end
-  spr(pspr, px, py + bob, 1, 1, face_left, false)
   rect(px - 2, py - 2, px + 9, py + 9, burst_col)
 
   -- hud
@@ -270,10 +271,10 @@ __sprites__
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 
 __gfx_meta__
-# Authoring metadata for the sprite sheet above (purely descriptive; the
-# runtime never reads this section -- the Lua duplicates every frame list
-# below, see the ANIM TABLES block in __lua__; an aspr() runtime helper is
-# future work per SPEC "Out of scope").
+# Sprite/anim metadata for the sheet above. This is the ONLY place the frame
+# lists live: the Lua plays them with aspr("<sprite>.<label>", x, y, [t0]),
+# which reads this section at runtime, so editing an anim here changes what
+# the cart draws.
 #
 # Sheet layout
 #   band ty=0 : tile  0     blank (kept empty on purpose)

@@ -72,6 +72,9 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `circ(x, y, r, c)` / `circfill(...)` | midpoint circle outline / filled |
 | `spr(n, x, y, [w=1], [h=1], [flip_x=false], [flip_y=false])` | draw sprite n (w×h sprites); color 0 transparent |
 | `sspr(sx, sy, sw, sh, dx, dy, [dw=sw], [dh=sh], [flip_x=false], [flip_y=false])` | blit the sheet rect (sx, sy, sw, sh) into the screen rect (dx, dy, dw, dh), nearest-neighbor scaled; same camera/clip/`pal`/`palt` rules as `spr`. Any size ≤ 0 draws nothing (negative sizes do **not** mirror) |
+| `aspr(name, x, y, [t0=0], [flip_x=false], [flip_y=false])` | draw the `__gfx_meta__` anim `name` ("sprite.label"), frame selected by `frame_count - t0`. `(x, y)` is the sprite's declared **anchor**, not its top-left. Unknown name = error |
+| `anim_len(name)` | number of frames the anim declares |
+| `anim_done(name, [t0=0])` | true once a **one-shot** anim has held its last frame for its full duration; always false for a `loop` anim |
 | `map([cel_x=0], [cel_y=0], [sx=0], [sy=0], [cel_w=128], [cel_h=64])` | draw a cel_w×cel_h block of map cells from cell (cel_x, cel_y) to (sx, sy); **tile 0 is skipped**. `map()` draws the whole map at 0,0 |
 | `mget(cx, cy)` | tile id at map cell (cx, cy); off the map reads 0 |
 | `mset(cx, cy, [v=0])` | write a tile id (0–255, masked); off the map is a no-op |
@@ -158,6 +161,58 @@ Sampling is nearest-neighbor with the source stepped in u32.16 fixed point
 bit-identical on every target. At `dw == sw, dh == sh` the step is exactly 1.0
 and the result is byte-identical to the equivalent `spr()`, flips included.
 Source pixels outside the 128×128 sheet are skipped, never wrapped.
+
+### Declared animations: `aspr`, `anim_len`, `anim_done`
+
+`aspr(name, x, y, [t0], [flip_x], [flip_y])` plays an anim declared in
+`__gfx_meta__` — its frame list, `fps` and `loop` flag are the runtime's, not
+just the tooling's. Three properties define it:
+
+- **Stateless.** The frame shown is a pure function of `frame_count - t0`:
+  `pos = floor((frame_count - t0) * fps / 60)`, wrapped modulo the frame count
+  for a `loop` anim and clamped to the last frame for a one-shot. There is no
+  per-instance animation object, no "advance" call and no new console state, so
+  determinism is free: replaying the same inputs replays the same pixels, and
+  one anim can be drawn a hundred times in a frame at a hundred different
+  phases. The division is integer and floored, so it is bit-identical on every
+  target, and a `t0` in the future (negative elapsed) steps backwards in the
+  same even strides rather than doing something special.
+- **`t0` is the frame-count origin.** Omit it (or pass 0) and the anim
+  phase-locks to the global frame counter — right for ambient loops, where
+  every instance sharing a phase is a feature. Pass the frame count captured
+  when a state changed (`aspr("player.walk", x, y, walk_started)`) and the
+  cycle restarts from frame 0 at that moment. Storing one number per state
+  change is the whole of the cart's animation bookkeeping.
+- **`(x, y)` is the anchor, not the top-left.** This is the difference from
+  `spr()`, and the reason anchors exist: a walker declared `anchor=4,7` is
+  positioned by its feet, a floater declared `anchor=4,4` by its centre, and a
+  2×2 moth by its thorax — so frames of different visual extent, and sprites of
+  different sizes, line up on the thing that matters instead of on a corner.
+  The blit's top-left is `(x - anchor_x, y - anchor_y)`. `spr()` keeps its
+  top-left coordinates unchanged; nothing about `aspr` is retrofitted onto it.
+  The anchor does **not** mirror under `flip_x`/`flip_y`: the destination rect
+  is identical either way and the flip only mirrors pixels inside it, exactly
+  as for `spr`, so a character turning around stands on the same spot.
+
+Frame rects come from `AnimDef::resolve_frame`, the same single source of truth
+the sprite tools use, so `frames_rect=` relocation and explicit `tx:ty` frames
+work identically at runtime; every frame is validated against the sheet at
+parse time, so an off-sheet frame is a load error, never a draw-time surprise.
+The blit is the `spr()` pixel path, so camera, clip, `pal`, `palt` and the
+`fillp` exemption all apply identically.
+
+An unknown anim name is a **Lua error** (the cart halts, listing the anims the
+cart does declare) rather than a silent no-op: a typo'd name that quietly drew
+nothing would be invisible in a 60 Hz picture.
+
+`anim_len(name)` returns the declared frame count. `anim_done(name, [t0])` is
+true once a one-shot has run *past* its last frame — i.e. the last frame has
+had its full `1/fps` on screen and playback is now clamped there — which makes
+a one-shot state machine one line (`if anim_done("player.attack", attack_t0)
+then state = "idle" end`). Looping anims are never done.
+
+Carts that call none of the three render exactly as before: the section stays
+inert for everyone else.
 
 ### Frame pipeline
 
@@ -458,7 +513,7 @@ animation frames with no memory of neighboring frames' pixels. Tooling
 follows the audio philosophy: ground truth as data, numeric lints, then
 vision renders — plus mechanical transforms so agents never hand-shift hex.
 
-### `__gfx_meta__` cart section (authoring metadata; runtime ignores it)
+### `__gfx_meta__` cart section (sprite/anim declarations)
 
 ```
 sprite <name> rect=<tx>,<ty> size=<w>x<h> [anchor=<px>,<py>]
@@ -493,6 +548,12 @@ anim <sprite>.<label> frames=<f0,f1,...> fps=<1-60> [loop] [frames_rect=<tx>,<ty
   errors are `Error::Cart` with section-relative line numbers, naming the
   anim and the offending frame's position in its list. Section is optional;
   carts without it behave identically.
+- The section is read by the **tooling and the runtime**: the Lua trio
+  `aspr`/`anim_len`/`anim_done` (see "Declared animations" above) plays these
+  declarations directly, so a cart never restates a frame list. Nothing else in
+  the runtime looks at it — `spr()` and every other primitive are untouched,
+  and a cart that calls none of the three renders identically with or without
+  the section.
 - Core API: `Cart::gfx_meta()` exposing sprite/anim defs plus
   `AnimDef::resolve_frame(sprite, pos) -> pixel rect`, the single place that
   composes the wrap-displacement rule with `frames_rect` relocation and
@@ -500,7 +561,9 @@ anim <sprite>.<label> frames=<f0,f1,...> fps=<1-60> [loop] [frames_rect=<tx>,<ty
   sheet accessors. `pos` indexes the anim's own `frames` list (not a raw
   sheet frame index); `SpriteDef::frame_rect(i)` remains the classic
   sprite-rect-relative resolver used by non-anim frame addressing
-  (`sprite dump`/`poke`/`edit`).
+  (`sprite dump`/`poke`/`edit`). `AnimDef::frame_at(elapsed)` and
+  `AnimDef::done_at(elapsed)` are the matching playback maths, shared by `aspr`
+  and `anim_done` so the tools and the runtime agree on what "frame 3" is.
 
 ### Inspection tools (console-agent `sprite` subcommands + RPC verbs)
 
@@ -994,7 +1057,8 @@ transposes/copies/double-time, auto-echo onto a free channel, ABC import.
 ## Out of scope for PoC
 
 Multiple carts, save data, interactive sprite/sfx editors, sfx effects
-columns (arpeggio/slide/vibrato), stereo, runtime anim helpers (`aspr()` —
-revisit once `__gfx_meta__` proves out).
+columns (arpeggio/slide/vibrato), stereo.
+(Runtime anim helpers were on this list; `__gfx_meta__` proved out, so
+`aspr`/`anim_len`/`anim_done` shipped — see "Declared animations" above.)
 Design must not preclude them. (A minimal pause menu — RESUME/RESET —
 already exists in the web shell.)

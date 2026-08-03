@@ -1,11 +1,15 @@
-//! `__gfx_meta__`: authoring metadata for sprites and animations.
+//! `__gfx_meta__`: sprite and animation declarations.
 //!
 //! This is pure indexing information over the `__sprites__` sheet — names,
 //! tile rects and frame lists for tooling (`console-agent`'s `sprite`
 //! subcommands) to render, lint and edit pixels without agents ever
-//! hand-shifting hex. The runtime never reads it: it has no effect on
-//! `spr()` or on the rendered picture. See SPEC.md "Sprite & animation
-//! authoring (PoC v1)" for the grammar.
+//! hand-shifting hex. See SPEC.md "Sprite & animation authoring (PoC v1)"
+//! for the grammar.
+//!
+//! The runtime reads it too, but only through the three Lua functions
+//! `aspr`/`anim_len`/`anim_done`: `spr()` and every other primitive are
+//! untouched by this section, so a cart that never calls those three renders
+//! exactly as if the section were absent.
 
 use std::collections::BTreeMap;
 
@@ -149,6 +153,52 @@ impl AnimDef {
     pub fn resolve_frame(&self, sprite: &SpriteDef, pos: usize) -> Option<(u32, u32, u32, u32)> {
         let spec = *self.frames.get(pos)?;
         resolve_frame_spec(spec, sprite, self.frames_rect)
+    }
+
+    /// How many frames this anim's `frames=` list holds (always >= 1).
+    pub fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// Always false — an anim with no frames does not parse. Present only
+    /// because clippy insists a `len` has an `is_empty`.
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    /// Playback position *before* looping or clamping: how many whole frame
+    /// steps `elapsed` console frames of playback are worth, i.e.
+    /// `floor(elapsed * fps / 60)`.
+    ///
+    /// Floored, not truncated, so a negative `elapsed` (a `t0` in the future)
+    /// keeps stepping backwards in even strides. Saturating, so no `t0` a cart
+    /// can hand us overflows.
+    pub fn step_at(&self, elapsed: i64) -> i64 {
+        elapsed.saturating_mul(i64::from(self.fps)).div_euclid(60)
+    }
+
+    /// The frame-list position showing `elapsed` console frames after the
+    /// anim's origin: looping anims wrap (Euclidean, so negatives wrap too),
+    /// one-shots clamp to the first/last frame.
+    ///
+    /// This is the whole of `aspr`'s statefulness: a pure function of
+    /// `elapsed`, which is why replaying the same inputs replays the same
+    /// pixels with no animation state stored anywhere.
+    pub fn frame_at(&self, elapsed: i64) -> usize {
+        let n = self.frames.len() as i64;
+        let step = self.step_at(elapsed);
+        if self.looped {
+            step.rem_euclid(n) as usize
+        } else {
+            step.clamp(0, n - 1) as usize
+        }
+    }
+
+    /// True once a one-shot anim has run past its last frame — that is, the
+    /// last frame has been shown for its full `1/fps` and playback is now
+    /// clamped there. Always false for a looping anim.
+    pub fn done_at(&self, elapsed: i64) -> bool {
+        !self.looped && self.step_at(elapsed) >= self.frames.len() as i64
     }
 }
 
@@ -658,6 +708,103 @@ mod tests {
         ))
         .unwrap_err();
         assert!(err.to_string().contains("frames_rect"), "{err}");
+    }
+
+    // -----------------------------------------------------------------
+    // Playback maths (bn-2dq): what `aspr`/`anim_done` are built on
+    // -----------------------------------------------------------------
+
+    fn anim(line: &str) -> AnimDef {
+        let text = format!("sprite p rect=0,0 size=1x1\n{line}\n");
+        GfxMeta::parse(Some(&text))
+            .unwrap()
+            .anim("p.a")
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn frame_selection_maps_fps_onto_the_60hz_frame_counter() {
+        // 8 fps over 4 frames: a step every 60/8 = 7.5 console frames, so the
+        // boundaries land on 0, 8, 15, 23, 30 — never drifting, because the
+        // maths is one floored multiply-divide of the elapsed frame count.
+        let a = anim("anim p.a frames=0,1,2,3 fps=8 loop");
+        for (elapsed, want) in [
+            (0, 0),
+            (7, 0),
+            (8, 1),
+            (14, 1),
+            (15, 2),
+            (22, 2),
+            (23, 3),
+            (29, 3),
+            (30, 0),
+            (60, 0),
+            (68, 1),
+        ] {
+            assert_eq!(a.frame_at(elapsed), want, "elapsed {elapsed}");
+        }
+        // One console frame per anim frame at 60 fps.
+        let fast = anim("anim p.a frames=0,1,2 fps=60 loop");
+        for elapsed in 0..12i64 {
+            assert_eq!(fast.frame_at(elapsed), (elapsed % 3) as usize);
+        }
+        // ... and one anim frame per second at 1 fps.
+        let slow = anim("anim p.a frames=0,1 fps=1 loop");
+        assert_eq!(slow.frame_at(59), 0);
+        assert_eq!(slow.frame_at(60), 1);
+        assert_eq!(slow.frame_at(120), 0);
+    }
+
+    #[test]
+    fn looping_wraps_and_one_shot_clamps() {
+        let looped = anim("anim p.a frames=0,1,2,3 fps=60 loop");
+        let once = anim("anim p.a frames=0,1,2,3 fps=60");
+        assert_eq!(looped.frame_at(4), 0);
+        assert_eq!(looped.frame_at(4001), 1);
+        assert_eq!(once.frame_at(4), 3);
+        assert_eq!(once.frame_at(4001), 3);
+        // A `t0` in the future is legal: the loop keeps stepping backwards in
+        // even strides (floored, so -1 elapsed is one step back, not zero),
+        // while the one-shot clamps to its first frame.
+        assert_eq!(looped.frame_at(-1), 3);
+        assert_eq!(looped.frame_at(-5), 3);
+        assert_eq!(once.frame_at(-1), 0);
+    }
+
+    #[test]
+    fn done_is_one_shot_only_and_waits_out_the_last_frame() {
+        let once = anim("anim p.a frames=0,1,2,3 fps=8");
+        // Frame 3 starts showing at elapsed 23 ...
+        assert_eq!(once.frame_at(23), 3);
+        assert!(!once.done_at(23));
+        // ... and is done only once its own 1/8 s has run out, at elapsed 30.
+        assert!(!once.done_at(29));
+        assert!(once.done_at(30));
+        assert!(once.done_at(10_000));
+        assert!(!once.done_at(-1));
+
+        let looped = anim("anim p.a frames=0,1,2,3 fps=8 loop");
+        for elapsed in [0, 23, 30, 10_000] {
+            assert!(!looped.done_at(elapsed), "loops are never done");
+        }
+    }
+
+    #[test]
+    fn playback_maths_saturates_instead_of_overflowing() {
+        let a = anim("anim p.a frames=0,1,2,3 fps=60 loop");
+        // Whatever `t0` a cart hands us, this must not panic in debug builds.
+        let _ = a.frame_at(i64::MAX);
+        let _ = a.frame_at(i64::MIN);
+        assert!(a.frame_at(i64::MAX) < 4);
+        assert!(a.frame_at(i64::MIN) < 4);
+    }
+
+    #[test]
+    fn len_counts_declared_frames() {
+        assert_eq!(anim("anim p.a frames=0,1,2,3 fps=8").len(), 4);
+        assert_eq!(anim("anim p.a frames=7:2 fps=8").len(), 1);
+        assert!(!anim("anim p.a frames=0 fps=8").is_empty());
     }
 
     #[test]

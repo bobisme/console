@@ -743,6 +743,29 @@ pub fn spr(
     );
 }
 
+/// Draw an arbitrary `px`-sized rectangle of sheet pixels, whose top-left is
+/// the sheet pixel `src`, with its top-left at the world position `dest`.
+///
+/// This is [`spr`] with the source rectangle addressed in **pixels** instead of
+/// by sprite id: same `blit`, so the camera, the clip rect, `palt` and the draw
+/// palette all behave identically by construction (and `fillp`, a shape effect,
+/// is exempt exactly as it is for `spr`). It exists for `aspr`, whose source
+/// rect comes from `AnimDef::resolve_frame` and need not be sprite-id aligned.
+pub fn spr_rect(
+    fb: &mut Framebuffer,
+    ds: &DrawState,
+    sheet: &SpriteSheet,
+    src: (i32, i32),
+    dest: (i32, i32),
+    px: (i32, i32),
+    flip: (bool, bool),
+) {
+    if px.0 <= 0 || px.1 <= 0 {
+        return;
+    }
+    blit(fb, ds, sheet, src, (ds.sx(dest.0), ds.sy(dest.1)), px, flip);
+}
+
 /// Fractional bits in [`sspr`]'s source-stepping fixed point (u32.16).
 const SSPR_SHIFT: u32 = 16;
 
