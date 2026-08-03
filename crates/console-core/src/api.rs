@@ -576,6 +576,22 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         )?,
     )?;
 
+    // `echo(delay, [feedback], [level])`: the cart-global delay bus, mirroring
+    // the `__instruments__` echo line. Omitted arguments are 0, so `echo(0)`
+    // (or `echo(-1)`) switches the bus off and flushes the delay line.
+    let st = state.clone();
+    g.set(
+        "echo",
+        lua.create_function(
+            move |_, (delay, feedback, level): (f64, Option<f64>, Option<f64>)| {
+                st.borrow_mut()
+                    .audio
+                    .lua_echo(fl(delay), feedback.map_or(0, fl), level.map_or(0, fl))
+                    .map_err(mlua::Error::RuntimeError)
+            },
+        )?,
+    )?;
+
     // ---- host --------------------------------------------------------------
     let st = state.clone();
     g.set(

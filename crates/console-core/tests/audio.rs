@@ -2,9 +2,9 @@
 //! determinism contract.
 
 use console_core::{
-    CHANNEL_COUNT, Cart, Console, DUCK_ATTACK_SAMPLES, Duck, Env, Error, Fx, MASTER_REF_LEVEL,
-    MAX_DRIVE, MAX_DUCK_DEPTH, MAX_HISS, MAX_TONE, Master, PatternEnd, SAMPLE_RATE,
-    SAMPLES_PER_FRAME, SfxRow, Sweep, Vib, freq_at, input,
+    CHANNEL_COUNT, Cart, Console, DUCK_ATTACK_SAMPLES, Duck, Echo, Env, Error, Fx,
+    MASTER_REF_LEVEL, MAX_DRIVE, MAX_DUCK_DEPTH, MAX_HISS, MAX_TONE, Master, PatternEnd,
+    SAMPLE_RATE, SAMPLES_PER_FRAME, SfxRow, Sweep, Vib, freq_at, input,
 };
 
 const DEMO: &str = include_str!("../../../carts/demo.cart");
@@ -2317,13 +2317,20 @@ fn a_cart_with_no_duck_instrument_never_leaves_the_legacy_path() {
 // ---------------------------------------------------------------------------
 
 /// Menu entries in `carts/soundtest.cart`.
-const SOUNDTEST_ENTRIES: usize = 14;
+const SOUNDTEST_ENTRIES: usize = 15;
 
 /// Zero-based menu index of "FULL GROOVE".
 const SOUNDTEST_GROOVE: usize = 12;
 
-/// Zero-based menu index of "SATURATION A/B" (the last entry).
+/// Zero-based menu index of "SATURATION A/B".
 const SOUNDTEST_AB: usize = 13;
+
+/// Zero-based menu index of "ECHO  DELAY BUS" (the last entry).
+///
+/// New entries go on the **end** on purpose: `soundtest_script` navigates by
+/// counting DOWN presses, so the two golden entries keep their exact input
+/// scripts and their hashes stay comparable across releases.
+const SOUNDTEST_ECHO: usize = 14;
 
 /// Frames the A/B entry spends on each side of the comparison: two bars at
 /// 112 BPM / 4 rows per beat / speed 8 = 2 * 16 * 8.
@@ -2346,13 +2353,13 @@ fn soundtest_script(entry: usize, play_frames: usize) -> Vec<u8> {
 fn the_soundtest_cart_loads_and_describes_itself() {
     let cart = Cart::parse(SOUNDTEST).unwrap();
     assert_eq!(cart.title(), "Sound Test");
-    // 11 instruments, 20 sfx, one self-looping pattern per audition entry (the
+    // 12 instruments, 21 sfx, one self-looping pattern per audition entry (the
     // A/B entry re-uses the groove's pattern 12).
-    assert_eq!(cart.instruments().len(), 11);
-    assert_eq!(cart.audio().sfx_ids().count(), 20);
+    assert_eq!(cart.instruments().len(), 12);
+    assert_eq!(cart.audio().sfx_ids().count(), 21);
     let pats: Vec<u8> = cart.audio().pattern_ids().collect();
-    assert_eq!(pats, (0..=12).collect::<Vec<u8>>());
-    for id in 0..=12u8 {
+    assert_eq!(pats, (0..=13).collect::<Vec<u8>>());
+    for id in 0..=13u8 {
         assert_eq!(
             cart.pattern(id).unwrap().end,
             PatternEnd::Loop(id),
@@ -2450,11 +2457,11 @@ fn the_soundtest_menu_navigates_and_stops() {
     assert_eq!(con.music_pattern(), Some(2));
     assert!(con.audio_frame().iter().any(|&s| s != 0.0));
 
-    // Up wraps to the top of the list...
+    // Up wraps to the top of the list, i.e. onto the last entry (ECHO).
     for mask in [input::UP, 0, input::UP, 0, input::UP, 0, input::A, 0] {
         con.step(mask).unwrap();
     }
-    assert_eq!(con.music_pattern(), Some(12), "UP past the top wraps around");
+    assert_eq!(con.music_pattern(), Some(13), "UP past the top wraps around");
 
     // ...and B stops.
     con.step(input::B).unwrap();
@@ -2706,4 +2713,498 @@ fn framebuffer_is_identical_with_and_without_audio() {
         muted_con.step(mask).unwrap();
         assert!(muted_con.audio_frame().iter().all(|&s| s == 0.0));
     }
+}
+
+// ---------------------------------------------------------------------------
+// The echo bus (SNES half): delay / feedback / level + per-instrument sends
+// ---------------------------------------------------------------------------
+
+/// One voice, one note, then silence: the impulse the echo tests measure.
+///
+/// `bus` is the `__instruments__` echo line (empty string = no line at all) and
+/// `send` is the instrument's `echo=` value.
+fn echo_cart(bus: &str, send: u8) -> String {
+    format!(
+        "__lua__\nfunction _init() sfx(0) end\n\n\
+         __instruments__\n{bus}\ninst wet wave=2 echo={send}\n\n\
+         __sfx__\nsfx 0 speed=3\nC4 wet 6\n---\n---\n---\n---\n---\n---\n---\n"
+    )
+}
+
+/// The echo's own contribution: the same cart rendered with and without its
+/// `echo` line, subtracted. Everything upstream of the bus is identical in the
+/// two runs (the sequencer never sees the echo), so what is left is exactly
+/// what the delay line returned, scaled by `MIX_GAIN`.
+fn echo_only(bus: &str, send: u8, frames: usize) -> Vec<f32> {
+    let inputs = vec![0u8; frames];
+    let wet = run_audio(&echo_cart(bus, send), 0, &inputs);
+    let dry = run_audio(&echo_cart("", send), 0, &inputs);
+    wet.iter().zip(&dry).map(|(a, b)| a - b).collect()
+}
+
+#[test]
+fn echo_defaults_off_and_the_legacy_corpus_never_engages_it() {
+    // The bit-identity guarantee itself is measured by the three golden tests
+    // (DEMO_AUDIO_GOLDEN, SOUNDTEST_GROOVE_GOLDEN, SOUNDTEST_AB_GOLDEN, all
+    // unmoved by this feature). This test pins the *reason* they are unmoved:
+    // no cart in the corpus has an echo line, so the bus is never engaged and
+    // the mixer never leaves the legacy statement.
+    for cart in [DEMO, SOUNDTEST] {
+        assert_eq!(Cart::parse(cart).unwrap().echo(), Echo::OFF);
+    }
+    let mut con = Console::new(DEMO, 0).unwrap();
+    for &mask in &script() {
+        con.step(mask).unwrap();
+        assert_eq!(con.echo(), Echo::OFF);
+        assert!(con.echo_is_silent(), "an unused delay line must stay empty");
+    }
+}
+
+#[test]
+fn an_echo_send_with_no_echo_line_changes_nothing() {
+    // `echo=8` on an instrument is inert until a cart declares the bus: the
+    // send is a routing amount, not a switch.
+    let inputs = vec![0u8; 24];
+    let sent = run_audio(&echo_cart("", 8), 0, &inputs);
+    let dry = run_audio(&echo_cart("", 0), 0, &inputs);
+    for (i, (a, b)) in sent.iter().zip(&dry).enumerate() {
+        assert_eq!(a.to_bits(), b.to_bits(), "sample {i} moved without an echo line");
+    }
+}
+
+#[test]
+fn the_echo_line_round_trips_through_the_parser() {
+    let cart = Cart::parse(&echo_cart("echo delay=7 feedback=5 level=3", 4)).unwrap();
+    assert_eq!(
+        cart.echo(),
+        Echo {
+            delay: 7,
+            feedback: 5,
+            level: 3
+        }
+    );
+    assert_eq!(cart.instrument("wet").unwrap().echo, 4);
+    // `feedback` is optional and defaults to a single slapback repeat.
+    let cart = Cart::parse(&echo_cart("echo delay=1 level=8", 0)).unwrap();
+    assert_eq!(
+        cart.echo(),
+        Echo {
+            delay: 1,
+            feedback: 0,
+            level: 8
+        }
+    );
+    // A send is optional and defaults to fully dry.
+    assert_eq!(cart.instrument("wet").unwrap().echo, 0);
+    // A mixer property, not a modulation one: an `echo=`-only instrument still
+    // takes the flat (PoC v1) render path.
+    assert!(cart.instrument("wet").unwrap().is_flat());
+    // The bus line does not collide with an instrument *named* echo — the
+    // soundtest cart has had one since PoC v2.
+    let cart = Cart::parse(
+        "__lua__\nx=1\n\n__instruments__\necho delay=4 level=4\ninst echo wave=1 echo=6\n",
+    )
+    .unwrap();
+    assert_eq!(cart.echo().delay, 4);
+    assert_eq!(cart.instrument("echo").unwrap().echo, 6);
+}
+
+#[test]
+fn echo_parse_errors_name_the_range() {
+    let bad = [
+        ("echo delay=0 level=4", "echo delay must be 1-60"),
+        ("echo delay=61 level=4", "echo delay must be 1-60"),
+        ("echo delay=4 level=9", "echo level must be 0-8"),
+        ("echo delay=4 level=4 feedback=9", "echo feedback must be 0-8"),
+        ("echo delay=x level=4", "echo delay must be a number"),
+        ("echo level=4", "echo needs `delay=<1-60>`"),
+        ("echo delay=4", "echo needs `level=<0-8>`"),
+        ("echo delay=4 level=4 wet=2", "unknown echo key"),
+        ("echo delay=4 level=4 nonsense", "unexpected"),
+        (
+            "echo delay=4 level=4\necho delay=8 level=2",
+            "at most one `echo` line",
+        ),
+    ];
+    for (line, want) in bad {
+        let err = Cart::parse(&echo_cart(line, 0)).unwrap_err();
+        let Error::Cart(msg) = err else {
+            panic!("{line:?} should be a cart error, got {err:?}");
+        };
+        assert!(
+            msg.contains(want),
+            "{line:?} said {msg:?}, expected it to mention {want:?}"
+        );
+        assert!(msg.contains("__instruments__"), "{msg:?} lacks the section");
+    }
+    // ...and the per-instrument send has a range too.
+    let err = Cart::parse(&echo_cart("echo delay=4 level=4", 9)).unwrap_err();
+    let Error::Cart(msg) = err else { panic!("want a cart error") };
+    assert!(msg.contains("inst echo send must be 0-8"), "{msg:?}");
+}
+
+#[test]
+fn a_single_impulse_repeats_at_exact_sample_offsets() {
+    // delay=3 frames = 3 * 735 = 2205 samples, no feedback: one repeat.
+    let delay_frames = 3usize;
+    let d = delay_frames * SAMPLES_PER_FRAME;
+    let inputs = vec![0u8; 12];
+    let wet = run_audio(&echo_cart("echo delay=3 feedback=0 level=8", 8), 0, &inputs);
+    let dry = run_audio(&echo_cart("", 8), 0, &inputs);
+
+    // Not one bit moves before the delay has elapsed...
+    for i in 0..d {
+        assert_eq!(
+            wet[i].to_bits(),
+            dry[i].to_bits(),
+            "the echo leaked at sample {i}, {} samples early",
+            d - i
+        );
+    }
+    // ...and the very first sample of the repeat is exactly on the boundary.
+    assert_ne!(
+        wet[d].to_bits(),
+        dry[d].to_bits(),
+        "no repeat at sample {d} (frame {delay_frames})"
+    );
+
+    // The repeat is an attenuated copy of the note, not a new sound: it is
+    // loudest in the delay window that follows the note.
+    let echo = echo_only("echo delay=3 feedback=0 level=8", 8, 12);
+    let window = |k: usize| -> f32 {
+        echo[k * d..((k + 1) * d).min(echo.len())]
+            .iter()
+            .map(|s| s.abs())
+            .sum()
+    };
+    assert_eq!(window(0), 0.0);
+    assert!(window(1) > 0.0, "the repeat never arrived");
+    // Zero feedback means it happens once. (The note itself is three rows
+    // long, so window 2 catches the tail of the *note's* echo, not a second
+    // lap; by window 3 there is nothing left at all.)
+    assert!(window(3) < window(1) * 0.01, "slapback echoed twice");
+}
+
+#[test]
+fn echo_repeats_get_quieter_as_the_feedback_loops() {
+    let d = 2 * SAMPLES_PER_FRAME;
+    let echo = echo_only("echo delay=2 feedback=5 level=6", 6, 40);
+    let window = |k: usize| -> f32 {
+        echo[k * d..((k + 1) * d).min(echo.len())]
+            .iter()
+            .map(|s| s.abs())
+            .sum()
+    };
+    assert_eq!(window(0), 0.0, "nothing before the first delay");
+    // The note is 8 rows * 3 frames = 24 frames long, so the line is still
+    // being fed for the first 12 windows. Measure the free decay after that.
+    let mut prev = window(13);
+    assert!(prev > 0.0, "the tail is silent before it should be");
+    for k in 14..20 {
+        let e = window(k);
+        assert!(e < prev, "window {k} ({e}) is not quieter than {prev}");
+        prev = e;
+    }
+    // Higher feedback = a longer tail, always.
+    let tail = |fb: u8| -> f32 {
+        echo_only(&format!("echo delay=2 feedback={fb} level=6"), 6, 40)[18 * d..]
+            .iter()
+            .map(|s| s.abs())
+            .sum()
+    };
+    for fb in 1..8u8 {
+        assert!(
+            tail(fb + 1) > tail(fb),
+            "feedback {} did not outlast {fb}",
+            fb + 1
+        );
+    }
+}
+
+#[test]
+fn a_voice_that_sends_nothing_stays_dry_while_another_one_echoes() {
+    // Two voices, one wet and one dry, on their own channels.
+    let cart = |bus: &str, wet_send: u8| {
+        format!(
+            "__lua__\nfunction _init() sfx(0, 0) sfx(1, 1) end\n\n\
+             __instruments__\n{bus}\n\
+             inst wet wave=2 echo={wet_send}\ninst dry wave=1\n\n\
+             __sfx__\n\
+             sfx 0 speed=3\nC4 wet 5\n---\n---\n---\n---\n---\n---\n---\n\
+             sfx 1 speed=3\nG4 dry 5\n---\n---\n---\n---\n---\n---\n---\n"
+        )
+    };
+    let inputs = vec![0u8; 20];
+
+    // The wet voice moves the mix...
+    let a = run_audio(&cart("echo delay=2 feedback=4 level=6", 6), 0, &inputs);
+    let b = run_audio(&cart("", 6), 0, &inputs);
+    assert!(
+        a.iter().zip(&b).any(|(x, y)| x.to_bits() != y.to_bits()),
+        "the wet voice never reached the bus"
+    );
+
+    // ...and with its send at zero, a running bus is inaudible: both voices are
+    // dry, so nothing is fed into the line and the sum is bit-identical to a
+    // console without an echo bus at all.
+    let on = run_audio(&cart("echo delay=2 feedback=4 level=6", 0), 0, &inputs);
+    let off = run_audio(&cart("", 0), 0, &inputs);
+    for (i, (x, y)) in on.iter().zip(&off).enumerate() {
+        assert_eq!(
+            x.to_bits(),
+            y.to_bits(),
+            "sample {i}: an all-dry mix must not hear the bus"
+        );
+    }
+}
+
+#[test]
+fn lua_echo_overrides_the_cart_line_and_can_kill_the_bus() {
+    let cart = "__lua__\n\
+         local f = 0\n\
+         function _init() sfx(0) end\n\
+         function _update()\n\
+           f = f + 1\n\
+           if f == 10 then echo(6, 3, 5) end\n\
+           if f == 20 then echo(0) end\n\
+           if f == 30 then echo(-1) end\n\
+         end\n\n\
+         __instruments__\necho delay=2 feedback=7 level=8\ninst wet wave=2 echo=8\n\n\
+         __sfx__\nsfx 0 speed=3 loop=0,0\nC4 wet 6\n";
+    let mut con = Console::new(cart, 0).unwrap();
+
+    // The cart's line is in force from the first frame.
+    assert_eq!(
+        con.echo(),
+        Echo {
+            delay: 2,
+            feedback: 7,
+            level: 8
+        }
+    );
+    for _ in 0..10 {
+        con.step(0).unwrap();
+    }
+    // ...until Lua replaces it wholesale, exactly like `master()`.
+    assert_eq!(
+        con.echo(),
+        Echo {
+            delay: 6,
+            feedback: 3,
+            level: 5
+        }
+    );
+    assert!(!con.echo_is_silent(), "the line should be full of repeats");
+
+    // `echo(0)` kills the bus *and* flushes the line, so the tail cannot come
+    // back later.
+    for _ in 0..10 {
+        con.step(0).unwrap();
+    }
+    assert_eq!(con.echo(), Echo::OFF);
+    assert!(con.echo_is_silent(), "killing the bus must empty the line");
+
+    // `echo(-1)` is the same thing, spelled loudly.
+    for _ in 0..10 {
+        con.step(0).unwrap();
+    }
+    assert_eq!(con.echo(), Echo::OFF);
+
+    // Range checks, straight out of Lua.
+    for bad in ["echo(61)", "echo(-2)", "echo(4, 9, 4)", "echo(4, 0, 9)"] {
+        let cart = format!("__lua__\nfunction _init() {bad} end\n");
+        let err = Console::new(&cart, 0).unwrap_err();
+        assert!(
+            format!("{err}").contains("out of range"),
+            "{bad} should be rejected, got {err}"
+        );
+    }
+}
+
+/// Six voices, all sending everything, into maximum feedback and a full-scale
+/// return: the loudest thing a cart can ask the bus for. `stop_at` is the frame
+/// the voices are cut, so the tail can be watched draining.
+fn echo_stress_cart(master_line: &str, stop_at: u32) -> String {
+    let starts: String = (0..CHANNEL_COUNT).map(|c| format!("sfx(0, {c}) ")).collect();
+    format!(
+        "__lua__\n\
+         local f = 0\n\
+         function _init() {starts} end\n\
+         function _update() f = f + 1 if f == {stop_at} then sfx(-1) end end\n\n\
+         __instruments__\n{master_line}\necho delay=1 feedback=8 level=8\n\
+         inst loud wave=2 echo=8\n\n\
+         __sfx__\nsfx 0 speed=240 loop=0,0\nC2 loud 7\n"
+    )
+}
+
+#[test]
+fn echo_stress_stays_bounded_and_finite() {
+    let mut con = Console::new(&echo_stress_cart("", 200), 0).unwrap();
+    let loud = collect(&mut con, 200);
+    for (i, s) in loud.iter().enumerate() {
+        assert!(s.is_finite(), "sample {i} is {s}");
+        assert!(
+            (-1.0..=1.0).contains(s),
+            "sample {i} escaped full scale: {s}"
+        );
+    }
+    // It really is slammed: without drive the final clamp is doing the work.
+    assert!(
+        loud.iter().filter(|s| s.abs() == 1.0).count() > loud.len() / 10,
+        "the stress probe never got loud enough to prove anything"
+    );
+
+    // The voices are cut at frame 200. The tail must drain, monotonically
+    // enough to be obviously convergent, and end in real silence.
+    let tail = collect(&mut con, 400);
+    let rms = |xs: &[f32]| -> f64 {
+        (xs.iter().map(|&s| f64::from(s) * f64::from(s)).sum::<f64>() / xs.len() as f64).sqrt()
+    };
+    let window = |k: usize| -> f64 { rms(&tail[k * 60 * SAMPLES_PER_FRAME..(k + 1) * 60 * SAMPLES_PER_FRAME]) };
+    assert!(window(0) > 0.0, "the tail vanished instantly");
+    for k in 1..6 {
+        assert!(
+            window(k) < window(k - 1),
+            "tail window {k} ({}) is not quieter than {}",
+            window(k),
+            window(k - 1)
+        );
+    }
+    assert!(
+        tail[tail.len() - SAMPLES_PER_FRAME..]
+            .iter()
+            .all(|s| s.abs() < 1e-4),
+        "the echo never faded out"
+    );
+    assert!(tail.iter().all(|s| s.is_finite()));
+}
+
+#[test]
+fn a_driven_master_bus_keeps_the_echo_below_full_scale() {
+    // The same stress probe with the master bus engaged: the shaper's output is
+    // bounded by MAKEUP[drive] < 1, so even an echo screaming into it cannot
+    // reach the hard clamp. `master drive=1` is the cheap insurance the SPEC
+    // recommends for echo-heavy carts.
+    for drive in 1..=MAX_DRIVE {
+        let cart = echo_stress_cart(&format!("master drive={drive}"), 10_000);
+        let mut con = Console::new(&cart, 0).unwrap();
+        let samples = collect(&mut con, 120);
+        let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(
+            peak < 1.0,
+            "drive {drive} let the echo hit the clamp (peak {peak})"
+        );
+        assert!(samples.iter().all(|s| s.is_finite()));
+    }
+}
+
+#[test]
+fn the_echo_bus_is_deterministic_and_seed_independent() {
+    let cart = echo_stress_cart("", 60);
+    let inputs = vec![0u8; 200];
+    let a = run_audio(&cart, 0, &inputs);
+    let b = run_audio(&cart, 0, &inputs);
+    let c = run_audio(&cart, 999_999, &inputs);
+    for (i, ((x, y), z)) in a.iter().zip(&b).zip(&c).enumerate() {
+        assert_eq!(x.to_bits(), y.to_bits(), "sample {i} is not reproducible");
+        assert_eq!(x.to_bits(), z.to_bits(), "sample {i} depends on the seed");
+    }
+}
+
+/// Golden hash of the soundtest cart's "ECHO  DELAY BUS" entry (menu index 14,
+/// pattern 13): FNV-1a over the little-endian bits of the samples rendered
+/// while navigating there and then playing 150 frames, seed 0.
+///
+/// 150 frames covers the first note, two of its repeats and the start of the
+/// second note, so this pins the delay line, the feedback path, the loop
+/// lowpass coefficient, the eighths ladder and the Lua `echo()` setter all at
+/// once — the echo counterpart of [`SOUNDTEST_AB_GOLDEN`]. If it changes, the
+/// echo bus changed.
+const SOUNDTEST_ECHO_GOLDEN: u64 = 0x7a66_500c_06d8_d557;
+
+#[test]
+fn soundtest_echo_matches_the_golden_hash() {
+    let hash = hash_samples(&run_audio(
+        SOUNDTEST,
+        0,
+        &soundtest_script(SOUNDTEST_ECHO, 150),
+    ));
+    assert_eq!(
+        hash, SOUNDTEST_ECHO_GOLDEN,
+        "soundtest echo audio changed; new hash is {hash:#018x}"
+    );
+}
+
+#[test]
+fn the_soundtest_echo_entry_fills_its_gaps_with_repeats() {
+    // The melody is four notes in 32 rows, each a 12-frame pluck, and the bus
+    // is `echo(24, 5, 6)`. So the first note's gap has a shape that could not
+    // come from anything else: sound, then real silence, then a repeat landing
+    // exactly 24 frames after the note-on, then silence, then a quieter one.
+    let s = soundtest_played(SOUNDTEST_ECHO, 80);
+    let rms = |a: usize, b: usize| -> f64 {
+        let x = &s[a * SAMPLES_PER_FRAME..b * SAMPLES_PER_FRAME];
+        (x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / x.len() as f64).sqrt()
+    };
+
+    let note = rms(0, 10);
+    assert!(note > 0.05, "the pluck is inaudible ({note})");
+    // The pluck's envelope reaches zero at frame 11 and the first repeat is
+    // still 13 frames away: this window is *exactly* silent.
+    assert_eq!(rms(12, 23), 0.0, "something is ringing before the repeat");
+    // The repeat, on the beat it was asked for.
+    let first = rms(24, 34);
+    assert!(first > 0.02, "no repeat arrived at frame 24 ({first})");
+    assert!(first < note, "the repeat is louder than the note");
+    // Feedback: silence again, then a second, quieter lap 24 frames later.
+    assert_eq!(rms(36, 47), 0.0, "the second gap is not clean");
+    let second = rms(48, 58);
+    assert!(second > 0.01, "the feedback lap never came back ({second})");
+    assert!(
+        second < first,
+        "repeat 2 ({second}) is not quieter than repeat 1 ({first})"
+    );
+}
+
+#[test]
+fn only_the_soundtest_echo_entry_runs_the_bus() {
+    let mut con = Console::new(SOUNDTEST, 0).unwrap();
+    assert_eq!(con.echo(), Echo::OFF, "the cart declares no echo line");
+    assert_eq!(Cart::parse(SOUNDTEST).unwrap().echo(), Echo::OFF);
+
+    // Every entry but the last leaves the bus switched off, which is what
+    // keeps the two older goldens bit-identical.
+    for entry in 0..SOUNDTEST_ECHO {
+        let mut con = Console::new(SOUNDTEST, 0).unwrap();
+        for mask in soundtest_script(entry, 30) {
+            con.step(mask).unwrap();
+            assert_eq!(con.echo(), Echo::OFF, "entry {entry} touched the echo bus");
+        }
+        assert!(con.echo_is_silent());
+    }
+
+    // The ECHO entry switches it on from `_update`, and B switches it back off
+    // and flushes the line.
+    for mask in soundtest_script(SOUNDTEST_ECHO, 40) {
+        con.step(mask).unwrap();
+    }
+    assert_eq!(con.music_pattern(), Some(13));
+    assert_eq!(
+        con.echo(),
+        Echo {
+            delay: 24,
+            feedback: 5,
+            level: 6
+        }
+    );
+    assert!(!con.echo_is_silent(), "the line should be holding repeats");
+
+    con.step(input::B).unwrap();
+    assert_eq!(con.echo(), Echo::OFF);
+    assert!(con.echo_is_silent(), "stopping must flush the delay line");
+    let tail = collect(&mut con, 6);
+    assert!(
+        tail[SAMPLES_PER_FRAME..].iter().all(|&s| s == 0.0),
+        "B should silence the console, echo tail included"
+    );
 }

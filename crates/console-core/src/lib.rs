@@ -37,11 +37,12 @@ use mlua::{Function, Lua, StdLib, Value};
 pub use crate::api::BUTTON_COUNT;
 pub use crate::audio::{
     ARP_FRAMES_PER_STEP, AudioBank, AudioFrame, CENTS_TO_RATIO, CHANNEL_COUNT, ChannelInfo,
-    DUCK_ATTACK_SAMPLES, Duck, Env, Fx, Instrument, LFO_STEPS, MASTER_REF_LEVEL, MAX_DRIVE,
-    MAX_DUCK_DEPTH, MAX_FX_SEMIS, MAX_HISS, MAX_ID, MAX_SFX_ROWS, MAX_TONE, MAX_VIB_CENTS,
-    MAX_VIB_RATE, MAX_VOL, Master, NOTE_FREQ, Pattern, PatternEnd, RAMP_SAMPLES, RowMod,
-    SAMPLE_RATE, SAMPLES_PER_FRAME, Sfx, SfxRow, Sweep, TONE_CUTOFF_HZ, Tempo, Vib, WAVE_COUNT,
-    freq_at, parse_note,
+    DUCK_ATTACK_SAMPLES, Duck, ECHO_LINE_LEN, ECHO_LP_CUTOFF_HZ, Echo, Env, Fx, Instrument,
+    LFO_STEPS, MASTER_REF_LEVEL, MAX_DRIVE, MAX_DUCK_DEPTH, MAX_ECHO_DELAY, MAX_ECHO_FEEDBACK,
+    MAX_ECHO_LEVEL, MAX_ECHO_SEND, MAX_FX_SEMIS, MAX_HISS, MAX_ID, MAX_SFX_ROWS, MAX_TONE,
+    MAX_VIB_CENTS, MAX_VIB_RATE, MAX_VOL, Master, NOTE_FREQ, Pattern, PatternEnd, RAMP_SAMPLES,
+    RowMod, SAMPLE_RATE, SAMPLES_PER_FRAME, Sfx, SfxRow, Sweep, TONE_CUTOFF_HZ, Tempo, Vib,
+    WAVE_COUNT, freq_at, parse_note,
 };
 pub use crate::cart::Cart;
 pub use crate::error::Error;
@@ -265,6 +266,18 @@ impl Console {
     /// output stage is bypassed entirely.
     pub fn master(&self) -> Master {
         self.state.borrow().audio.master()
+    }
+
+    /// The echo bus setting in force: the cart's `__instruments__` `echo` line
+    /// unless Lua's `echo()` has overridden it. All-zero means the delay line
+    /// is not running at all.
+    pub fn echo(&self) -> Echo {
+        self.state.borrow().audio.echo()
+    }
+
+    /// True when the echo delay line holds nothing (silent, or never used).
+    pub fn echo_is_silent(&self) -> bool {
+        self.state.borrow().audio.echo_is_silent()
     }
 
     /// Sidechain state: how much the non-trigger channels are attenuated right

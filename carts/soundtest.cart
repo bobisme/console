@@ -40,14 +40,29 @@ local entries = {
     d1 = "BASS, VIBRATO LEAD, DRUMS AND", d2 = "AN ARP BED. ALL FOUR CHANNELS." },
   { n = "SATURATION A/B", p = 12,
     d1 = "THE GROOVE, TWO BARS CLEAN THEN", d2 = "TWO DRIVEN. MASTER() FROM LUA." },
+  { n = "ECHO  DELAY BUS", p = 13,
+    d1 = "FOUR NOTES IN 32 ROWS. ECHO",   d2 = "(24,5,6) FILLS EVERY GAP." },
 }
 
--- The A/B entry is the last one: it plays the groove and flips the master bus
--- underneath it. `master` is cart-global, so a dry-bar/wet-bar comparison can
--- only come from the runtime setter, never from the __instruments__ line -
--- which is why this cart declares no master line at all and every other entry
--- renders exactly as it did before the output stage existed.
-local AB = #entries
+-- The A/B entry plays the groove and flips the master bus underneath it.
+-- `master` is cart-global, so a dry-bar/wet-bar comparison can only come from
+-- the runtime setter, never from the __instruments__ line - which is why this
+-- cart declares no master line at all and every other entry renders exactly as
+-- it did before the output stage existed.
+local AB = 14
+
+-- Same reasoning for the echo bus: `echo` is cart-global too, so the ECHO
+-- entry switches it on from Lua and every other entry runs `echo(0)`. The
+-- *send* is per-instrument and lives in the cart (`inst echo_lead ... echo=7`),
+-- so no other voice can reach the delay line even while it is running.
+--
+-- 24 frames = 400ms = three rows at speed 8: the dotted-eighth delay. The
+-- melody deliberately leaves seven empty rows after every note, because echo
+-- is only audible in the gaps - a busy part just smears.
+local ECHO = 15
+local ECHO_DELAY = 24
+local ECHO_FEEDBACK = 5
+local ECHO_LEVEL = 6
 
 -- 112 BPM, 4 rows/beat, speed=auto=8 frames/row -> 16 rows = 128 frames = one
 -- bar. The groove's patterns are 32 rows, so flipping every two bars lands the
@@ -68,6 +83,7 @@ function _init()
   started = 0
   driven = false
   master(0)
+  echo(0)
 end
 
 function _update()
@@ -100,6 +116,15 @@ function _update()
     driven = false
     master(0)
   end
+
+  -- ...and the only place that touches the echo bus. `echo(0)` is idempotent
+  -- and cheap: the delay line is only flushed on the running -> off edge, so
+  -- calling it every frame costs nothing.
+  if playing == ECHO then
+    echo(ECHO_DELAY, ECHO_FEEDBACK, ECHO_LEVEL)
+  else
+    echo(0)
+  end
 end
 
 -- A level meter driven by nothing fancier than the entry index: one bar per
@@ -107,8 +132,8 @@ end
 -- playing.
 local function meter(y)
   for i = 1, #entries do
-    local x = 6 + (i - 1) * 10
-    local h = 2 + i
+    local x = 6 + (i - 1) * 9
+    local h = 1 + i
     local c = 15
     if i <= sel then
       c = 11
@@ -128,9 +153,10 @@ function _draw()
   print("A PLAY  B STOP", 4, 10, 13)
 
   -- menu
+  -- 15 entries at 8px a row end at y=140, which leaves the meter its strip.
   local top = 22
   for i = 1, #entries do
-    local y = top + (i - 1) * 9
+    local y = top + (i - 1) * 8
     local c = 13
     if i == sel then
       rectfill(2, y - 1, 141, y + 6, 15)
@@ -145,7 +171,7 @@ function _draw()
   end
 
   -- meter
-  meter(150)
+  meter(144)
 
   -- description of the highlighted entry
   local e = entries[sel]
@@ -174,6 +200,10 @@ function _draw()
     else
       print("DRY     MASTER(0)", 5, 168, 11)
     end
+  elseif playing == ECHO then
+    rectfill(2, 168, 141, 174, 15)
+    print("ECHO(" .. ECHO_DELAY .. "," .. ECHO_FEEDBACK .. "," .. ECHO_LEVEL
+          .. ")  SEND 7/8", 5, 168, 11)
   end
 end
 
@@ -195,6 +225,17 @@ inst pluck     wave=1 env=0,10,3
 inst bass      wave=3 env=0,6,4
 inst chord     wave=0
 inst echo      wave=1 env=0,6,2
+
+# The one voice in this cart wired to the echo bus. `echo=7` is 7/8 of the
+# voice into the delay line - a deliberately heavy send, because the point of
+# entry 15 is to hear the bus rather than to sit tastefully behind a mix.
+#
+# `env=0,12,0` makes it a pluck that is gone after 12 frames (a row and a
+# half), so what fills the remaining six and a half rows of every gap is
+# nothing but the delay line and its feedback. Note also that the `echo` key
+# is a *mixer* property: this instrument still resolves its pitch and volume
+# through exactly the same code an env-only instrument does.
+inst echo_lead wave=1 env=0,12,0 echo=7
 
 # Percussion is just instruments: an ordinary note row gives the sweep its
 # start pitch and the envelope does the rest.
@@ -603,6 +644,43 @@ G4 chord 3 arp4,7
 G4 chord 3 arp4,7
 G4 chord 3 arp4,7
 
+# ---- 20: sparse melody for the echo bus ----------------------------------
+# Four notes in 32 rows: one every two beats, each dead after a row and a half.
+# Everything you hear in the seven empty rows that follow is the delay line.
+sfx 20 speed=auto
+E5 echo_lead 6
+---
+---
+---
+---
+---
+---
+---
+B4 echo_lead 5
+---
+---
+---
+---
+---
+---
+---
+C5 echo_lead 6
+---
+---
+---
+---
+---
+---
+---
+G4 echo_lead 5
+---
+---
+---
+---
+---
+---
+---
+
 __music__
 bpm=112 rows_per_beat=4
 pat 0  loop=0  : 0 - - -
@@ -618,3 +696,4 @@ pat 9  loop=9  : 10 - - -
 pat 10 loop=10 : 11 12 13 -
 pat 11 loop=11 : 14 15 - -
 pat 12 loop=12 : 16 17 18 19
+pat 13 loop=13 : 20 - - -

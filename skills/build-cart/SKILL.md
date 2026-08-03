@@ -59,8 +59,9 @@ __sprites__       128 lines x 128 hex chars; 1 char = 1 pixel; sprite n at (n%16
 __map__           up to 64 lines x up to 128 cells; 2 hex chars = 1 tile id (00-ff); tile 00 = empty
 __gfx_meta__      sprite <name> rect=tx,ty size=WxH [anchor=px,py]
                   anim <sprite>.<label> frames=i0,i1,... fps=N [loop]
-__instruments__   inst <name> wave=0-5 [env=a,d,s] [vib=cents,rate,delay] [sweep=semis,frames] [duck=depth,release]
+__instruments__   inst <name> wave=0-5 [env=a,d,s] [vib=cents,rate,delay] [sweep=semis,frames] [duck=depth,release] [echo=0-8]
                   master drive=0-8 [tone=0-8] [hiss=0-4]
+                  echo delay=1-60 feedback=0-8 level=0-8
 __sfx__           sfx <id> speed=<n|auto> [loop=start,end]  then rows: NOTE WAVE|INST VOL [FX]  or  ---
 __music__         [bpm=N [rows_per_beat=R]]  then: pat <id> [stop|loop=<id>] : ch0 ch1 ch2 ch3 [ch4 ch5]
                   4 to 6 slots; a slot you leave off is silent, so old 4-slot lines still parse
@@ -95,7 +96,8 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
   4=A 5=B 6=menu (start/select-style; the web shell's triangle button).
 - Audio: `sfx(n,[ch])` with `ch` 0–5 (`sfx(-1,ch)` stops a channel),
   `music(n)` / `music(-1)`, `master(drive,[tone],[hiss])` for saturation/tone
-  at runtime.
+  at runtime, `echo(delay,[feedback],[level])` for the delay bus
+  (`echo(0)` = off, and it flushes the tail).
 - Math: `flr ceil abs min max mid sin cos rnd([n]) srand(seed) t()`.
   `sin/cos` take TURNS, not radians (`sin(x)` = `math.sin(x*2π)`), standard
   sign — NOT PICO-8's inverted sin. `t()` = frames/60, exact.
@@ -205,6 +207,23 @@ Facts that bite:
 - Drums punch through via sidechain: give the kick `duck=3,8`.
 - `master drive=1-3` is glue; 5+ is a distortion choice. `tone` darkens,
   `hiss` adds tape floor.
+- **Echo** is one cart-global delay line plus a per-instrument send:
+  `echo delay=24 feedback=5 level=6` in `__instruments__` and `echo=6` on the
+  voices you want wet (0 = dry, the default). `delay` is in FRAMES, so it is
+  tempo math you can do in your head — at `speed=8` a row is 8 frames, so
+  `delay=8` is a row, `delay=16` a beat, `delay=24` the dotted-eighth. Repeats
+  darken as they decay (a fixed 4.8 kHz lowpass in the loop) and feedback tops
+  out at 7/8, so the tail always dies. `echo(d,f,l)` from Lua does the same at
+  runtime; `echo(0)` kills it and flushes the tail.
+- **Sparse notes make echo audible.** Echo only reads as echo in the gaps — a
+  busy 16th-note part just smears into mush. Write the wet voice with long
+  rests (one note every one or two beats), give it a short envelope so the note
+  is gone before its repeat lands, and let the delay line fill the hole.
+  Entry 15 of `carts/soundtest.cart` is four notes in 32 rows for exactly this
+  reason. Send at 2–4 on a real mix; 6+ is an effect.
+- Echo ADDS level (the return is post-fader and pre-mix-gain). Heavy sends plus
+  high feedback can reach the clamp — check `audio_stats` for clipped samples,
+  and `master drive=1` will soft-limit it for free.
 
 ## Packaging
 

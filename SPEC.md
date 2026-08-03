@@ -303,6 +303,8 @@ play the next existing pattern id, else halt.
 |----|----------|
 | `sfx(n, [ch=-1])` | play sfx n; `ch` is 0–5, or −1 to auto-pick the lowest channel not busy with music or sfx, stealing channel **5** if all are busy. `sfx(-1, ch)` stops that channel; `sfx(-1)` stops every sfx channel. |
 | `music(n)` | start music at pattern n (claims that pattern's non-`-` channels; re-claims per pattern). `music(-1)` stops music. |
+| `master(drive, [tone], [hiss])` | override the cart's `master` line (omitted args = 0; `master(0)` = clean) |
+| `echo(delay, [feedback], [level])` | override the cart's `echo` line (omitted args = 0; `echo(0)` / `echo(-1)` = off, and flushes the delay line) |
 
 **Channel budget (best practice).** Music owns the channels its pattern names
 and `sfx()` auto-allocation prefers the ones it does not, so a song may use all
@@ -414,7 +416,7 @@ cents factor, LFOs are integer-phase triangles.
 ### `__instruments__` section (phase 1)
 
 ```
-inst <name> wave=<0-5> [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>]
+inst <name> wave=<0-5> [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>] [echo=<0-8>]
 ```
 
 - `name` `[a-z0-9_]+`, unique, must not shadow the bare wave digits 0–5.
@@ -455,6 +457,67 @@ lowpass → hiss → clamp. All defaults zero = bit-identical legacy path.
   runtime (omitted args = 0; `master(0)` = clean). Game-scriptable — e.g.
   underwater = high tone, boss = drive up.
 
+### Echo bus (phase 1.5)
+
+```
+echo delay=<1-60> feedback=<0-8> level=<0-8>   # in __instruments__, at most one
+inst <name> ... [echo=<send 0-8>]
+```
+
+One mono delay line with feedback, fed by a per-voice send — the SNES echo
+unit. Off by default; all defaults zero = bit-identical legacy path.
+
+Signal flow (the echo bus sits between the sidechain and the master bus):
+
+```
+                       ┌──────── feedback * 7/64 ◄───────┐
+                       │                                 │
+ channels ─► duck ─┬─► echo send ─►(+)─► delay line ─► loop LP ─┘
+  (6 voices) gain  │    (0-8)/8                │
+                   │                           ▼ * level/8
+                   └────── dry sum ──────►(+)◄─┘
+                                           │
+                                           ▼
+                         * 0.25 ─► drive/shaper ─► tone LP ─► hiss ─► clamp
+```
+
+- **`delay`: whole frames, 1–60** (16.7 ms – 1 s). Frames, not milliseconds:
+  a frame is exactly 735 samples, so the read pointer is always an integer
+  index with no rounding or resampling. One frame is 16.67 ms, which is
+  effectively the SNES EDL's 16 ms grid — coarse and steppy on purpose — and
+  row length is already in frames, so tempo-synced echo is head arithmetic
+  (at `speed=8`, `delay=8` is a row, `delay=24` a dotted eighth).
+- **`feedback`: `f * 7/64`**, i.e. 0 … **7/8 = 0.875 maximum**. Deliberately
+  below unity so the loop always decays (−1.16 dB per repeat at the top, 60 dB
+  down after ~59 repeats). The loop filter cannot be relied on for stability —
+  its DC gain is exactly 1 — so the gain itself is the guarantee.
+- **`level` (return) and `echo=` (per-voice send): eighths, `n/8`**, so `8` is
+  unity. Sends are taken **post-duck** (the echo pumps with the kick rather
+  than filling the hole it dug) and the return is added to the dry sum before
+  the ×0.25 mix gain, so `level=8` is "as loud as a voice at unity send".
+- **Loop lowpass**: one pole, `y += a·(x − y)` with **a = 0.49534696**
+  (`1 − exp(−2π·4800/44100)`, evaluated at authoring time — no `exp` at
+  runtime). Every repeat is filtered again, so the tail darkens progressively
+  and sits behind the dry signal. This is the SNES FIR's job, done with one
+  pole.
+- **Memory**: a fixed 44100-sample (one second) zero-initialised buffer,
+  allocated once per console. Nothing in `step()` allocates; changing `delay`
+  only moves a read index (repeats in flight jump, tape-echo style).
+- **Off** means `delay == 0` **or** `level == 0`: the line is never touched and
+  the mixer takes the PoC v1 statement, so a cart with no `echo` line renders
+  bit-identical samples. An `echo=` send on an instrument is inert until a bus
+  exists.
+- **Headroom**: the echo adds energy and nothing inside the bus limits it.
+  Six voices at `echo=8` into `feedback=8` settle at up to
+  `6 / (1 − 7/8) = 48` in channel units; the no-drive path then hard-clips at
+  the final clamp, and any non-zero `master drive` soft-limits below full scale
+  instead. Bounded and finite at every setting, but author sends at 2–4 and
+  reach for `master drive=1` on echo-heavy carts.
+- Lua: `echo(delay, [feedback], [level])` overrides the cart's echo line at
+  runtime (omitted args = 0). `echo(0)`, `echo(-1)` or any `level=0` switches
+  the bus off **and flushes the delay line**, so re-enabling it later cannot
+  replay an earlier scene's tail.
+
 ### Effects column (phase 1; optional 4th token on a note row)
 
 | fx | behavior |
@@ -477,9 +540,17 @@ numeric speeds keep working everywhere.
 
 A listening-session cart: d-pad browses a menu of audition entries — each
 waveform, vibrato off/on comparison, arpeggio chord, slides, a drum kit
-pattern, the two-pulse echo trick, and one full 4-channel groove — A plays
+pattern, the two-pulse echo trick, one full 4-channel groove, a clean/driven
+A/B of the master bus, and a sparse melody through the echo bus — A plays
 the selection, B stops. This is the vehicle for tuning instrument defaults
 by ear; agents render entries to WAV via the harness for the same purpose.
+
+`master` and `echo` are both cart-global, so the two entries that demonstrate
+them drive the Lua setters and every other entry explicitly resets them
+(`master(0)`, `echo(0)`) — which is why the cart declares neither line and
+every pre-existing entry renders exactly as it always did. New entries are
+appended to the **end** of the menu so the golden entries keep their input
+scripts.
 
 ### Phase 2 (after phase 1 lands — planned, spec to be detailed then)
 

@@ -26,6 +26,12 @@
 //! polynomial soft clipper, a one-pole tone lowpass and a tape-style hiss
 //! floor. It is off by default and, when off, the mix takes literally the same
 //! statement it always did — see [`Audio::render`].
+//!
+//! Beside it sits the optional [`Echo`] bus (`echo` line in `__instruments__`,
+//! the per-instrument `echo=<0-8>` send, or the Lua `echo()` setter): one mono
+//! delay line, fed post-duck from the voices that ask for it, with feedback and
+//! a fixed one-pole lowpass inside the loop. Same contract — off by default,
+//! and off means the legacy statement, byte for byte.
 
 use std::collections::BTreeMap;
 
@@ -546,6 +552,228 @@ impl MasterState {
 }
 
 // ---------------------------------------------------------------------------
+// Echo bus: one mono delay line with feedback (the SNES half)
+// ---------------------------------------------------------------------------
+
+/// Longest echo delay, **in frames**.
+///
+/// The delay time is expressed in whole console frames rather than
+/// milliseconds or rows, for three reasons:
+///
+/// 1. **Exactness.** A frame is [`SAMPLES_PER_FRAME`] = 735 samples, always.
+///    `delay=<n>` is therefore `n * 735` samples with no rounding, no
+///    resampling and no fractional read pointer — the delay line is addressed
+///    by integer index and every target agrees trivially.
+/// 2. **SNES character.** The SNES echo length register (EDL) stepped in
+///    16 ms units, 0..240 ms. One frame is 16.67 ms, so `delay=<n>` *is*
+///    essentially EDL `n`, with the same coarse, steppy feel — you cannot dial
+///    in 23 ms, and that is the point.
+/// 3. **Musical addressing.** Row length is already in frames (`speed=`), so
+///    an echo synced to the music is just arithmetic the author can do in their
+///    head: at `speed=8`, `delay=8` is one row, `delay=12` a dotted row,
+///    `delay=16` a beat.
+///
+/// 60 frames = exactly one second, which is well past the SNES' 240 ms and
+/// makes [`ECHO_LINE_LEN`] exactly [`SAMPLE_RATE`] samples.
+pub const MAX_ECHO_DELAY: u8 = 60;
+
+/// Highest echo `feedback` setting.
+pub const MAX_ECHO_FEEDBACK: u8 = 8;
+
+/// Highest echo `level` (return) setting.
+pub const MAX_ECHO_LEVEL: u8 = 8;
+
+/// Highest per-instrument `echo=` send setting.
+pub const MAX_ECHO_SEND: u8 = 8;
+
+/// Samples in the delay line: [`MAX_ECHO_DELAY`] frames, i.e. one second.
+///
+/// The buffer is a fixed-size, zero-initialised array allocated once by
+/// [`Audio::new`]. Nothing in the render path ever allocates, resizes or
+/// reallocates it — changing `delay` only moves a read index.
+pub const ECHO_LINE_LEN: usize = MAX_ECHO_DELAY as usize * SAMPLES_PER_FRAME;
+
+/// Feedback gain per setting: `feedback * 7/64`.
+///
+/// **The loop always decays.** The maximum is `ECHO_FB[8] = 7/8 = 0.875`,
+/// deliberately below unity: the one-pole filter in the loop has a DC gain of
+/// exactly 1, so it cannot be relied on to tame a runaway, and the gain itself
+/// has to do it. 0.875 is -1.16 dB per repeat, so a maximum-feedback echo takes
+/// about 59 repeats to fall 60 dB — long, obviously "infinite" to the ear, and
+/// still provably convergent.
+///
+/// `7/64` is an exact binary fraction, so every entry is exact in f32 and every
+/// target agrees to the last bit.
+const ECHO_FB: [f32; 9] = [
+    0.0, 0.109375, 0.21875, 0.328125, 0.4375, 0.546875, 0.65625, 0.765625, 0.875,
+];
+
+/// The eighths ladder `n / 8`, used for **both** the master `level` (how loud
+/// the delay line comes back) and each instrument's `echo=` send (how much of
+/// that voice goes in). One table because they are the same unit: a fraction of
+/// the voice's own level. Every entry is an exact binary fraction.
+///
+/// `8` therefore means "the echo returns at the same level a voice would" —
+/// full scale, not a safe scale. See [`Audio::render`] for what the master bus
+/// does about that.
+const ECHO_GAIN: [f32; 9] = [0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0];
+
+/// Cutoff of the fixed one-pole lowpass **inside** the feedback loop, in Hz.
+///
+/// This is the whole reason echo repeats sit behind the dry signal instead of
+/// crowding it: each pass through the loop is filtered again, so repeat *k* has
+/// been lowpassed *k* times and the tail gets progressively darker and softer
+/// until it is a hum. The SNES did the same job with its 8-tap FIR on the echo
+/// path (whose stock coefficient sets were nearly all lowpass); one pole is the
+/// cheap, deterministic, allocation-free equivalent.
+///
+/// 4800 Hz is the "gentle" setting: it barely touches a bass line, takes the
+/// edge off a lead's harmonics on the first repeat and eats them by the third.
+pub const ECHO_LP_CUTOFF_HZ: u32 = 4800;
+
+/// The loop filter coefficient, `y += a * (x - y)` with
+/// `a = 1 - exp(-2*pi * ECHO_LP_CUTOFF_HZ / 44100)`.
+///
+/// Evaluated **at authoring time** — no `exp` in the render path, ever.
+/// Generated once and pasted in with:
+///
+/// ```text
+/// python3 -c "
+/// import math, struct
+/// f32 = lambda x: struct.unpack('<f', struct.pack('<f', x))[0]
+/// print(f32(1.0 - math.exp(-2.0 * math.pi * 4800 / 44100.0)))"
+/// ```
+#[allow(clippy::excessive_precision)]
+const ECHO_LP_A: f32 = 0.49534696;
+
+/// `echo delay=<1-60> feedback=<0-8> level=<0-8>` — the cart-global echo bus.
+///
+/// All-zero (the [`Default`]) means "no echo line": nothing is sent, nothing
+/// returns, and the mix takes the PoC v1 statement unchanged. A cart may
+/// declare one `echo` line in `__instruments__`, and the Lua
+/// `echo(delay, feedback, level)` setter overrides it at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Echo {
+    /// Delay time in whole frames, 1..=[`MAX_ECHO_DELAY`]. 0 = bus off.
+    pub delay: u8,
+    /// Feedback into the delay line, 0..=[`MAX_ECHO_FEEDBACK`] ([`ECHO_FB`]).
+    pub feedback: u8,
+    /// Return level of the delay line, 0..=[`MAX_ECHO_LEVEL`]. 0 = bus off.
+    pub level: u8,
+}
+
+impl Echo {
+    /// The all-zero echo: the bus is not running at all.
+    pub const OFF: Echo = Echo {
+        delay: 0,
+        feedback: 0,
+        level: 0,
+    };
+
+    /// True when the bus is not running, i.e. the render loop must not touch
+    /// the delay line at all.
+    ///
+    /// Either endpoint being zero switches the whole bus off: a zero `delay`
+    /// has no line to speak of and a zero `level` returns nothing, so in both
+    /// cases running the loop could only cost cycles and perturb state. This is
+    /// what makes the back-compat guarantee mechanical — a cart with no `echo`
+    /// line has `Echo::OFF`, which is bypassed, so the mixer takes the legacy
+    /// statement.
+    pub fn is_bypass(&self) -> bool {
+        self.delay == 0 || self.level == 0
+    }
+
+    /// The delay time in samples: `delay` frames of 735 samples, clamped to the
+    /// line length.
+    pub fn delay_samples(&self) -> usize {
+        usize::from(self.delay.min(MAX_ECHO_DELAY)) * SAMPLES_PER_FRAME
+    }
+}
+
+/// The echo bus' per-console runtime state: the delay line itself, its write
+/// cursor and the loop filter's memory.
+///
+/// Allocated once (boxed, so the one-second buffer never sits on the stack) and
+/// zero-initialised by [`Audio::new`]. [`EchoBus::tick`] only ever indexes it.
+struct EchoBus {
+    /// The delay line, oldest-to-newest around `pos`.
+    line: Box<[f32; ECHO_LINE_LEN]>,
+    /// Where the next sample is written.
+    pos: usize,
+    /// One-pole lowpass memory, inside the feedback loop.
+    lp: f32,
+}
+
+impl EchoBus {
+    fn new() -> EchoBus {
+        // Built through a `Vec` rather than `Box::new([0.0; N])` on purpose:
+        // the array literal is a 176 KB temporary that an unoptimised build
+        // materialises on the stack before moving it to the heap, and
+        // emscripten's default stack is far smaller than that. `vec![0.0; n]`
+        // for a zero-bit element goes straight to `alloc_zeroed`.
+        let line: Box<[f32; ECHO_LINE_LEN]> = vec![0.0f32; ECHO_LINE_LEN]
+            .into_boxed_slice()
+            .try_into()
+            .expect("the vec is built with exactly ECHO_LINE_LEN elements");
+        EchoBus {
+            line,
+            pos: 0,
+            lp: 0.0,
+        }
+    }
+
+    /// Forget everything: silence the line, rewind the cursor, clear the
+    /// filter. Called when the bus is switched off, so re-enabling it later can
+    /// never resurrect audio from an earlier scene.
+    fn clear(&mut self) {
+        self.line.fill(0.0);
+        self.pos = 0;
+        self.lp = 0.0;
+    }
+
+    /// True when the line and the filter hold nothing at all.
+    fn is_silent(&self) -> bool {
+        self.lp == 0.0 && self.line.iter().all(|&s| s == 0.0)
+    }
+
+    /// Run one sample through the bus and return the **delayed** sample (before
+    /// the return level is applied).
+    ///
+    /// ```text
+    /// delayed = line[pos - delay]
+    /// line[pos] = lowpass(send + delayed * feedback)
+    /// ```
+    ///
+    /// The filter sits *inside* the loop, so every repeat is filtered once
+    /// more. Reading before writing is what makes `delay == ECHO_LINE_LEN`
+    /// (i.e. `delay=60`) mean a full second rather than zero.
+    ///
+    /// Changing the delay time moves the read index without touching the line,
+    /// which is the classic tape-echo behaviour: the repeats already in flight
+    /// jump rather than glide. Nothing here allocates.
+    fn tick(&mut self, send: f32, delay_samples: usize, feedback: f32) -> f32 {
+        let d = delay_samples.clamp(1, ECHO_LINE_LEN);
+        let read = (self.pos + ECHO_LINE_LEN - d) % ECHO_LINE_LEN;
+        let delayed = self.line[read];
+
+        self.lp += ECHO_LP_A * ((send + delayed * feedback) - self.lp);
+        // Same reasoning as the tone filter: a geometric decay never reaches
+        // exactly zero, and a line full of denormals is expensive for a signal
+        // nobody can hear. A plain comparison, so it stays deterministic.
+        if self.lp.abs() < DENORM_FLOOR {
+            self.lp = 0.0;
+        }
+        self.line[self.pos] = self.lp;
+
+        self.pos += 1;
+        if self.pos == ECHO_LINE_LEN {
+            self.pos = 0;
+        }
+        delayed
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Data model
 // ---------------------------------------------------------------------------
 
@@ -612,7 +840,8 @@ pub struct Duck {
     pub release: u8,
 }
 
-/// One `inst <name> wave=<0-5> [env=...] [vib=...] [sweep=...] [duck=...]` entry.
+/// One `inst <name> wave=<0-5> [env=...] [vib=...] [sweep=...] [duck=...]
+/// [echo=<0-8>]` entry.
 ///
 /// A bare wave digit on a sfx row means the *implicit flat instrument*: that
 /// waveform with no envelope, vibrato or sweep, which is exactly the PoC v1
@@ -630,14 +859,19 @@ pub struct Instrument {
     /// channels. Independent of [`Instrument::is_flat`] — ducking costs the
     /// voice itself nothing per frame.
     pub duck: Option<Duck>,
+    /// `echo=<0-8>`: how much of this voice is sent to the [`Echo`] bus, in
+    /// eighths ([`ECHO_GAIN`]). 0 (the default) is fully dry, and a cart whose
+    /// instruments all send 0 never feeds the delay line at all.
+    pub echo: u8,
 }
 
 impl Instrument {
     /// True when the instrument needs per-frame modulation. A flat instrument
     /// (`inst x wave=2`) takes exactly the same code path as a bare digit.
     ///
-    /// `duck` is deliberately not part of this: it is a *mixer* property, so a
-    /// `duck`-only instrument still renders through the PoC v1 statements.
+    /// `duck` and `echo` are deliberately not part of this: both are *mixer*
+    /// properties, so an instrument that only ducks or only sends to the echo
+    /// still renders through the PoC v1 statements.
     pub fn is_flat(&self) -> bool {
         self.env.is_none() && self.vib.is_none() && self.sweep.is_none()
     }
@@ -752,6 +986,8 @@ pub struct AudioBank {
     tempo: Option<Tempo>,
     /// The `master` line from `__instruments__`; all-zero when absent.
     master: Master,
+    /// The `echo` line from `__instruments__`; all-zero when absent.
+    echo: Echo,
 }
 
 impl AudioBank {
@@ -790,6 +1026,13 @@ impl AudioBank {
         self.master
     }
 
+    /// The `echo` line from `__instruments__`. All-zero (the bus switched off)
+    /// when the cart has none — which is the bit-identical legacy output path.
+    /// Lua's `echo()` overrides this at runtime without touching the bank.
+    pub fn echo(&self) -> Echo {
+        self.echo
+    }
+
     /// Pattern `id`, if the cart defines it.
     pub fn pattern(&self, id: u8) -> Option<&Pattern> {
         self.patterns.get(&id)
@@ -805,12 +1048,14 @@ impl AudioBank {
         self.patterns.keys().copied()
     }
 
-    /// True when the cart has no instruments, sfx, patterns or master line.
+    /// True when the cart has no instruments, sfx, patterns, master or echo
+    /// line.
     pub fn is_empty(&self) -> bool {
         self.sfx.is_empty()
             && self.patterns.is_empty()
             && self.instruments.is_empty()
             && self.master.is_bypass()
+            && self.echo.is_bypass()
     }
 
     /// The lowest pattern id greater than `id`.
@@ -830,9 +1075,9 @@ impl AudioBank {
         sfx_text: Option<&str>,
         music_text: Option<&str>,
     ) -> Result<AudioBank, Error> {
-        let (instruments, inst_by_name, master) = match inst_text {
+        let (instruments, inst_by_name, master, echo) = match inst_text {
             Some(t) => parse_instruments_section(t)?,
-            None => (Vec::new(), BTreeMap::new(), Master::OFF),
+            None => (Vec::new(), BTreeMap::new(), Master::OFF, Echo::OFF),
         };
         let tempo = match music_text {
             Some(t) => parse_tempo_line(t)?,
@@ -867,6 +1112,7 @@ impl AudioBank {
             inst_by_name,
             tempo,
             master,
+            echo,
         })
     }
 }
@@ -978,13 +1224,14 @@ fn is_wave_digit(token: &str) -> bool {
 
 // ---- `__instruments__` -----------------------------------------------------
 
-type InstTable = (Vec<Instrument>, BTreeMap<String, u8>, Master);
+type InstTable = (Vec<Instrument>, BTreeMap<String, u8>, Master, Echo);
 
 fn parse_instruments_section(text: &str) -> Result<InstTable, Error> {
     const SEC: &str = "__instruments__";
     let mut list: Vec<Instrument> = Vec::new();
     let mut by_name: BTreeMap<String, u8> = BTreeMap::new();
     let mut master: Option<Master> = None;
+    let mut echo: Option<Echo> = None;
 
     for (i, raw) in text.lines().enumerate() {
         let line = i + 1;
@@ -1004,13 +1251,28 @@ fn parse_instruments_section(text: &str) -> Result<InstTable, Error> {
             master = Some(parse_master_line(line, &tokens)?);
             continue;
         }
+        // `echo` as the *first* token is the bus line. An instrument may still
+        // be named `echo` (`inst echo wave=1 ...`), because that name is the
+        // second token — the soundtest cart has had one since PoC v2.
+        if tokens[0].eq_ignore_ascii_case("echo") {
+            if echo.is_some() {
+                return Err(cart_err(
+                    SEC,
+                    line,
+                    "a cart may declare at most one `echo` line",
+                ));
+            }
+            echo = Some(parse_echo_line(line, &tokens)?);
+            continue;
+        }
         if !tokens[0].eq_ignore_ascii_case("inst") {
             return Err(cart_err(
                 SEC,
                 line,
                 format!(
-                    "expected `inst <name> wave=<0-5> ...` or \
-                     `master drive=<0-{MAX_DRIVE}> ...`, found {:?}",
+                    "expected `inst <name> wave=<0-5> ...`, \
+                     `master drive=<0-{MAX_DRIVE}> ...` or \
+                     `echo delay=<1-{MAX_ECHO_DELAY}> ...`, found {:?}",
                     tokens[0]
                 ),
             ));
@@ -1029,7 +1291,80 @@ fn parse_instruments_section(text: &str) -> Result<InstTable, Error> {
         by_name.insert(inst.name.clone(), list.len() as u8);
         list.push(inst);
     }
-    Ok((list, by_name, master.unwrap_or_default()))
+    Ok((
+        list,
+        by_name,
+        master.unwrap_or_default(),
+        echo.unwrap_or_default(),
+    ))
+}
+
+/// `echo delay=<1-60> feedback=<0-8> level=<0-8>`.
+///
+/// `delay` and `level` are required: they are the two endpoints that have to be
+/// non-zero for the bus to do anything, so leaving one out is always a mistake
+/// rather than a choice (a cart that wants no echo simply omits the line).
+/// `feedback` is optional and defaults to 0 — a single slapback repeat.
+fn parse_echo_line(line: usize, tokens: &[&str]) -> Result<Echo, Error> {
+    const SEC: &str = "__instruments__";
+    let mut delay: Option<u8> = None;
+    let mut feedback = 0u8;
+    let mut level: Option<u8> = None;
+
+    for tok in &tokens[1..] {
+        let Some((key, value)) = tok.split_once('=') else {
+            return Err(cart_err(
+                SEC,
+                line,
+                format!(
+                    "unexpected {tok:?} in echo line (want `delay=`, `feedback=` or `level=`)"
+                ),
+            ));
+        };
+        match key.to_ascii_lowercase().as_str() {
+            "delay" => {
+                delay = Some(parse_u8_range(
+                    SEC,
+                    line,
+                    "echo delay",
+                    value,
+                    1,
+                    MAX_ECHO_DELAY,
+                )?);
+            }
+            "feedback" => {
+                feedback = parse_u8_in(SEC, line, "echo feedback", value, MAX_ECHO_FEEDBACK)?;
+            }
+            "level" => level = Some(parse_u8_in(SEC, line, "echo level", value, MAX_ECHO_LEVEL)?),
+            other => {
+                return Err(cart_err(
+                    SEC,
+                    line,
+                    format!("unknown echo key {other:?} (want `delay`, `feedback` or `level`)"),
+                ));
+            }
+        }
+    }
+
+    let Some(delay) = delay else {
+        return Err(cart_err(
+            SEC,
+            line,
+            format!("echo needs `delay=<1-{MAX_ECHO_DELAY}>` (whole frames, 1 frame = 1/60 s)"),
+        ));
+    };
+    let Some(level) = level else {
+        return Err(cart_err(
+            SEC,
+            line,
+            format!("echo needs `level=<0-{MAX_ECHO_LEVEL}>` (the return level; 0 = bus off)"),
+        ));
+    };
+    Ok(Echo {
+        delay,
+        feedback,
+        level,
+    })
 }
 
 /// `master drive=<0-8> [tone=<0-8>] [hiss=<0-4>]`.
@@ -1084,7 +1419,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
             SEC,
             line,
             "expected `inst <name> wave=<0-5> [env=<a>,<d>,<s>] [vib=<cents>,<rate>,<delay>] \
-             [sweep=<semis>,<frames>] [duck=<depth>,<release>]`",
+             [sweep=<semis>,<frames>] [duck=<depth>,<release>] [echo=<0-8>]`",
         ));
     }
     let name = tokens[1];
@@ -1108,6 +1443,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
     let mut vib: Option<Vib> = None;
     let mut sweep: Option<Sweep> = None;
     let mut duck: Option<Duck> = None;
+    let mut echo = 0u8;
 
     for tok in &tokens[2..] {
         let Some((key, value)) = tok.split_once('=') else {
@@ -1116,7 +1452,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
                 line,
                 format!(
                     "unexpected {tok:?} in inst line \
-                     (want `wave=`, `env=`, `vib=`, `sweep=` or `duck=`)"
+                     (want `wave=`, `env=`, `vib=`, `sweep=`, `duck=` or `echo=`)"
                 ),
             ));
         };
@@ -1180,12 +1516,14 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
                     release: parse_u8_range(SEC, line, "duck release", r, 1, u8::MAX)?,
                 });
             }
+            "echo" => echo = parse_u8_in(SEC, line, "inst echo send", value, MAX_ECHO_SEND)?,
             other => {
                 return Err(cart_err(
                     SEC,
                     line,
                     format!(
-                        "unknown inst key {other:?} (want `wave`, `env`, `vib`, `sweep` or `duck`)"
+                        "unknown inst key {other:?} \
+                         (want `wave`, `env`, `vib`, `sweep`, `duck` or `echo`)"
                     ),
                 ));
             }
@@ -1206,6 +1544,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
         vib,
         sweep,
         duck,
+        echo,
     })
 }
 
@@ -1835,6 +2174,13 @@ struct Channel {
     owner: Owner,
     /// Per-frame modulation for the row currently playing, if it needs any.
     md: Option<Modulation>,
+    /// The [`Echo`] send of the instrument on the row currently playing, in
+    /// eighths ([`ECHO_GAIN`]); 0 for a bare wave digit, i.e. fully dry.
+    ///
+    /// Set at note-on and left alone by rests, so a note's release tail keeps
+    /// feeding the echo the way the note itself did. Cleared by
+    /// [`Channel::stop`]: a released channel sends nothing.
+    echo_send: u8,
 }
 
 impl Channel {
@@ -1849,6 +2195,7 @@ impl Channel {
             cursor: None,
             owner: Owner::Free,
             md: None,
+            echo_send: 0,
         }
     }
 
@@ -1902,6 +2249,7 @@ impl Channel {
         self.cursor = None;
         self.owner = Owner::Free;
         self.md = None;
+        self.echo_send = 0;
     }
 
     fn next_sample(&mut self, lfsr: &mut u16) -> f32 {
@@ -2044,6 +2392,11 @@ pub struct Audio {
     master: Master,
     /// Master bus memory (tone filter, hiss LFSR).
     mstate: MasterState,
+    /// The live echo setting: the cart's `echo` line until Lua's `echo()`
+    /// overrides it.
+    echo: Echo,
+    /// Echo bus memory (the delay line, its cursor, the loop filter).
+    ebus: EchoBus,
     /// The single global sidechain duck envelope.
     duck: DuckBus,
     out: Box<AudioFrame>,
@@ -2061,6 +2414,7 @@ impl std::fmt::Debug for Audio {
 impl Audio {
     pub fn new(bank: AudioBank) -> Audio {
         let master = bank.master();
+        let echo = bank.echo();
         Audio {
             bank,
             channels: [const { Channel::new() }; CHANNEL_COUNT],
@@ -2068,6 +2422,8 @@ impl Audio {
             lfsr: LFSR_SEED,
             master,
             mstate: MasterState::new(),
+            echo,
+            ebus: EchoBus::new(),
             duck: DuckBus::new(),
             out: Box::new([0.0; SAMPLES_PER_FRAME]),
         }
@@ -2077,6 +2433,18 @@ impl Audio {
     /// unless Lua's `master()` has overridden it.
     pub fn master(&self) -> Master {
         self.master
+    }
+
+    /// The echo bus setting in force right now: the cart's `echo` line unless
+    /// Lua's `echo()` has overridden it.
+    pub fn echo(&self) -> Echo {
+        self.echo
+    }
+
+    /// True when the delay line holds nothing at all. Exposed for tests, which
+    /// use it to prove that a killed bus really did forget its tail.
+    pub fn echo_is_silent(&self) -> bool {
+        self.ebus.is_silent()
     }
 
     /// Current sidechain attenuation (0 = not ducking) and the channel that is
@@ -2179,6 +2547,55 @@ impl Audio {
             hiss: hiss as u8,
         };
         Ok(())
+    }
+
+    /// `echo(delay, [feedback], [level])`: replace the cart's `__instruments__`
+    /// echo line for the rest of the session. Omitted arguments are 0, exactly
+    /// like `master()`.
+    ///
+    /// The bus is switched off by anything that bypasses it — `echo(0)`,
+    /// `echo(-1)` (the explicit "kill" spelling), `echo(0, 0, 0)` or any call
+    /// with `level = 0`. Switching it off also **clears the delay line**, so
+    /// re-enabling it later starts from silence instead of replaying whatever
+    /// the previous scene left in there.
+    ///
+    /// Takes effect immediately, like `sfx()`/`music()`/`master()`: a call from
+    /// `_update` colours the same frame's 735 samples. Changing the delay time
+    /// while the bus stays on does *not* clear the line — the repeats already
+    /// in flight jump to the new spacing, which is the tape-echo gesture.
+    pub fn lua_echo(&mut self, delay: i32, feedback: i32, level: i32) -> Result<(), String> {
+        if !(-1..=i32::from(MAX_ECHO_DELAY)).contains(&delay) {
+            return Err(format!(
+                "echo: delay {delay} out of range (expected 0-{MAX_ECHO_DELAY} frames, \
+                 or -1 to switch the bus off)"
+            ));
+        }
+        for (what, v, max) in [
+            ("feedback", feedback, MAX_ECHO_FEEDBACK),
+            ("level", level, MAX_ECHO_LEVEL),
+        ] {
+            if !(0..=i32::from(max)).contains(&v) {
+                return Err(format!("echo: {what} {v} out of range (expected 0-{max})"));
+            }
+        }
+        self.set_echo(Echo {
+            // -1 is just a louder way of saying 0.
+            delay: delay.max(0) as u8,
+            feedback: feedback as u8,
+            level: level as u8,
+        });
+        Ok(())
+    }
+
+    /// Install a new echo setting, flushing the delay line on the transition
+    /// from running to off. Guarded on the transition rather than on the state,
+    /// so a cart that calls `echo(0)` every frame (the way `soundtest.cart`
+    /// calls `master(0)`) does not memset a second of audio 60 times a second.
+    fn set_echo(&mut self, next: Echo) {
+        if next.is_bypass() && !self.echo.is_bypass() {
+            self.ebus.clear();
+        }
+        self.echo = next;
     }
 
     /// `music(n)`. `n == -1` stops music and releases its channels.
@@ -2361,33 +2778,63 @@ impl Audio {
     /// The signal path, in order:
     ///
     /// ```text
-    /// channels -> duck gain -> sum * 0.25 -> drive/shaper -> tone LP -> hiss -> clamp
+    ///                        ┌──────── feedback * 7/64 ◄───────┐
+    ///                        │                                 │
+    ///  channels ─► duck ─┬─► echo send ─►(+)─► delay line ─► loop LP ─┘
+    ///   (6 voices) gain  │    (0-8)/8                │
+    ///                    │                           ▼ * level/8
+    ///                    └────── dry sum ──────►(+)◄─┘
+    ///                                            │
+    ///                                            ▼
+    ///                          * 0.25 ─► drive/shaper ─► tone LP ─► hiss ─► clamp
     /// ```
     ///
-    /// The **insertion point** is the `acc * MIX_GAIN` product: everything new
-    /// consumes that value and replaces the plain `clamp(-1, 1)` that used to
-    /// be applied to it (the clamp survives as a final safety net, because the
-    /// hiss adds after the shaper has already bounded the signal). Ducking
-    /// sits one step earlier still, on the per-channel samples going into the
-    /// sum, so a driven mix pumps — the shaper sees the ducked signal.
+    /// The **insertion point** for the master bus is the `acc * MIX_GAIN`
+    /// product: everything new consumes that value and replaces the plain
+    /// `clamp(-1, 1)` that used to be applied to it (the clamp survives as a
+    /// final safety net, because the hiss adds after the shaper has already
+    /// bounded the signal). Ducking sits one step earlier still, on the
+    /// per-channel samples going into the sum, so a driven mix pumps — the
+    /// shaper sees the ducked signal.
     ///
-    /// When nothing is engaged — no `master` line / `master(0)` *and* no duck
-    /// envelope running — the loop is the PoC v1 statement, character for
-    /// character, so old carts render bit-identical samples. (The general path
-    /// would agree anyway: its duck gain is exactly `1.0` when idle and `x *
-    /// 1.0 == x` in IEEE-754. The split is for clarity and speed, not safety.)
+    /// The echo bus sits between them. Each voice's send is taken **post-duck**
+    /// — the same value that enters the dry sum — so the echo pumps with the
+    /// kick instead of filling in the hole the sidechain just dug. The return
+    /// is added to the dry sum *before* `MIX_GAIN`, so `level=8` really is
+    /// "as loud as a voice at unity send" and the whole thing is one number the
+    /// master stage can work on. The return itself is not re-ducked: it is an
+    /// aux return, and it already inherited the pump on the way in.
+    ///
+    /// **Headroom.** The echo adds energy, and nothing in the bus stops it
+    /// exceeding full scale: six voices at `echo=8` into `feedback=8`
+    /// (`7/8`) settle at up to `6 / (1 - 7/8) = 48` in channel units, which
+    /// `level=8` returns in full. As with six loud dry voices, the no-drive
+    /// path then hard-clips at the final clamp and any non-zero `master drive`
+    /// soft-limits below full scale instead (`MAKEUP[drive] < 1`). The bus is
+    /// bounded and finite at every setting — `echo_stress_*` in
+    /// `tests/audio.rs` pins that — but "bounded" is not "clean": author sends
+    /// at 2-4 and reach for `master drive=1` if the tail gets crunchy.
+    ///
+    /// When nothing is engaged — no `master` line / `master(0)`, no `echo`
+    /// line / `echo(0)` *and* no duck envelope running — the loop is the PoC v1
+    /// statement, character for character, so old carts render bit-identical
+    /// samples. (The general path would agree anyway: its duck gain is exactly
+    /// `1.0` when idle and `x * 1.0 == x` in IEEE-754. The split is for clarity
+    /// and speed, not safety.)
     pub fn render(&mut self) {
         let Audio {
             channels,
             lfsr,
             master,
             mstate,
+            echo,
+            ebus,
             duck,
             out,
             ..
         } = self;
 
-        if master.is_bypass() && duck.is_idle() {
+        if master.is_bypass() && duck.is_idle() && echo.is_bypass() {
             for slot in out.iter_mut() {
                 let mut acc = 0.0f32;
                 for c in channels.iter_mut() {
@@ -2403,16 +2850,33 @@ impl Audio {
         let a = TONE_A[usize::from(master.tone)];
         let hiss = HISS_LEVEL[usize::from(master.hiss)];
 
+        let echo_on = !echo.is_bypass();
+        let edelay = echo.delay_samples();
+        let efb = ECHO_FB[usize::from(echo.feedback.min(MAX_ECHO_FEEDBACK))];
+        let elevel = ECHO_GAIN[usize::from(echo.level.min(MAX_ECHO_LEVEL))];
+
         for slot in out.iter_mut() {
             // ---- sidechain duck, then the channel sum ----------------------
             let g = duck.gain();
             let exempt = duck.trigger_ch;
             let mut acc = 0.0f32;
+            let mut send = 0.0f32;
             for (i, c) in channels.iter_mut().enumerate() {
                 let s = c.next_sample(lfsr);
-                acc += if exempt == Some(i as u8) { s } else { s * g };
+                let s = if exempt == Some(i as u8) { s } else { s * g };
+                acc += s;
+                // `echo_send == 0` is both the default and the common case, so
+                // a dry voice costs one integer comparison and nothing else.
+                if echo_on && c.echo_send != 0 {
+                    send += s * ECHO_GAIN[usize::from(c.echo_send.min(MAX_ECHO_SEND))];
+                }
             }
             duck.tick();
+
+            // ---- echo: delay line with feedback and a loop lowpass ---------
+            if echo_on {
+                acc += ebus.tick(send, edelay, efb) * elevel;
+            }
 
             let mut v = acc * MIX_GAIN;
 
@@ -2454,7 +2918,8 @@ impl Audio {
 }
 
 /// Start `row` on channel `ch`: set the voice, arm this row's modulation (if
-/// any) and fire the sidechain if the row's instrument is a duck trigger.
+/// any), fire the sidechain if the row's instrument is a duck trigger and
+/// install that instrument's echo send.
 fn apply_row(
     c: &mut Channel,
     ch: usize,
@@ -2476,6 +2941,9 @@ fn apply_row(
             if let Some(d) = named.and_then(|i| i.duck) {
                 duck.trigger(ch, d);
             }
+            // The echo send follows the row's instrument, so a bare wave digit
+            // (or an instrument without `echo=`) puts the channel back to dry.
+            c.echo_send = named.map_or(0, |i| i.echo);
             let inst = named.filter(|i| !i.is_flat());
             if inst.is_none() && m.fx.is_none() {
                 // PoC v1 path, bit-for-bit: no per-frame work at all.
@@ -3128,6 +3596,211 @@ mod tests {
             d.tick();
         }
         assert_eq!(d.gain(), 0.0);
+    }
+
+    // -----------------------------------------------------------------
+    // Echo bus: tables, the delay line, the feedback loop
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn echo_gain_tables_are_exact_binary_fractions() {
+        assert_eq!(ECHO_FB.len(), usize::from(MAX_ECHO_FEEDBACK) + 1);
+        assert_eq!(ECHO_GAIN.len(), usize::from(MAX_ECHO_LEVEL) + 1);
+        assert_eq!(ECHO_GAIN.len(), usize::from(MAX_ECHO_SEND) + 1);
+        assert_eq!(ECHO_FB[0], 0.0);
+        assert_eq!(ECHO_GAIN[0], 0.0);
+        for f in 0..=usize::from(MAX_ECHO_FEEDBACK) {
+            // f * 7/64, exactly.
+            assert_eq!(ECHO_FB[f], f as f32 * (7.0 / 64.0));
+            // ...and eighths for the level/send ladder.
+            assert_eq!(ECHO_GAIN[f], f as f32 / 8.0);
+        }
+        // Monotonic in both.
+        assert!(ECHO_FB.windows(2).all(|w| w[0] < w[1]));
+        assert!(ECHO_GAIN.windows(2).all(|w| w[0] < w[1]));
+        // The load-bearing invariant: the loop can never reach unity, so it
+        // always decays. 7/8 at the top.
+        assert_eq!(ECHO_FB[usize::from(MAX_ECHO_FEEDBACK)], 0.875);
+        assert!(ECHO_FB[usize::from(MAX_ECHO_FEEDBACK)] < 1.0);
+        // The return tops out at exactly unity.
+        assert_eq!(ECHO_GAIN[usize::from(MAX_ECHO_LEVEL)], 1.0);
+    }
+
+    #[test]
+    fn echo_loop_filter_matches_its_generator() {
+        let fc = f64::from(ECHO_LP_CUTOFF_HZ);
+        // The authoring-time formula. `exp` lives here, in a test, and never in
+        // the render path.
+        let a = (1.0 - (-2.0 * std::f64::consts::PI * fc / 44100.0).exp()) as f32;
+        assert_eq!(
+            ECHO_LP_A.to_bits(),
+            a.to_bits(),
+            "ECHO_LP_A = {ECHO_LP_A} but 1 - exp(-2*pi*{fc}/44100) = {a}"
+        );
+        // A lowpass, not a passthrough and not a resonator.
+        assert!((0.0..1.0).contains(&ECHO_LP_A));
+        // Its DC gain is exactly 1, which is *why* the feedback gain has to be
+        // the thing that keeps the loop stable: feed a constant in and the
+        // filter converges to it rather than shrinking it.
+        let mut y = 0.0f32;
+        for _ in 0..10_000 {
+            y += ECHO_LP_A * (1.0 - y);
+        }
+        assert!((y - 1.0).abs() < 1e-6, "loop filter DC gain is {y}, not 1");
+    }
+
+    #[test]
+    fn echo_delay_is_whole_frames_and_the_line_is_one_second() {
+        assert_eq!(ECHO_LINE_LEN, usize::from(MAX_ECHO_DELAY) * SAMPLES_PER_FRAME);
+        assert_eq!(ECHO_LINE_LEN, SAMPLE_RATE as usize, "60 frames = 1 second");
+        for d in 0..=MAX_ECHO_DELAY {
+            let e = Echo {
+                delay: d,
+                feedback: 0,
+                level: 4,
+            };
+            assert_eq!(e.delay_samples(), usize::from(d) * SAMPLES_PER_FRAME);
+        }
+        // 16.67 ms a step: essentially the SNES EDL's 16 ms grid.
+        assert_eq!(
+            Echo {
+                delay: 1,
+                feedback: 0,
+                level: 8
+            }
+            .delay_samples(),
+            735
+        );
+    }
+
+    #[test]
+    fn echo_defaults_to_a_full_bypass() {
+        assert_eq!(Echo::default(), Echo::OFF);
+        assert!(Echo::default().is_bypass());
+        // Either endpoint at zero switches the whole bus off.
+        assert!(
+            Echo {
+                delay: 0,
+                feedback: 8,
+                level: 8
+            }
+            .is_bypass()
+        );
+        assert!(
+            Echo {
+                delay: 30,
+                feedback: 8,
+                level: 0
+            }
+            .is_bypass()
+        );
+        assert!(
+            !Echo {
+                delay: 1,
+                feedback: 0,
+                level: 1
+            }
+            .is_bypass()
+        );
+    }
+
+    /// Push one impulse into a bus and collect `n` samples of what comes back
+    /// out of the delay line (before the return level).
+    fn echo_impulse(delay: usize, feedback: f32, n: usize) -> Vec<f32> {
+        let mut bus = EchoBus::new();
+        (0..n)
+            .map(|i| bus.tick(if i == 0 { 1.0 } else { 0.0 }, delay, feedback))
+            .collect()
+    }
+
+    #[test]
+    fn echo_repeats_land_on_exact_sample_offsets() {
+        let delay = 100;
+        let out = echo_impulse(delay, ECHO_FB[8], delay * 4 + 4);
+        // Nothing comes back before the delay has elapsed...
+        assert!(
+            out[..delay].iter().all(|&s| s == 0.0),
+            "the line leaked before the first repeat"
+        );
+        // ...the first repeat starts exactly `delay` samples later...
+        assert!(out[delay] > 0.0, "no first repeat at sample {delay}");
+        // ...and so does every later one, because the loop is exactly one
+        // delay long. (The impulse is smeared by the loop filter, so the
+        // *energy* rather than a single sample is what recurs.)
+        let energy = |k: usize| -> f32 {
+            out[k * delay..(k * delay + delay).min(out.len())]
+                .iter()
+                .map(|s| s.abs())
+                .sum()
+        };
+        assert_eq!(energy(0), 0.0);
+        for k in 1..4 {
+            assert!(energy(k) > 0.0, "repeat {k} is missing");
+        }
+    }
+
+    #[test]
+    fn echo_feedback_always_decays() {
+        // Every feedback setting, including the maximum, loses energy per lap.
+        for (f, &fb) in ECHO_FB.iter().enumerate().skip(1) {
+            let delay = 64;
+            let out = echo_impulse(delay, fb, delay * 6);
+            let energy = |k: usize| -> f32 {
+                out[k * delay..(k + 1) * delay].iter().map(|s| s.abs()).sum()
+            };
+            for k in 1..5 {
+                assert!(
+                    energy(k + 1) < energy(k),
+                    "feedback {f}: repeat {} is not quieter than {k}",
+                    k + 1
+                );
+            }
+            // ...and it is heading to silence, not to a floor.
+            assert!(energy(5) < energy(1) * 0.95);
+        }
+        // Zero feedback is a single slapback: one repeat and nothing after it.
+        let delay = 32;
+        let out = echo_impulse(delay, ECHO_FB[0], delay * 4);
+        assert!(out[delay..delay * 2].iter().any(|&s| s != 0.0));
+        let tail: f32 = out[delay * 2..].iter().map(|s| s.abs()).sum();
+        assert!(tail < 1e-6, "slapback left a tail of {tail}");
+    }
+
+    #[test]
+    fn echo_line_is_bounded_at_maximum_feedback() {
+        // Hold the input at the worst case a mix can produce (six full-scale
+        // voices, pre-MIX_GAIN) with maximum feedback for a long time: the
+        // geometric series converges to input / (1 - 7/8) = 8 * input.
+        let mut bus = EchoBus::new();
+        let mut peak = 0.0f32;
+        for _ in 0..ECHO_LINE_LEN * 4 {
+            let out = bus.tick(6.0, 735, ECHO_FB[8]);
+            assert!(out.is_finite(), "the delay line produced {out}");
+            peak = peak.max(out.abs());
+        }
+        assert!(peak <= 48.0 + 1e-3, "line ran away to {peak}");
+        assert!(peak > 40.0, "the probe never charged the line ({peak})");
+
+        // Cut the input and the line drains to exactly zero (the denormal
+        // floor snaps the last of it), rather than ringing forever.
+        for _ in 0..ECHO_LINE_LEN * 60 {
+            bus.tick(0.0, 735, ECHO_FB[8]);
+        }
+        assert!(bus.is_silent(), "the line never emptied");
+    }
+
+    #[test]
+    fn echo_clear_forgets_everything() {
+        let mut bus = EchoBus::new();
+        assert!(bus.is_silent());
+        for _ in 0..2000 {
+            bus.tick(0.5, 735, ECHO_FB[4]);
+        }
+        assert!(!bus.is_silent());
+        bus.clear();
+        assert!(bus.is_silent());
+        assert_eq!(bus.pos, 0);
+        assert_eq!(bus.lp, 0.0);
     }
 
     #[test]
