@@ -1,1 +1,3 @@
 - use bones (`bn --help`) to track work
+- building or modifying a cart? read skills/build-cart/SKILL.md first
+- SPEC.md is the authority on all formats and APIs
