@@ -68,7 +68,7 @@ pub fn cli_edit(args: &[String]) -> i32 {
 
 pub const EDIT_USAGE: &str = "\
 usage:
-  console-agent sprite edit <cart> shift  <target> [--frame N] --dx <n> --dy <n> [--wrap] [--dry-run]
+  console-agent sprite edit <cart> shift  <target> [--frame N] [--dx <n>] [--dy <n>] [--wrap] [--dry-run]
   console-agent sprite edit <cart> flip   <target> [--frame N] --horizontal|--vertical [--dry-run]
   console-agent sprite edit <cart> rotate <target> [--frame N] --cw|--ccw [--dry-run]
   console-agent sprite edit <cart> copy   <src> <dst> [--dry-run]
@@ -162,14 +162,14 @@ fn run_shift(cart: &Cart, sheet: &mut SpriteSheet, args: &[String]) -> Result<()
     let mut args = args.to_vec();
     let wrap = take_flag(&mut args, "--wrap");
     let frame = take_frame(&mut args)?;
-    let dx = take_value(&mut args, "--dx")
-        .ok_or_else(|| "shift requires --dx <n>".to_string())?
-        .parse::<i64>()
-        .map_err(|e| format!("bad --dx: {e}"))?;
-    let dy = take_value(&mut args, "--dy")
-        .ok_or_else(|| "shift requires --dy <n>".to_string())?
-        .parse::<i64>()
-        .map_err(|e| format!("bad --dy: {e}"))?;
+    let dx = match take_value(&mut args, "--dx") {
+        Some(v) => v.parse::<i64>().map_err(|e| format!("bad --dx: {e}"))?,
+        None => 0,
+    };
+    let dy = match take_value(&mut args, "--dy") {
+        Some(v) => v.parse::<i64>().map_err(|e| format!("bad --dy: {e}"))?,
+        None => 0,
+    };
     let target_str = take_target(&args, "shift")?;
     let rect = resolve_rect(cart, target_str, frame)?;
     op_shift(sheet, rect, dx, dy, wrap);

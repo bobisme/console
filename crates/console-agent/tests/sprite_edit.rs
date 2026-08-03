@@ -89,6 +89,48 @@ fn shift_fill_moves_pixel_and_clears_vacated() {
 }
 
 #[test]
+fn shift_dx_alone_defaults_dy_to_zero() {
+    let text = cart("sprite player rect=0,0 size=1x1", &["a0000000"]);
+    let path = temp_cart("shift-dx-only", &text);
+
+    // --dy omitted entirely: must default to 0, not error.
+    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "player", "--dx", "1"]));
+    assert_eq!(code, 0);
+
+    let out = read(&path);
+    let row0 = out.split("__sprites__\n").nth(1).unwrap().lines().next().unwrap();
+    assert_eq!(row0, row128(&[(1, "a")]), "dy defaults to 0, pixel only moves in x");
+}
+
+#[test]
+fn shift_dy_alone_defaults_dx_to_zero() {
+    let rows: Vec<String> = (0..8u32).map(|y| char::from_digit(y, 16).unwrap().to_string().repeat(8)).collect();
+    let row_refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let text = cart("sprite player rect=0,0 size=1x1", &row_refs);
+    let path = temp_cart("shift-dy-only", &text);
+
+    // --dx omitted entirely: must default to 0, not error.
+    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "player", "--dy", "2"]));
+    assert_eq!(code, 0);
+
+    let out = read(&path);
+    let after_lines: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
+    assert_eq!(after_lines[3], row128(&[(0, "11111111")]), "row3 <- src(row1), no x shift");
+}
+
+#[test]
+fn shift_with_no_dx_or_dy_is_a_legal_no_op() {
+    let text = cart("sprite player rect=0,0 size=1x1", &["a0000000"]);
+    let path = temp_cart("shift-noop", &text);
+
+    // Neither --dx nor --dy given: both default to 0 -- shifting by (0,0) is
+    // a legal no-op, not an error.
+    let code = cli_edit(&args(&[path.to_str().unwrap(), "shift", "player"]));
+    assert_eq!(code, 0);
+    assert_eq!(read(&path), text, "shift by (0,0) changes nothing");
+}
+
+#[test]
 fn shift_wrap_handles_negative_delta() {
     let text = cart("sprite player rect=0,0 size=1x1", &["a0000000"]);
     let path = temp_cart("shift-wrap-neg", &text);
