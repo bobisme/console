@@ -421,9 +421,10 @@ Principles: **deterministic** (const note table + linear ops + LFSR only — no
   clamp hard-clips. Any non-zero `master drive` bounds the output below full
   scale (see the master bus) and acts as a free limiter.
 - Waveforms: 0 = pulse 12.5%, 1 = pulse 25%, 2 = square 50%, 3 = triangle,
-  4 = saw, 5 = noise (16-bit LFSR, NES-style taps, clocked from the channel
-  frequency). Id 6 is the 2-op FM oscillator and ids 8–15 are the cart's own
-  wavetables (both PoC v2, below); id 7 stays reserved.
+  4 = saw, 5 = white noise (16-bit LFSR, NES-style taps, clocked from the
+  channel frequency). Id 6 is the 2-op FM oscillator, id 7 is periodic noise
+  (the same register clocked with rotate-only feedback) and ids 8–15 are the
+  cart's own wavetables — all three PoC v2, below.
 - Notes `C0`–`B7` (A4 = 440). Frequencies come from a `const` table of 96 f32
   literals baked into the source (generated once, committed) — never computed
   at runtime.
@@ -689,23 +690,27 @@ cents factor, LFOs are integer-phase triangles.
 ### `__instruments__` section (phase 1)
 
 ```
-inst <name> wave=<0-6|w0-w7> [fm=<ratio>,<index>[,<decay>]] [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>] [echo=<0-8>]
+inst <name> wave=<0-7|w0-w7> [fm=<ratio>,<index>[,<decay>]] [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate>,<delay>] [trem=<depth>,<rate>[,<delay>]] [sweep=<semis>,<frames>] [echo=<0-8>]
 ```
 
-- `name` `[a-z0-9_]+`, unique, must not shadow the bare wave digits 0–6 nor the
+- `name` `[a-z0-9_]+`, unique, must not shadow the bare wave digits 0–7 nor the
   `w<digits>` spelling that names a wavetable slot.
 - `env`: attack frames (vol ramps 0→row vol), decay frames (then decays
   toward sustain), sustain level 0–7 held until the row/note changes.
   Default: flat at row volume.
 - `vib`: depth in cents (1–100), rate as an integer LFO period divisor
   (1–16, higher = faster), delay frames before onset. Triangle LFO on pitch.
+- `trem`: vibrato's amplitude twin — depth in sixteenths (1–15), the **same**
+  rate units as `vib` (1–16), optional delay frames. Triangle LFO on level.
+  Full section below.
 - `sweep`: signed semitone offset traversed over N frames from note-on
   (drum sweeps: `sweep=-12,6` = kick).
 - Sfx rows may name an instrument in place of the wave digit
   (`A4 lead 5`); a bare digit means "flat instrument with that wave"
-  (today's behavior, still valid — old carts unchanged). Bare digits stop at
-  **5**: waveform 6 is FM and a digit cannot carry its parameters, so a row
-  that says `6` is a parse error naming the `fm=` syntax.
+  (today's behavior, still valid — old carts unchanged). Bare digits cover
+  **0–5 and 7**, the self-contained waveforms: waveform 6 is FM and a digit
+  cannot carry its parameters, so a row that says `6` is a parse error naming
+  the `fm=` syntax, while `A6 7 6` is a complete periodic-noise row.
 - Percussion is just instruments: `inst kick wave=3 sweep=-14,5 env=0,6,0`,
   triggered by an ordinary note row giving the sweep's start pitch.
 
@@ -723,7 +728,7 @@ in the strongest sense: no cart written before this can produce a waveform id
 above 5, so a cart with no `wavetable` line renders bit-identical samples.
 
 - **Slots and ids.** `w0`–`w7`. Internally a wavetable is just another waveform
-  id, `8 + slot` (id 6 is the 2-op FM oscillator and id 7 stays reserved), so
+  id, `8 + slot` (id 6 is the 2-op FM oscillator, id 7 periodic noise), so
   `ChannelInfo::wave` and `audio_state` report 8–15 for a wavetable voice.
 - **Nibbles.** Exactly 32 hex digits, most significant sample first. They may be
   written as one run or split into whitespace-separated groups
@@ -839,10 +844,125 @@ of one statement: neither is legal alone.
   without `fm=`, `fm=` on any other wave, a ratio off the 0.5 grid or outside
   0.5–15, an index or decay above 15, and a **bare `6` in a sfx row's wave
   column** (a digit carries no parameters, so the row has to name an
-  instrument). Waveform id 7 remains reserved and is still rejected.
+  instrument). `fm=` on `wave=7` is rejected too: periodic noise has no
+  operators to modulate.
 - **Off by default in the strongest sense**: no cart written before this can
   produce waveform id 6, because the only route to it is an `inst … wave=6
   fm=…` line that did not parse. Every existing audio golden is untouched.
+
+### Periodic noise (phase 1.95, wave 7)
+
+```
+inst <name> wave=7 ...    # in __instruments__, like any other wave source
+A5 7 6                    # …or straight from a sfx row: a bare digit, like 0-5
+```
+
+The PSG's **other** noise mode, and the last of the Genesis/SNES chain. Wave 5
+runs the console's 16-bit shift register with XOR feedback and gets white noise;
+wave 7 runs the *same* register with **rotate-only feedback** (bit 0 straight
+back into bit 15), so a register holding one set bit simply circulates it. The
+output is therefore not noise at all but a fixed, repeating pattern — the buzzy
+metallic hum every SMS/Mega Drive engine drone, robot voice and low tom is
+made of.
+
+- **The sequence, exactly.** The register starts at `0x0001` and rotates right
+  once per clock. The output bit is bit 0, mapped `1 → +1.0`, `0 → −1.0`:
+
+  ```
+  1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0   ← one period, then it repeats forever
+  ```
+
+  i.e. a **pulse train of period 16 clocks with a 1/16 duty cycle**. There is
+  no maximal-length sequence and no absorbing zero state to avoid; the register
+  is a ring.
+- **Why 16 and not 15.** The standalone SN76489 (BBC Micro, ColecoVision) has a
+  15-bit register and a 15-step pattern. The PSG integrated into the Master
+  System / Game Gear / Mega Drive VDP — the chip this console's noise already
+  models — widened it to **16**, which is also the width of this console's own
+  white-noise LFSR. Picking 16 makes the two modes one piece of machinery under
+  two feedback rules, and makes the pitch offset below an exact power of two.
+- **Pitch: the note over 16, i.e. exactly four octaves down.** The register is
+  clocked from the channel's phase accumulator, exactly as wave 5 is, so a note
+  whose accumulator wraps at `f` Hz produces a pulse train at `f/16`.
+  `12·log₂(16) = 48` semitones **exactly** — so to hear a pitch, write it
+  **48 semitones (4 octaves) higher**: `A5` sounds `A1`, `C6` sounds `C2`.
+  (A 15-step chip would want `12·log₂(15) = 46.883` semitones, leaving every
+  drone 11.7 cents sharp of whichever integer you rounded to. This is the
+  practical reason the choice matters.)
+- **Range.** The note table stops at `B7`, so the highest reachable pitch is
+  `B7/16 = B3` (246.94 Hz) and the useful register is `C0`–`B3`. That is the
+  bass/tom/drone register, which is what the mode was always for.
+- **Seed-independent, by construction.** The pattern is a rotating bit, not a
+  pseudo-random stream: it never reads the noise seed, so `Console::new(cart,
+  seed)` renders the identical stream for every seed. (Wave 5 is deterministic
+  too — its LFSR has one fixed seed — but wave 7 has no seed to read at all.)
+- **Per-channel register.** White noise shares one LFSR across the mixer, which
+  decorrelates simultaneous hats for free. Periodic noise cannot: it is a
+  *pitched* source, and two drones clocking one register would each hear the
+  other's clock. Each channel therefore owns its own register, and two wave-7
+  voices sum **exactly linearly**. Like phase, it is continuous across notes and
+  never reset.
+- **DC offset.** Fifteen samples at −1 to one at +1 averages **−13/16**. This is
+  the same idiom as waveform 0 (pulse 12.5%, mean −3/4), one step further:
+  authored, not a bug, but do not stack six wave-7 voices.
+- **Composes with everything.** Periodic noise is a wave *source*, so `env`,
+  `vib`, `trem`, `sweep`, `duck`, `echo=` and the whole fx column apply
+  unchanged — a `sweep=` on a wave-7 row is the classic falling metallic tom.
+  `fm=` is the one exception: it is rejected, because there is nothing to
+  modulate.
+- **Off by default in the strongest sense**: `wave=7` and a bare `7` were both
+  parse errors before this, so no existing cart can produce waveform id 7 and
+  every existing audio golden is untouched.
+
+### Tremolo (phase 1.95)
+
+```
+inst <name> ... [trem=<depth 1-15>,<rate 1-16>[,<delay 0-255>]]
+```
+
+Vibrato's amplitude twin, deliberately spelled the same way and clocked from
+the same integer triangle LFO (64 phase units a cycle, `rate`
+units per frame, so one cycle is `64/rate` frames). Where `vib` multiplies the
+frequency, `trem` multiplies the level:
+
+```
+gain(frame) = 1 − (depth/16) · (1 − triangle(phase + 16)) / 2
+```
+
+- **Depth is in sixteenths and only ever attenuates.** The gain runs between
+  `1.0` at the LFO's peak and `1 − depth/16` at its trough, so the authored
+  volume is the *ceiling*: a tremolo can never push a mix into the clamp, and
+  no headroom has to be reserved for it. `depth=15` dips to 1/16 of level;
+  `depth=0` would be a no-op and is a parse error (omit `trem=` instead),
+  exactly as `vib=0,…` is.
+- **Exact arithmetic.** The triangle returns sixteenths, so `(1 − tri)/2` is a
+  multiple of 1/32 and the whole product is `depth·k/512` — dyadic, hence
+  bit-exact in f32 on every target. Peaks land on exactly `1.0` and troughs on
+  exactly `1 − depth/16`.
+- **Quarter-cycle phase offset.** Vibrato's triangle starts at its zero
+  crossing (no pitch offset on frame 0); tremolo's is read a quarter cycle
+  ahead so it starts at its *peak* (no attenuation on frame 0, and on every
+  frame of the optional `delay`). A voice therefore fades into its wobble
+  instead of stepping into it — without the offset, the frame the LFO switches
+  on would jump the gain by `depth/32` and click.
+- **`delay` is optional** (`trem=6,8` means `trem=6,8,0`), the one place the
+  spelling differs from `vib=`. Like vibrato's, a delay at least as long as the
+  row means the tremolo never speaks.
+- **Order in the signal path**: the gain multiplies the channel amplitude
+  **after** `env`, the fx column's `fade` and the click-guard ramp, and
+  **before** the sidechain duck and the echo send — so `env` and `fade` pick
+  the discrete 0–7 level and tremolo scales the continuous amplitude that level
+  resolved to (quantising a `depth/16` dip onto seven steps would turn a 6%
+  wobble into either nothing or a whole level), and a tremolo'd voice sends a
+  tremolo'd signal to the delay line.
+- **Every wave source.** Tremolo is a property of the level, not of the
+  oscillator, so it applies unchanged to the builtins, both noise modes, FM and
+  wavetables. It is instrument-only: there is no `trem` in the effect column.
+- **Resolution is the frame**, like every other modulator here: the gain is
+  recomputed once per frame and held flat across that frame's 735 samples.
+- **Off by default in the strongest sense**: a voice without `trem=` multiplies
+  by exactly `1.0`, and `x · 1.0 == x` to the bit in IEEE-754, so not one
+  sample of one existing golden moves.
 
 ### Master bus & sidechain ducking (phase 1.5)
 
@@ -954,10 +1074,13 @@ waveform, vibrato off/on comparison, arpeggio chord, slides, a drum kit
 pattern, the two-pulse echo trick, one full 4-channel groove, a clean/driven
 A/B of the master bus, a sparse melody through the echo bus, a wavetable
 audition (a hollow lead and a gritty one over a held organ pad, three
-32-nibble tables) and a 2-op FM audition (an Am–F–C–G phrase with an FM bass,
-an electric piano and a bell, one classic patch per channel) — A plays the
-selection, B stops. This is the vehicle for tuning instrument defaults
-by ear; agents render entries to WAV via the harness for the same purpose.
+32-nibble tables), a 2-op FM audition (an Am–F–C–G phrase with an FM bass,
+an electric piano and a bell, one classic patch per channel) and a PSG
+noise + tremolo audition (a wave-7 bassline and swept tom written four octaves
+up, white-noise hats alongside them so both noise modes sound at once, and a
+`trem=8,4` organ pad behind) — A plays the selection, B stops. This is the
+vehicle for tuning instrument defaults by ear; agents render entries to WAV via
+the harness for the same purpose.
 
 `master` and `echo` are both cart-global, so the two entries that demonstrate
 them drive the Lua setters and every other entry explicitly resets them

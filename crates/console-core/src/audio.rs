@@ -77,7 +77,10 @@ pub const MAX_ID: u8 = 63;
 /// Maximum rows in one sfx.
 pub const MAX_SFX_ROWS: usize = 32;
 
-/// Number of waveforms (0..=5).
+/// Length of the *contiguous* run of self-contained builtin waveforms, i.e.
+/// ids 0..=5. Ids 6 ([`WAVE_FM`]) and 7 ([`WAVE_PERIODIC`]) sit above the run
+/// and 8..=15 are the wavetables, so this is "how many of the original
+/// waveforms there are", not "the highest legal id".
 pub const WAVE_COUNT: u8 = 6;
 
 /// Highest volume level.
@@ -109,7 +112,23 @@ pub const MAX_VIB_CENTS: u8 = 100;
 /// Highest vibrato rate (LFO phase units per frame).
 pub const MAX_VIB_RATE: u8 = 16;
 
-/// Waveform id of the LFSR noise generator.
+/// Highest tremolo depth: the modulated fraction of the voice's amplitude is
+/// `depth / 16`, so 15 dips the voice to 1/16 of its level at the LFO's trough
+/// and 16 would silence it (which is a gate, not a tremolo).
+pub const MAX_TREM_DEPTH: u8 = 15;
+
+/// Highest tremolo rate. The same units as [`MAX_VIB_RATE`] — LFO phase units
+/// per frame out of [`LFO_STEPS`] — because it is the same LFO.
+pub const MAX_TREM_RATE: u8 = MAX_VIB_RATE;
+
+/// Quarter of an LFO cycle. Vibrato's triangle starts at its **zero crossing**
+/// (no pitch offset on the first frame); tremolo's has to start at its **peak**
+/// (no attenuation on the first frame), and a quarter cycle is exactly the
+/// distance between the two. Without it a `delay=`d tremolo would step from
+/// unity to half its depth on the frame the LFO switches on, which is a click.
+const TREM_QUARTER: u32 = LFO_STEPS / 4;
+
+/// Waveform id of the white-noise LFSR generator.
 const WAVE_NOISE: u8 = 5;
 
 /// Waveform id of the **2-op FM oscillator** (`wave=6`): one modulator phase-
@@ -118,9 +137,72 @@ const WAVE_NOISE: u8 = 5;
 /// It sits outside [`WAVE_COUNT`] on purpose. 0..=5 are *self-contained*
 /// waveforms — a bare digit in a sfx row says everything there is to say about
 /// them — whereas FM is meaningless without a ratio and an index, so it is
-/// reachable only through an instrument that carries an [`Fm`]. Id 7 stays
-/// reserved (periodic noise is the obvious next tenant).
+/// reachable only through an instrument that carries an [`Fm`]. Id 7 is
+/// [`WAVE_PERIODIC`], which *is* self-contained and so does take a bare digit.
 pub const WAVE_FM: u8 = 6;
+
+/// Waveform id of **periodic noise** (`wave=7`): the PSG's other noise mode.
+///
+/// The SMS / Mega Drive PSG runs its noise generator's shift register in one of
+/// two feedback configurations. The white-noise one XORs two taps back in
+/// (that is [`WAVE_NOISE`], id 5). The *periodic* one feeds bit 0 straight back
+/// into the top — a pure **rotate** — so a register holding a single set bit
+/// simply circulates it, and the output is a fixed
+/// `1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0` pattern that repeats every
+/// [`PERIODIC_PERIOD`] clocks. Not noise at all: a 1/16-duty pulse train, which
+/// is why the mode sounds like a buzzy metallic hum rather than hiss.
+///
+/// Three consequences, all of which the cart author can hear:
+///
+/// - **It is tonal, and it is [`PERIODIC_TRANSPOSE_SEMIS`] semitones flat.**
+///   The register is clocked from the channel's own phase accumulator, exactly
+///   like white noise, so a note that wraps the accumulator at `f` Hz produces
+///   a pulse train at `f / 16` — precisely **four octaves** below the written
+///   note. See [`PERIODIC_TRANSPOSE_SEMIS`].
+/// - **It is seed-independent.** The pattern is a rotating single bit, not a
+///   maximal-length sequence, so it does not read [`LFSR_SEED`] and does not
+///   share the white-noise register: it is per-channel state
+///   ([`Channel::psg`]) starting from [`PERIODIC_SEED`] on every console.
+/// - **It carries DC**, like the narrow pulse it is: fifteen samples at −1 to
+///   one at +1 averages −13/16. Waveform 0 (pulse 12.5%) already averages −3/4,
+///   so this is the house's own idiom taken one step further, not a new
+///   problem — but do not stack six of them.
+pub const WAVE_PERIODIC: u8 = 7;
+
+/// Clocks in one full cycle of [`WAVE_PERIODIC`]: the width of the rotating
+/// register, so the output is a pulse train at `1 / 16` of the clock rate with
+/// a `1 / 16` duty cycle.
+///
+/// *Why 16 and not 15.* The standalone SN76489 (BBC Micro, ColecoVision) has a
+/// **15**-bit register and therefore a 15-step periodic pattern; the PSG
+/// integrated into the Master System / Game Gear / Mega Drive VDP — the chip
+/// this console's noise is modelled on — widened it to **16** bits. 16 is also
+/// the width of this console's own white-noise register ([`lfsr_next`]), so the
+/// two modes really are one piece of machinery under two feedback rules, and it
+/// makes the pitch offset an exact whole number of octaves instead of the
+/// 46.883-semitone irrational the 15-bit chip implies.
+pub const PERIODIC_PERIOD: u32 = 16;
+
+/// Initial (and only) state of a channel's periodic-noise register: exactly one
+/// set bit, in the position the first clock reads out. Fixed forever, and
+/// deliberately *not* [`LFSR_SEED`] — periodic noise is a waveform, not a
+/// random stream, so its output must not depend on anything but the note.
+const PERIODIC_SEED: u16 = 1;
+
+/// Semitones to transpose a `wave=7` row **up** by to hear the pitch you meant:
+/// `12 * log2(16)` = exactly **48**, four octaves.
+///
+/// Periodic noise sounds at `note / 16`, so `C6` on the row is heard as `C2`.
+/// The exactness is the whole reason [`PERIODIC_PERIOD`] is 16: a composer
+/// transposes by octaves in their head and the console's note table makes the
+/// answer bit-exact, whereas a 15-step pattern would want 46.883 semitones and
+/// leave every drone 11.7 cents sharp of wherever it was rounded to.
+///
+/// The playable range follows directly: the top of the note table is `B7`, so
+/// the highest periodic-noise pitch is `B7 / 16` = `B3` (246.94 Hz), and the
+/// useful register is `C0`..`B3` — bass, engine drones and low toms, which is
+/// exactly what the mode was used for.
+pub const PERIODIC_TRANSPOSE_SEMIS: u8 = 48;
 
 /// Samples in one wavetable: 32 nibbles describing one single cycle.
 ///
@@ -136,10 +218,9 @@ pub const WAVETABLE_SLOTS: usize = 8;
 /// `w<slot>` parses to `WAVE_TABLE_BASE + slot`, so slots occupy ids 8..=15.
 ///
 /// The builtin waves are 0..=5, id 6 is the 2-op FM oscillator ([`WAVE_FM`])
-/// and **id 7 is deliberately left free** for the oscillator still to come
-/// (periodic noise). Nothing a pre-wavetable cart can write produces a `wave`
-/// byte above 5, which is why adding this cannot move a single sample of a cart
-/// with no `wavetable` line.
+/// and id 7 is periodic noise ([`WAVE_PERIODIC`]). Nothing a pre-wavetable cart
+/// can write produces a `wave` byte above 5, which is why adding this cannot
+/// move a single sample of a cart with no `wavetable` line.
 pub const WAVE_TABLE_BASE: u8 = 8;
 
 /// Right shift that turns a phase accumulator into a wavetable index:
@@ -1316,6 +1397,70 @@ impl Vib {
     }
 }
 
+/// `trem=<depth>,<rate>[,<delay>]`: a triangle **amplitude** LFO — vibrato's
+/// twin, and deliberately spelled the same way.
+///
+/// Where [`Vib`] multiplies the frequency, tremolo multiplies the level:
+///
+/// ```text
+/// gain(frame) = 1 - (depth / 16) * (1 - triangle(phase)) / 2
+/// ```
+///
+/// so the gain runs between `1.0` at the LFO's peak and `1 - depth/16` at its
+/// trough, and one cycle takes `64 / rate` frames exactly as vibrato's does.
+/// Three things follow from writing it that way:
+///
+/// - **Tremolo only ever attenuates.** The authored volume is the *ceiling*, so
+///   a tremolo can never push a mix into the clamp — unlike a modulation that
+///   swung symmetrically about the row level and would need 3 dB of headroom
+///   reserved on every voice that used it.
+/// - **The arithmetic is exact.** [`lfo_triangle`] returns sixteenths, so
+///   `(1 - triangle)/2` is a multiple of 1/32 and the whole product is
+///   `depth * k / 512` — dyadic, hence bit-exact in f32 on every target. The
+///   peak is exactly `1.0` and the trough exactly `1 - depth/16`.
+/// - **It starts at unity.** The LFO is read a quarter cycle ahead
+///   ([`TREM_QUARTER`]) so frame 0 — and every frame of the `delay` before it —
+///   sits at gain 1.0. The voice therefore fades *into* its wobble instead of
+///   stepping into it.
+///
+/// The gain multiplies the channel amplitude **after** the envelope, the fx
+/// column's `fade` and the click-guard ramp, and **before** the sidechain duck
+/// and the echo send — so a tremolo'd voice sends a tremolo'd signal to the
+/// delay line. It is a property of the *level*, not of the wave source, so it
+/// applies to every waveform: builtins, both noise modes, FM and wavetables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Trem {
+    /// Modulated fraction of the amplitude in sixteenths, 1..=[`MAX_TREM_DEPTH`]
+    /// — the gain dips to `1 - depth/16`. `depth = 0` is rejected at parse time
+    /// rather than accepted as a silent no-op (omit `trem=` instead), exactly as
+    /// `vib=0,...` is.
+    pub depth: u8,
+    /// LFO phase units per frame, 1..=[`MAX_TREM_RATE`]. One cycle is
+    /// [`LFO_STEPS`] units, i.e. `64 / rate` frames — the same clock vibrato
+    /// runs on, so `vib` and `trem` at the same rate stay locked together.
+    pub rate: u8,
+    /// Frames after note-on before the LFO starts, 0..=255. The gain is exactly
+    /// 1.0 throughout. Optional in the cart text (`trem=6,8` is `trem=6,8,0`),
+    /// which is the one place the spelling differs from `vib=`.
+    pub delay: u8,
+}
+
+impl Trem {
+    /// The amplitude multiplier `frame` frames after note-on: exactly `1.0`
+    /// while the delay runs and at every LFO peak, exactly `1 - depth/16` at
+    /// every trough.
+    pub fn gain_at(&self, frame: u32) -> f32 {
+        let delay = u32::from(self.delay);
+        if frame < delay {
+            return 1.0;
+        }
+        let lfo = lfo_triangle((frame - delay) * u32::from(self.rate) + TREM_QUARTER);
+        // `(1 - lfo) / 2` in [0, 1], scaled by `depth / 16`: one multiply by the
+        // exact dyadic constant 1/32 rather than two divisions.
+        1.0 - f32::from(self.depth) * (1.0 - lfo) * (1.0 / 32.0)
+    }
+}
+
 /// `sweep=<semis>,<frames>`: a pitch glide from note-on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sweep {
@@ -1462,8 +1607,8 @@ impl WaveSet {
     }
 }
 
-/// One `inst <name> wave=<0-6|w0-w7> [fm=...] [env=...] [vib=...] [sweep=...]
-/// [duck=...] [echo=<0-8>]` entry.
+/// One `inst <name> wave=<0-7|w0-w7> [fm=...] [env=...] [vib=...] [trem=...]
+/// [sweep=...] [duck=...] [echo=<0-8>]` entry.
 ///
 /// A bare wave digit on a sfx row means the *implicit flat instrument*: that
 /// waveform with no envelope, vibrato or sweep, which is exactly the PoC v1
@@ -1474,8 +1619,8 @@ pub struct Instrument {
     /// and never `w<digits>` (that spelling names a wavetable slot).
     pub name: String,
     /// Waveform: a builtin 0..=5, [`WAVE_FM`] (6) for the 2-op FM oscillator,
-    /// or [`WAVE_TABLE_BASE`]` + slot` (8..=15) when the instrument said
-    /// `wave=w<slot>`.
+    /// [`WAVE_PERIODIC`] (7) for periodic noise, or [`WAVE_TABLE_BASE`]` + slot`
+    /// (8..=15) when the instrument said `wave=w<slot>`.
     pub wave: u8,
     /// `fm=<ratio>,<index>[,<decay>]`. `Some` exactly when `wave == WAVE_FM`:
     /// the parser rejects an FM instrument without parameters and parameters
@@ -1483,6 +1628,10 @@ pub struct Instrument {
     pub fm: Option<Fm>,
     pub env: Option<Env>,
     pub vib: Option<Vib>,
+    /// `trem=<depth>,<rate>[,<delay>]`: the amplitude LFO. Independent of
+    /// [`Instrument::vib`] in every way except the clock they share, so a voice
+    /// may carry both.
+    pub trem: Option<Trem>,
     pub sweep: Option<Sweep>,
     /// Sidechain trigger: every note-on of this instrument ducks the other
     /// channels. Independent of [`Instrument::is_flat`] — ducking costs the
@@ -1506,7 +1655,7 @@ impl Instrument {
     /// ducks, only sends to the echo, or only names an FM patch still renders
     /// through the PoC v1 statements.
     pub fn is_flat(&self) -> bool {
-        self.env.is_none() && self.vib.is_none() && self.sweep.is_none()
+        self.env.is_none() && self.vib.is_none() && self.trem.is_none() && self.sweep.is_none()
     }
 }
 
@@ -1903,9 +2052,9 @@ fn is_wave_slot_token(token: &str) -> bool {
 }
 
 /// A wave *source* token on an `inst` line: a builtin digit `0`-`5`, `6` for
-/// the 2-op FM oscillator, or `w0`-`w7` for a wavetable slot. Returns the
-/// internal waveform id, which is [`WAVE_TABLE_BASE`]` + slot` for the
-/// wavetable form.
+/// the 2-op FM oscillator, `7` for periodic noise, or `w0`-`w7` for a wavetable
+/// slot. Returns the internal waveform id, which is [`WAVE_TABLE_BASE`]` + slot`
+/// for the wavetable form.
 ///
 /// Definedness is *not* checked here — the two callers differ on when they can
 /// know (an `inst` line may precede the `wavetable` line it references), so
@@ -1924,13 +2073,13 @@ fn parse_wave_source(section: &str, line: usize, what: &str, token: &str) -> Res
         return Ok(WAVE_TABLE_BASE + slot);
     }
     if is_wave_digit(token) {
-        return parse_u8_in(section, line, what, token, WAVE_FM);
+        return parse_u8_in(section, line, what, token, WAVE_PERIODIC);
     }
     Err(cart_err(
         section,
         line,
         format!(
-            "{what} must be 0-{WAVE_FM} (builtin) or w0-w{} (a wavetable), found {token:?}",
+            "{what} must be 0-{WAVE_PERIODIC} (builtin) or w0-w{} (a wavetable), found {token:?}",
             WAVETABLE_SLOTS - 1
         ),
     ))
@@ -2305,9 +2454,9 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
         return Err(cart_err(
             SEC,
             line,
-            "expected `inst <name> wave=<0-6|w0-w7> [fm=<ratio>,<index>,<decay>] \
-             [env=<a>,<d>,<s>] [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>] \
-             [duck=<depth>,<release>] [echo=<0-8>]`",
+            "expected `inst <name> wave=<0-7|w0-w7> [fm=<ratio>,<index>,<decay>] \
+             [env=<a>,<d>,<s>] [vib=<cents>,<rate>,<delay>] [trem=<depth>,<rate>[,<delay>]] \
+             [sweep=<semis>,<frames>] [duck=<depth>,<release>] [echo=<0-8>]`",
         ));
     }
     let name = tokens[1];
@@ -2323,7 +2472,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
             SEC,
             line,
             format!(
-                "instrument name {name:?} must not be a bare wave digit (0-5 already name the built-in waveforms)"
+                "instrument name {name:?} must not be a bare wave digit (0-5 and 7 already name the built-in waveforms)"
             ),
         ));
     }
@@ -2343,6 +2492,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
     let mut fm: Option<Fm> = None;
     let mut env: Option<Env> = None;
     let mut vib: Option<Vib> = None;
+    let mut trem: Option<Trem> = None;
     let mut sweep: Option<Sweep> = None;
     let mut duck: Option<Duck> = None;
     let mut echo = 0u8;
@@ -2354,7 +2504,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
                 line,
                 format!(
                     "unexpected {tok:?} in inst line \
-                     (want `wave=`, `fm=`, `env=`, `vib=`, `sweep=`, `duck=` or `echo=`)"
+                     (want `wave=`, `fm=`, `env=`, `vib=`, `trem=`, `sweep=`, `duck=` or `echo=`)"
                 ),
             ));
         };
@@ -2389,6 +2539,28 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
                     cents: parse_u8_range(SEC, line, "vib cents", parts[0], 1, MAX_VIB_CENTS)?,
                     rate: parse_u8_range(SEC, line, "vib rate", parts[1], 1, MAX_VIB_RATE)?,
                     delay: parse_u8_in(SEC, line, "vib delay", parts[2], u8::MAX)?,
+                });
+            }
+            // Vibrato's twin, spelled the same way, with one deliberate
+            // difference: the delay is optional. `vib=` predates the optional
+            // trailing field the `fm=` line introduced, and there is no reason
+            // to make every `trem=` carry a `,0` it does not need.
+            "trem" => {
+                let parts: Vec<&str> = value.split(',').collect();
+                if parts.len() < 2 || parts.len() > 3 {
+                    return Err(cart_err(
+                        SEC,
+                        line,
+                        format!("trem must be `trem=<depth>,<rate>[,<delay>]`, found {value:?}"),
+                    ));
+                }
+                trem = Some(Trem {
+                    depth: parse_u8_range(SEC, line, "trem depth", parts[0], 1, MAX_TREM_DEPTH)?,
+                    rate: parse_u8_range(SEC, line, "trem rate", parts[1], 1, MAX_TREM_RATE)?,
+                    delay: match parts.get(2) {
+                        Some(t) => parse_u8_in(SEC, line, "trem delay", t, u8::MAX)?,
+                        None => 0,
+                    },
                 });
             }
             "sweep" => {
@@ -2426,7 +2598,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
                     line,
                     format!(
                         "unknown inst key {other:?} \
-                         (want `wave`, `fm`, `env`, `vib`, `sweep`, `duck` or `echo`)"
+                         (want `wave`, `fm`, `env`, `vib`, `trem`, `sweep`, `duck` or `echo`)"
                     ),
                 ));
             }
@@ -2437,7 +2609,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
         return Err(cart_err(
             SEC,
             line,
-            format!("instrument {name} is missing `wave=<0-6>` (or `wave=w<slot>`)"),
+            format!("instrument {name} is missing `wave=<0-7>` (or `wave=w<slot>`)"),
         ));
     };
     // `wave=6` and `fm=` are two halves of one statement: neither is meaningful
@@ -2470,6 +2642,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
         fm,
         env,
         vib,
+        trem,
         sweep,
         duck,
         echo,
@@ -2635,10 +2808,11 @@ fn parse_sfx_section(
         // instrument name. Both bare forms mean "the implicit flat instrument
         // on that waveform": no envelope, no vibrato, no echo send.
         let (wave, inst_index, inst) = if is_wave_digit(tokens[1]) {
-            // A bare digit is the *self-contained* form, so it stops at 5:
-            // wave 6 is FM and a digit carries no ratio or index. Saying so is
-            // worth a bespoke message, because "wave must be 0-5" would read
-            // like FM does not exist.
+            // A bare digit is the *self-contained* form. 0-5 and 7 qualify -
+            // periodic noise needs no parameters, so `A6 7 6` is a complete
+            // statement - but 6 is FM and a digit carries no ratio or index.
+            // Saying so is worth a bespoke message, because a plain range error
+            // would read like FM does not exist.
             if tokens[1].parse::<u64>().ok() == Some(u64::from(WAVE_FM)) {
                 return Err(cart_err(
                     SEC,
@@ -2651,7 +2825,7 @@ fn parse_sfx_section(
                 ));
             }
             (
-                parse_u8_in(SEC, line, "wave", tokens[1], WAVE_COUNT - 1)?,
+                parse_u8_in(SEC, line, "wave", tokens[1], WAVE_PERIODIC)?,
                 None,
                 None,
             )
@@ -2698,11 +2872,12 @@ fn parse_sfx_section(
 /// "this cart defines no instruments" / "defined: a, b, c".
 fn instrument_hint(instruments: &[Instrument]) -> String {
     if instruments.is_empty() {
-        "this cart has no __instruments__ section; column 2 must be a wave digit 0-5".to_string()
+        "this cart has no __instruments__ section; column 2 must be a wave digit 0-5 or 7"
+            .to_string()
     } else {
         let names: Vec<&str> = instruments.iter().map(|i| i.name.as_str()).collect();
         format!(
-            "want a wave digit 0-5, a wavetable w0-w{}, or one of: {}",
+            "want a wave digit 0-5 or 7, a wavetable w0-w{}, or one of: {}",
             WAVETABLE_SLOTS - 1,
             names.join(", ")
         )
@@ -3033,6 +3208,7 @@ struct Modulation {
     frame: u32,
     env: Option<Env>,
     vib: Option<Vib>,
+    trem: Option<Trem>,
     sweep: Option<Sweep>,
     fx: Option<Fx>,
 }
@@ -3118,6 +3294,21 @@ impl Modulation {
         }
         level.clamp(0, i32::from(MAX_VOL)) as u8
     }
+
+    /// This frame's tremolo gain, or exactly `1.0` when the row has none.
+    ///
+    /// Deliberately *not* folded into [`Modulation::level`]: that one returns a
+    /// discrete 0..=7 volume step, and quantising a `depth/16` dip onto seven
+    /// steps would turn a 6% wobble into either nothing or a whole level. The
+    /// gain is applied to the channel's continuous amplitude instead, which is
+    /// what fixes the composition order — envelope and `fade` pick the level,
+    /// tremolo scales whatever amplitude that level resolved to.
+    fn trem_gain(&self) -> f32 {
+        match self.trem {
+            Some(t) => t.gain_at(self.frame),
+            None => 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3157,6 +3348,27 @@ struct Channel {
     /// The **live** modulation index: [`Fm::index`] at note-on, then multiplied
     /// by [`FM_DECAY_MUL`] once per frame.
     fm_index: f32,
+    /// This frame's tremolo gain, `(0, 1]`. Exactly `1.0` for every voice with
+    /// no `trem=`, and `x * 1.0 == x` to the bit in IEEE-754, so the multiply
+    /// costs the existing corpus nothing — not one sample of one golden moves.
+    ///
+    /// Recomputed once per frame from [`Modulation::trem_gain`] and held flat
+    /// across the frame's 735 samples, exactly as the volume level is: the LFO's
+    /// resolution is the frame, like every other modulator on this console.
+    trem: f32,
+    /// The periodic-noise register ([`WAVE_PERIODIC`]): one set bit rotating
+    /// right, clocked by the phase accumulator's wrap.
+    ///
+    /// **Per channel**, unlike the white-noise LFSR, which is one register
+    /// shared by the whole mixer. The shared register is right for white noise —
+    /// it decorrelates simultaneous hats for free and it is frozen for
+    /// back-compat anyway — but periodic noise is a *pitched* source, and two
+    /// drones clocking one register would each hear the other's clock and
+    /// neither would land on its own pitch.
+    ///
+    /// Continuous across notes like [`Channel::phase`] and never reset: there is
+    /// nothing to reset it to but the state it is already cycling through.
+    psg: u16,
 }
 
 impl Channel {
@@ -3175,6 +3387,8 @@ impl Channel {
             fm: None,
             mod_phase: 0,
             fm_index: 0.0,
+            trem: 1.0,
+            psg: PERIODIC_SEED,
         }
     }
 
@@ -3254,6 +3468,10 @@ impl Channel {
         self.echo_send = 0;
         self.fm = None;
         self.fm_index = 0.0;
+        // Back to unity so the release ramp is a clean fade rather than a fade
+        // frozen at whatever point of the LFO the channel was stopped at. `psg`
+        // is *not* reset: it is phase, and phase is continuous here.
+        self.trem = 1.0;
     }
 
     fn next_sample(&mut self, lfsr: &mut u16, waves: &WaveSet) -> f32 {
@@ -3289,8 +3507,17 @@ impl Channel {
 
         let prev = self.phase;
         self.phase = self.phase.wrapping_add(self.inc);
-        if self.wave == WAVE_NOISE && self.phase < prev {
-            *lfsr = lfsr_next(*lfsr);
+        // One clock of whichever noise register this voice is running, on the
+        // phase accumulator's wrap — so both modes are "clocked from the note",
+        // which is what makes noise pitched on this console.
+        if self.phase < prev {
+            match self.wave {
+                WAVE_NOISE => *lfsr = lfsr_next(*lfsr),
+                // Rotate-only feedback: the single set bit walks the register
+                // and comes back round every `PERIODIC_PERIOD` clocks.
+                WAVE_PERIODIC => self.psg = self.psg.rotate_right(1),
+                _ => {}
+            }
         }
         // 2-op FM: run the modulator off the *same* increment, scaled by the
         // ratio, and hand the carrier a displaced phase. Because the modulator
@@ -3307,7 +3534,9 @@ impl Channel {
             }
             _ => self.phase,
         };
-        self.amp * wave_value(self.wave, carrier_phase, *lfsr, waves)
+        // Envelope-and-ramp amplitude first, then the tremolo gain: the level
+        // is what the row asked for, the gain is what the LFO is doing to it.
+        self.amp * self.trem * wave_value(self.wave, carrier_phase, *lfsr, self.psg, waves)
     }
 }
 
@@ -3328,7 +3557,9 @@ fn phase_unit(phase: u32) -> f32 {
 ///
 /// Waves 0..=5 are the builtin shapes, unchanged since PoC v1. [`WAVE_FM`] is
 /// the FM carrier, a plain sine of the (already modulated) phase it is handed.
-/// Anything at or above [`WAVE_TABLE_BASE`] is a wavetable slot: the top 5 bits
+/// [`WAVE_PERIODIC`] reads the caller's rotating register the same way the noise
+/// wave reads the LFSR. Anything at or above [`WAVE_TABLE_BASE`] is a wavetable
+/// slot: the top 5 bits
 /// of the phase accumulator index the 32 precomputed amplitudes **with no
 /// interpolation**.
 ///
@@ -3341,7 +3572,7 @@ fn phase_unit(phase: u32) -> f32 {
 /// builtin ones. Linear interpolation would be perfectly deterministic (it is
 /// rational arithmetic on values from a const table), so the door is open for a
 /// future per-instrument `interp=` flag — but the default must be crunchy.
-fn wave_value(wave: u8, phase: u32, lfsr: u16, waves: &WaveSet) -> f32 {
+fn wave_value(wave: u8, phase: u32, lfsr: u16, psg: u16, waves: &WaveSet) -> f32 {
     match wave {
         // pulse 12.5%
         0 => {
@@ -3391,9 +3622,17 @@ fn wave_value(wave: u8, phase: u32, lfsr: u16, waves: &WaveSet) -> f32 {
         // carrier's own sine - which is exactly why `index=0` is a pure sine
         // and why every FM voice is one table lookup wide at this level.
         WAVE_FM => sine_at(phase),
+        // Periodic noise: read the rotating register's bit 0. Fifteen clocks at
+        // -1 and one at +1, so the "noise" is a 1/16-duty pulse train an octave
+        // stack below the note - see `WAVE_PERIODIC`.
+        WAVE_PERIODIC => {
+            if psg & 1 != 0 {
+                1.0
+            } else {
+                -1.0
+            }
+        }
         // wavetable slot: `phase >> 27` is 0..=31, so the index is total.
-        // (Id 7 is unreachable - no cart syntax produces it - and wraps
-        // harmlessly onto slot 7 rather than panicking.)
         w => {
             let slot = usize::from(w.wrapping_sub(WAVE_TABLE_BASE)) % WAVETABLE_SLOTS;
             waves.0[slot][(phase >> WAVETABLE_SHIFT) as usize]
@@ -3418,8 +3657,9 @@ pub struct ChannelInfo {
     pub sfx: Option<u8>,
     /// Row index within that sfx.
     pub row: u16,
-    /// Current waveform: 0..=5 for the builtins, or 8 + slot (8..=15) for a
-    /// wavetable voice, matching [`Instrument::wave`].
+    /// Current waveform: 0..=5 for the builtins, 6 for FM, 7 for periodic
+    /// noise, or 8 + slot (8..=15) for a wavetable voice, matching
+    /// [`Instrument::wave`].
     pub wave: u8,
     /// Current target volume 0..=7.
     pub vol: u8,
@@ -3997,6 +4237,7 @@ fn apply_row(
     match sfx.rows[row] {
         SfxRow::Rest => {
             c.md = None;
+            c.trem = 1.0;
             c.set_vol(0);
         }
         SfxRow::Note { note, wave, vol } => {
@@ -4016,8 +4257,10 @@ fn apply_row(
             c.set_fm(named.and_then(|i| i.fm));
             let inst = named.filter(|i| !i.is_flat());
             if inst.is_none() && m.fx.is_none() {
-                // PoC v1 path, bit-for-bit: no per-frame work at all.
+                // PoC v1 path, bit-for-bit: no per-frame work at all. (A voice
+                // with no `trem=` sits at gain 1.0, which is the identity.)
                 c.md = None;
+                c.trem = 1.0;
                 c.set_voice(note_increment(note), wave, vol);
                 return;
             }
@@ -4028,10 +4271,12 @@ fn apply_row(
                 frame: 0,
                 env: inst.and_then(|i| i.env),
                 vib: inst.and_then(|i| i.vib),
+                trem: inst.and_then(|i| i.trem),
                 sweep: inst.and_then(|i| i.sweep),
                 fx: m.fx,
             };
             c.set_voice(inc_from_hz(md.freq()), wave, md.level());
+            c.trem = md.trem_gain();
             c.md = Some(md);
         }
     }
@@ -4044,6 +4289,7 @@ fn tick_modulation(c: &mut Channel) {
     c.md = Some(md);
     c.set_inc(inc_from_hz(md.freq()));
     c.set_vol(md.level());
+    c.trem = md.trem_gain();
 }
 
 #[cfg(test)]
@@ -4086,6 +4332,192 @@ mod tests {
         }
         // Roughly balanced output bits.
         assert!((3000..7000).contains(&zeros), "biased noise: {zeros}");
+    }
+
+    // ---- periodic noise (wave 7) -------------------------------------------
+
+    /// The register's output bit over `clocks` clocks, starting from the seed:
+    /// exactly what a channel running [`WAVE_PERIODIC`] emits, one entry per
+    /// phase wrap.
+    fn periodic_bits(clocks: usize) -> Vec<u8> {
+        let mut psg = PERIODIC_SEED;
+        let mut out = Vec::with_capacity(clocks);
+        for _ in 0..clocks {
+            out.push((psg & 1) as u8);
+            psg = psg.rotate_right(1);
+        }
+        out
+    }
+
+    #[test]
+    fn periodic_noise_is_a_single_bit_rotating_through_sixteen_places() {
+        // Two full periods, spelled out. This is the whole waveform: one clock
+        // high, fifteen low, forever. If this array ever needs editing the
+        // console has a new instrument, not a bug fix.
+        let want: Vec<u8> = vec![
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // period 1
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // period 2
+        ];
+        assert_eq!(periodic_bits(2 * PERIODIC_PERIOD as usize), want);
+
+        // ...and it is a rotation, so the register never dies (unlike an LFSR,
+        // whose all-zero state is absorbing) and never drifts off its period.
+        let bits = periodic_bits(1024);
+        for (i, b) in bits.iter().enumerate() {
+            assert_eq!(
+                *b,
+                u8::from(i % PERIODIC_PERIOD as usize == 0),
+                "clock {i} is off the 1/16 grid"
+            );
+        }
+        assert_eq!(
+            bits.iter().filter(|b| **b == 1).count(),
+            1024 / PERIODIC_PERIOD as usize,
+            "duty must be exactly 1/16"
+        );
+    }
+
+    #[test]
+    fn periodic_noise_does_not_read_the_noise_seed() {
+        // Wave 5's stream is a function of LFSR_SEED; wave 7's is not a
+        // function of anything but the clock count, which is why the mode is
+        // reproducible across consoles, saves and replays without seeding.
+        let waves = WaveSet::new(&[None; WAVETABLE_SLOTS]);
+        for lfsr in [0u16, 1, LFSR_SEED, 0xffff, 0x5eed] {
+            assert_eq!(wave_value(WAVE_PERIODIC, 0, lfsr, 1, &waves), 1.0);
+            assert_eq!(wave_value(WAVE_PERIODIC, 0, lfsr, 0x8000, &waves), -1.0);
+        }
+        // The register is also independent of phase: only the wrap count moves
+        // it, so the same state reads the same at every phase.
+        for step in 0..64u32 {
+            let phase = step.wrapping_mul(0x0400_0000);
+            assert_eq!(wave_value(WAVE_PERIODIC, phase, 0, 1, &waves), 1.0);
+            assert_eq!(wave_value(WAVE_PERIODIC, phase, 0, 2, &waves), -1.0);
+        }
+    }
+
+    #[test]
+    fn periodic_noise_sounds_four_octaves_below_the_note() {
+        // The register is clocked once per phase wrap and repeats every
+        // PERIODIC_PERIOD clocks, so the audible fundamental is the note over
+        // 16 - and 16 is 2^4, which makes the compensation exactly four
+        // octaves rather than the 46.883 semitones a 15-step chip would want.
+        assert_eq!(PERIODIC_PERIOD, 16);
+        assert_eq!(PERIODIC_TRANSPOSE_SEMIS % 12, 0);
+        assert_eq!(1u32 << (PERIODIC_TRANSPOSE_SEMIS / 12), PERIODIC_PERIOD);
+
+        // Measured against the note table: writing a note 48 semitones up puts
+        // the perceived pitch back on the note you meant, to the exactness of
+        // equal temperament itself.
+        for note in 0..96 - PERIODIC_TRANSPOSE_SEMIS {
+            let heard =
+                NOTE_FREQ[usize::from(note + PERIODIC_TRANSPOSE_SEMIS)] / PERIODIC_PERIOD as f32;
+            let want = NOTE_FREQ[usize::from(note)];
+            assert!(
+                (heard - want).abs() <= want * 1.0e-6,
+                "note {note}: heard {heard}, wanted {want}"
+            );
+        }
+        // Which fixes the register: B7 is the top of the table, so B3 is the
+        // highest pitch periodic noise can reach.
+        assert_eq!(95 - u32::from(PERIODIC_TRANSPOSE_SEMIS), 47); // B7 -> B3
+    }
+
+    // ---- tremolo -----------------------------------------------------------
+
+    #[test]
+    fn tremolo_gain_is_exact_at_the_peak_and_the_trough() {
+        for depth in 1..=MAX_TREM_DEPTH {
+            let t = Trem {
+                depth,
+                rate: 4,
+                delay: 0,
+            };
+            let period = LFO_STEPS / 4; // 16 frames
+            // Peak = the authored level, untouched. Tremolo only attenuates.
+            assert_eq!(t.gain_at(0), 1.0, "depth {depth} must start at unity");
+            assert_eq!(t.gain_at(period), 1.0);
+            // Trough = 1 - depth/16, exactly (a dyadic rational in f32).
+            let trough = 1.0 - f32::from(depth) / 16.0;
+            assert_eq!(t.gain_at(period / 2), trough, "depth {depth} trough");
+            // Halfway down the ramp is exactly halfway in gain, because the
+            // shape is a triangle and the arithmetic is exact.
+            assert_eq!(t.gain_at(period / 4), 1.0 - f32::from(depth) / 32.0);
+            assert_eq!(t.gain_at(period * 3 / 4), 1.0 - f32::from(depth) / 32.0);
+            // Never silent, never boosting.
+            for f in 0..200u32 {
+                let g = t.gain_at(f);
+                assert!(g > 0.0 && g <= 1.0, "depth {depth} frame {f}: {g}");
+                assert!(g >= trough);
+            }
+        }
+        // Depth 15 is the deepest the parser allows: down to 1/16 of level.
+        let deep = Trem {
+            depth: MAX_TREM_DEPTH,
+            rate: 8,
+            delay: 0,
+        };
+        assert_eq!(deep.gain_at(4), 1.0 / 16.0);
+    }
+
+    #[test]
+    fn tremolo_period_is_exactly_64_over_rate_frames() {
+        // Same clock as vibrato, deliberately: `vib=20,8,0` and `trem=6,8,0`
+        // on one instrument wobble in lockstep.
+        for rate in 1..=MAX_TREM_RATE {
+            let t = Trem {
+                depth: 8,
+                rate,
+                delay: 0,
+            };
+            for f in 0..200u32 {
+                assert_eq!(t.gain_at(f), t.gain_at(f + LFO_STEPS));
+            }
+            if LFO_STEPS % u32::from(rate) == 0 {
+                let period = LFO_STEPS / u32::from(rate);
+                assert_eq!(t.gain_at(0), 1.0, "rate {rate} starts at unity");
+                assert_eq!(t.gain_at(period / 2), 0.5, "rate {rate} trough");
+                for f in 0..64u32 {
+                    assert_eq!(t.gain_at(f), t.gain_at(f + period));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tremolo_delay_holds_unity_and_then_starts_without_a_step() {
+        let t = Trem {
+            depth: 12,
+            rate: 4,
+            delay: 10,
+        };
+        for f in 0..10 {
+            assert_eq!(t.gain_at(f), 1.0, "frame {f} is inside the delay");
+        }
+        // The frame the LFO switches on is *also* unity - that is what the
+        // quarter-cycle offset buys. A vib-style zero-crossing start would
+        // jump straight to 1 - depth/32 here and click.
+        assert_eq!(t.gain_at(10), 1.0);
+        assert_eq!(t.gain_at(18), 1.0 - 12.0 / 16.0); // half a cycle later
+        assert_eq!(t.gain_at(26), 1.0);
+    }
+
+    #[test]
+    fn a_row_without_tremolo_has_a_gain_of_exactly_one() {
+        // The back-compat argument in one assertion: every pre-trem voice
+        // multiplies by 1.0, and `x * 1.0 == x` to the bit.
+        let mut m = md(5, 8);
+        for f in 0..40 {
+            m.frame = f;
+            assert_eq!(m.trem_gain().to_bits(), 1.0f32.to_bits());
+        }
+        m.trem = Some(Trem {
+            depth: 4,
+            rate: 8,
+            delay: 0,
+        });
+        m.frame = 4;
+        assert_eq!(m.trem_gain(), 1.0 - 4.0 / 16.0);
     }
 
     /// Every slot filled with a full-scale ramp, for the oscillator tests.
@@ -4206,10 +4638,13 @@ mod tests {
     #[test]
     fn waveforms_stay_in_range() {
         let waves = ramp_waves();
-        for wave in (0..WAVE_COUNT).chain(WAVE_TABLE_BASE..WAVE_TABLE_BASE + 8) {
+        for wave in (0..WAVE_COUNT)
+            .chain([WAVE_FM, WAVE_PERIODIC])
+            .chain(WAVE_TABLE_BASE..WAVE_TABLE_BASE + 8)
+        {
             for step in 0..512u32 {
                 let phase = step.wrapping_mul(0x0080_0000);
-                let v = wave_value(wave, phase, 0xACE1, &waves);
+                let v = wave_value(wave, phase, 0xACE1, 0x8000, &waves);
                 assert!((-1.0..=1.0).contains(&v), "wave {wave} produced {v}");
             }
         }
@@ -4218,8 +4653,8 @@ mod tests {
     #[test]
     fn triangle_is_continuous_at_the_peak() {
         let waves = WaveSet::new(&[None; WAVETABLE_SLOTS]);
-        let a = wave_value(3, 0x7fff_ff00, 0, &waves);
-        let b = wave_value(3, 0x8000_0000, 0, &waves);
+        let a = wave_value(3, 0x7fff_ff00, 0, 0, &waves);
+        let b = wave_value(3, 0x8000_0000, 0, 0, &waves);
         assert!((a - b).abs() < 1e-4, "{a} vs {b}");
     }
 
@@ -4246,7 +4681,7 @@ mod tests {
             let expect = NIBBLE_LEVEL[i / 2];
             for phase in [lo, hi] {
                 assert_eq!(
-                    wave_value(WAVE_TABLE_BASE, phase, 0, &waves).to_bits(),
+                    wave_value(WAVE_TABLE_BASE, phase, 0, 0, &waves).to_bits(),
                     expect.to_bits(),
                     "sample {i} at phase {phase:#010x}"
                 );
@@ -4362,6 +4797,7 @@ mod tests {
             frame: 0,
             env: None,
             vib: None,
+            trem: None,
             sweep: None,
             fx: None,
         }

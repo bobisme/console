@@ -46,6 +46,8 @@ local entries = {
     d1 = "HOLLOW + BUZZ LEAD OVER AN",    d2 = "ORGAN PAD. 32 NIBBLES EACH." },
   { n = "FM  2-OP", p = 15,
     d1 = "BASS 1,10,13 / EPIANO 3.5,6,7", d2 = "/ BELL 7,11,2. INDEX DECAY!" },
+  { n = "PSG NOISE + TREM", p = 16,
+    d1 = "WAVE 7 BUZZ BASS+TOM, 4 OCT",  d2 = "DOWN. WAVE 5 HATS. TREM PAD." },
 }
 
 -- The A/B entry plays the groove and flips the master bus underneath it.
@@ -133,19 +135,25 @@ end
 
 -- A level meter driven by nothing fancier than the entry index: one bar per
 -- entry, the first `sel` of them lit, the lit tip blinking while something is
--- playing. 17 bars at an 8px pitch keep the last one inside the 144px screen
--- (bar 17 ends at x=140), and the tallest is 18px, so the block is 18 deep.
+-- playing.
+--
+-- Relaid out for the 18th entry, which broke the old geometry twice over: an
+-- 18th bar at the old 8px pitch ended at x=148 (off a 144px screen), and an
+-- 18th menu row pushed the highlight band down to y=160, into the meter's old
+-- home at y=155. So the bars are now 6px wide on a 7px pitch (x=9..133, still
+-- centred) and half as tall (h = 1 + i/2, so 10px at the tip), which fits the
+-- 11px the taller menu leaves above the banner. Entries stay APPEND-ONLY.
 local function meter(y)
   for i = 1, #entries do
-    local x = 6 + (i - 1) * 8
-    local h = 1 + i
+    local x = 9 + (i - 1) * 7
+    local h = 1 + flr(i / 2)
     local c = 15
     if i <= sel then
       c = 11
       if i > #entries - 3 then c = 8 elseif i > #entries - 6 then c = 10 end
       if i == sel and playing ~= 0 and frame % 30 < 15 then c = 12 end
     end
-    rectfill(x, y + 16 - h, x + 6, y + 16, c)
+    rectfill(x, y + 10 - h, x + 5, y + 10, c)
   end
 end
 
@@ -158,10 +166,10 @@ function _draw()
   print("A PLAY  B STOP", 4, 10, 13)
 
   -- menu
-  -- 17 entries at 8px a row run from y=18 to y=146 (the highlight band ends at
-  -- 152), which is why the meter starts at 155 rather than 148. Entries are
-  -- APPEND-ONLY: the audio goldens navigate here by counting DOWN presses, so
-  -- inserting one in the middle would move every entry after it.
+  -- 18 entries at 8px a row run from y=18 to y=154 (the highlight band ends at
+  -- 160), which is why the meter starts at 161 rather than the old 155.
+  -- Entries are APPEND-ONLY: the audio goldens navigate here by counting DOWN
+  -- presses, so inserting one in the middle would move every entry after it.
   local top = 18
   for i = 1, #entries do
     local y = top + (i - 1) * 8
@@ -179,7 +187,7 @@ function _draw()
   end
 
   -- meter
-  meter(155)
+  meter(161)
 
   -- description of the highlighted entry
   local e = entries[sel]
@@ -305,6 +313,33 @@ inst wt_buzz   wave=w2 env=0,9,3 vib=22,10,3
 inst fm_bass  wave=6 fm=1,10,13   env=0,10,4
 inst fm_epian wave=6 fm=3.5,6,7   env=0,24,2
 inst fm_bell  wave=6 fm=7,11,2    env=0,56,1
+
+# ---- wave 7: periodic noise, the PSG's OTHER noise mode -------------------
+# Wave 5 runs the shift register with XOR feedback and gets white noise. Wave 7
+# runs the same register as a pure ROTATE, so a single set bit circulates and
+# the output is a 1-in-16 pulse train: buzzy, metallic and completely TONAL.
+#
+# It sounds at note/16 - exactly FOUR OCTAVES below what you write - so these
+# rows are written up in the fifth and sixth octaves to be heard down in the
+# first and second. A5 is heard as A1, C6 as C2, E6 as E2. B7 over 16 is B3,
+# which is the top of the mode's range and why it is a bass instrument.
+#
+# The pattern is fixed, so unlike wave 5 there is nothing random to seed and
+# two channels can hold two different pitches without interfering.
+inst psg_bass  wave=7 env=0,6,4
+inst psg_tom   wave=7 sweep=-10,6 env=0,9,0
+
+# ---- trem=<depth>,<rate>[,<delay>]: vibrato's amplitude twin ---------------
+# Same triangle LFO, same rate units (phase units per frame out of 64, so
+# rate 4 is one cycle every 16 frames = 3.75Hz), but it multiplies the LEVEL
+# instead of the pitch. Depth is in sixteenths of the voice's amplitude, and
+# the gain only ever goes DOWN from the authored level: depth 8 swings between
+# full and half. Starts at full gain, so a note fades into its wobble.
+#
+# On the organ wavetable this is a Leslie-ish pad; the point of putting it on
+# a `w1` voice rather than a builtin is that tremolo is a property of the
+# level, so it applies to every wave source there is.
+inst trem_pad  wave=w1 trem=8,4
 
 __sfx__
 # ---- 0-5: the same 16-row phrase on each of the six waveforms -------------
@@ -891,6 +926,72 @@ C6 fm_bell 4
 G6 fm_bell 5
 D6 fm_bell 4
 
+# ---- 26-29: periodic noise + tremolo -------------------------------------
+# ch0 a wave-7 bassline written four octaves up (heard A1 A1 C2 A1 G1 G1 D2 E2),
+# ch1 white-noise hats on wave 5 so both noise modes play at once, ch2 the
+# tremolo pad, ch3 a wave-7 tom with a sweep on it.
+sfx 26 speed=auto
+A5 psg_bass 6
+---
+A5 psg_bass 6
+---
+C6 psg_bass 6
+---
+A5 psg_bass 6
+---
+G5 psg_bass 6
+---
+G5 psg_bass 6
+---
+D6 psg_bass 6
+---
+E6 psg_bass 6
+---
+
+sfx 27 speed=auto
+---
+A6 hat 3
+---
+A6 hat 4
+---
+A6 hat 3
+---
+A6 hat 4
+---
+A6 hat 3
+---
+A6 hat 4
+---
+A6 hat 3
+---
+A6 hat 4
+
+# The pad's rows are eight times as long as the bass's (speed=64, two rows to
+# its thirty-two) for the same reason the FM bell's are: the tremolo LFO is
+# measured from NOTE-ON, so a chord restated every 8 frames would restart the
+# wobble eight times a bar instead of letting four whole cycles breathe.
+sfx 28 speed=64
+A3 trem_pad 5
+G3 trem_pad 5
+
+sfx 29 speed=auto
+E6 psg_tom 6
+---
+---
+---
+---
+---
+---
+---
+---
+---
+C6 psg_tom 5
+---
+---
+---
+---
+---
+
 __music__
 bpm=112 rows_per_beat=4
 pat 0  loop=0  : 0 - - -
@@ -909,3 +1010,4 @@ pat 12 loop=12 : 16 17 18 19
 pat 13 loop=13 : 20 - - -
 pat 14 loop=14 : 21 22 - -
 pat 15 loop=15 : 23 24 25 -
+pat 16 loop=16 : 26 27 28 29

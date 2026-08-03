@@ -62,7 +62,8 @@ __map__           up to 64 lines x up to 128 cells; 2 hex chars = 1 tile id (00-
 __gfx_meta__      sprite <name> rect=tx,ty size=WxH [anchor=px,py]
                   anim <sprite>.<label> frames=f0,f1,... fps=N [loop] [frames_rect=tx,ty]
                   # played at runtime by aspr("<sprite>.<label>", x, y, [t0])
-__instruments__   inst <name> wave=<0-6|w0-w7> [fm=ratio,index[,decay]] [env=a,d,s] [vib=cents,rate,delay] [sweep=semis,frames] [duck=depth,release] [echo=0-8]
+__instruments__   inst <name> wave=<0-7|w0-w7> [fm=ratio,index[,decay]] [env=a,d,s] [vib=cents,rate,delay] [trem=depth,rate[,delay]] [sweep=semis,frames] [duck=depth,release] [echo=0-8]
+                  # waves: 0/1/2 pulse 12.5/25/50%, 3 tri, 4 saw, 5 white noise, 6 FM (needs fm=), 7 periodic noise, w0-w7 wavetables
                   wavetable <slot 0-7> <32 hex nibbles>   # custom single-cycle wave
                   master drive=0-8 [tone=0-8] [hiss=0-4]
                   echo delay=1-60 feedback=0-8 level=0-8
@@ -433,7 +434,11 @@ There is no `music_render` verb — in a session that is just
 Facts that bite (all but the last three are `music lint` rules):
 - `env` sustain is an ABSOLUTE level — quiet rows on an env instrument
   swell UP to it. Voices needing per-row dynamics should carry no env.
-- Vibrato `delay` must fit inside the row or it never speaks.
+- Vibrato `delay` must fit inside the row or it never speaks — same for `trem`.
+- **Periodic noise (wave 7) is four octaves flat.** Write `A5` to hear `A1`.
+  Its whole usable range is `C0`-`B3`, so it is a bass/tom/drone instrument.
+- **A tremolo LFO restarts on every note-on.** A pad restating its chord each
+  8-frame row never gets through a cycle; give it long rows.
 - **Channel budget**: there are 6 channels and `sfx(n)` auto-allocation takes
   the lowest one music does not own, stealing **ch5** when all six are busy.
   So write songs for 4 or 5 slots and leave 1–2 channels free for blips;
@@ -563,6 +568,77 @@ inst fm_tom   wave=6 fm=3.5,12,15 env=0,6,0 sweep=-10,4
 
 Entry 17 of `carts/soundtest.cart` plays the first three over an Am-F-C-G
 phrase. `audio_state`/`audio_events` report an FM voice's wave as `6`.
+
+### Periodic noise: wave 7 — and WRITE IT FOUR OCTAVES UP
+
+Wave 5 is white noise. **Wave 7 is the PSG's other noise mode**: the same shift
+register with rotate-only feedback, so one set bit circulates and the output is
+a fixed `1000000000000000` pattern — a 1-in-16 pulse train. Buzzy, metallic and
+completely **tonal**. It needs no parameters, so a bare `7` works in a sfx row
+just like `0`-`5`.
+
+**The one number to remember: periodic noise sounds at `note / 16`, which is
+exactly `12·log2(16) = 48` semitones — FOUR OCTAVES — below what you write.**
+
+```
+A5 7 6      # heard as A1        C6 psg_bass 6   # heard as C2
+```
+
+So the playable range is `C0`-`B3` (the note table stops at `B7`, and
+`B7/16 = B3`). That is a bass instrument: engine drones, robot voices, low toms.
+Write the pitch you want, then transpose the row up four octaves.
+
+Everything else composes (`env`, `vib`, `trem`, `sweep`, `duck`, `echo=`, the fx
+column) — only `fm=` is rejected, since there are no operators to modulate. The
+pattern is fixed, so unlike wave 5 there is nothing to seed: it renders
+identically for every console seed, and two wave-7 voices on two channels hold
+two independent pitches. It carries DC (mean −13/16, the same idiom as pulse
+12.5%'s −3/4), so don't stack six of them.
+`audio_state`/`audio_events` report a periodic-noise voice's wave as `7`.
+
+```
+# ENGINE DRONE: hold it, let vibrato do the wobbling. A4 -> heard as A0.
+inst engine   wave=7 vib=35,3,0
+# ROBOT VOICE: short buzzes, a slide per row, played as a "melody" up high.
+inst robot    wave=7 env=0,3,3
+# METALLIC TOM: a sweep on wave 7 is the classic falling clang. E6 -> E2.
+inst psg_tom  wave=7 sweep=-10,6 env=0,9,0
+```
+
+### Tremolo: `trem=<depth>,<rate>[,<delay>]`
+
+Vibrato's twin, on volume instead of pitch, and clocked from the same LFO — so
+`vib=20,8,0` and `trem=6,8,0` on one instrument wobble in lockstep.
+
+- **`depth`** 1-15, in **sixteenths of the level**. The gain swings between the
+  authored volume and `1 - depth/16` of it — tremolo only ever attenuates, so it
+  can never push a mix into the clamp. 2-4 is a shimmer, 6-8 a Leslie/organ
+  pulse, 12-15 a gate.
+- **`rate`** 1-16, the same units as `vib`: LFO phase units per frame out of 64,
+  so one cycle is `64/rate` frames (rate 4 = 16 frames = 3.75 Hz, rate 8 =
+  7.5 Hz). Divisors of 64 (1, 2, 4, 8, 16) give whole-frame periods.
+- **`delay`** 0-255, optional — frames of flat gain before the LFO starts. The
+  gain is exactly unity throughout the delay *and* on the frame it switches on,
+  so the note fades into its wobble rather than stepping into it.
+
+It multiplies **after** `env` and `fade` and before the duck and the echo send,
+and it works on every wave source — builtins, both noise modes, FM, wavetables.
+Two traps: like vibrato's, a `delay` longer than the row means it never speaks;
+and the LFO clock starts at **note-on**, so a pad that restates its chord every
+8-frame row restarts the wobble eight times a bar. Give tremolo pads long rows
+(`speed=64`) or repeat the note less often.
+
+```
+# ORGAN / LESLIE PAD: half-depth wobble, one cycle every 16 frames.
+inst trem_pad  wave=w1 trem=8,4
+# STRING SHIMMER: shallow and fast, held under a lead.
+inst strings   wave=4 env=6,10,4 trem=3,10,6
+# HELICOPTER / GATE: deep and slow on a noise voice.
+inst chopper   wave=5 trem=14,2
+```
+
+Entry 18 of `carts/soundtest.cart` plays a wave-7 bassline and tom next to
+white-noise hats with a tremolo pad behind them.
 
 ## Packaging
 

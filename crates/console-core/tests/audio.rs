@@ -3,10 +3,11 @@
 
 use console_core::{
     CHANNEL_COUNT, Cart, Console, DUCK_ATTACK_SAMPLES, Duck, Echo, Env, Error, FM_DECAY_HALF_LIFE,
-    Fm, Fx, MASTER_REF_LEVEL, MAX_DRIVE, MAX_DUCK_DEPTH, MAX_HISS, MAX_TONE, Master, NIBBLE_LEVEL,
-    NOTE_FREQ, PatternEnd, RowMod, SAMPLE_RATE, SAMPLES_PER_FRAME, SINE_QUARTER, SfxRow, Sweep,
-    Vib, WAVE_COUNT, WAVE_FM, WAVE_TABLE_BASE, WAVETABLE_LEN, WAVETABLE_SLOTS, Wavetable, freq_at,
-    input,
+    Fm, Fx, LFO_STEPS, MASTER_REF_LEVEL, MAX_DRIVE, MAX_DUCK_DEPTH, MAX_HISS, MAX_TONE,
+    MAX_TREM_DEPTH, MAX_TREM_RATE, Master, NIBBLE_LEVEL, NOTE_FREQ, PERIODIC_PERIOD,
+    PERIODIC_TRANSPOSE_SEMIS, PatternEnd, RowMod, SAMPLE_RATE, SAMPLES_PER_FRAME, SINE_QUARTER,
+    SfxRow, Sweep, Trem, Vib, WAVE_COUNT, WAVE_FM, WAVE_PERIODIC, WAVE_TABLE_BASE, WAVETABLE_LEN,
+    WAVETABLE_SLOTS, Wavetable, freq_at, input,
 };
 
 const DEMO: &str = include_str!("../../../carts/demo.cart");
@@ -253,10 +254,13 @@ fn malformed_sfx_is_a_line_numbered_cart_error() {
         2,
         "wave 6 is the 2-op FM oscillator",
     );
+    // Wave 7 (periodic noise) IS a bare digit - it needs no parameters - so
+    // the first illegal one is 8, where the wavetable ids start and the `w`
+    // spelling takes over.
     expect_cart_error(
-        "__lua__\n\n__sfx__\nsfx 0 speed=2\nC4 7 7\n",
+        "__lua__\n\n__sfx__\nsfx 0 speed=2\nC4 8 7\n",
         2,
-        "wave must be 0-5",
+        "wave must be 0-7",
     );
     expect_cart_error(
         "__lua__\n\n__sfx__\nsfx 0 speed=2\nC4 0 8\n",
@@ -1258,8 +1262,8 @@ fn malformed_instruments_are_line_numbered_cart_errors() {
         1,
         "but no `fm=<ratio>,<index>[,<decay>]`",
     );
-    inst_err("inst a wave=7\n", 1, "wave must be 0-6");
-    inst_err("inst a\n", 1, "missing `wave=<0-6>`");
+    inst_err("inst a wave=8\n", 1, "wave must be 0-7");
+    inst_err("inst a\n", 1, "missing `wave=<0-7>`");
     inst_err("inst\n", 1, "expected `inst <name>");
     inst_err("inst A wave=1\n", 1, "must match [a-z0-9_]+");
     inst_err("inst a-b wave=1\n", 1, "must match [a-z0-9_]+");
@@ -1328,7 +1332,7 @@ fn malformed_instruments_are_line_numbered_cart_errors() {
     inst_err(
         "# note\n\ninst a wave=1\ninst b wave=9\n",
         4,
-        "wave must be 0-6",
+        "wave must be 0-7",
     );
 }
 
@@ -1356,7 +1360,7 @@ fn unknown_instrument_names_are_reported_on_the_row() {
     expect_cart_error(
         "__lua__\nx=1\n\n__instruments__\ninst lead wave=1\n\n__sfx__\nsfx 0 speed=4\nA4 9 6\n",
         2,
-        "wave must be 0-5",
+        "wave must be 0-7",
     );
 }
 
@@ -2617,7 +2621,7 @@ fn a_cart_with_no_duck_instrument_never_leaves_the_legacy_path() {
 // ---------------------------------------------------------------------------
 
 /// Menu entries in `carts/soundtest.cart`.
-const SOUNDTEST_ENTRIES: usize = 17;
+const SOUNDTEST_ENTRIES: usize = 18;
 
 /// Zero-based menu index of "FULL GROOVE".
 const SOUNDTEST_GROOVE: usize = 12;
@@ -2635,8 +2639,11 @@ const SOUNDTEST_ECHO: usize = 14;
 /// Zero-based menu index of "WAVETABLE W0-W2", pattern 14.
 const SOUNDTEST_WAVETABLE: usize = 15;
 
-/// Zero-based menu index of "FM  2-OP" (the last entry), pattern 15.
+/// Zero-based menu index of "FM  2-OP", pattern 15.
 const SOUNDTEST_FM: usize = 16;
+
+/// Zero-based menu index of "PSG NOISE + TREM" (the last entry), pattern 16.
+const SOUNDTEST_PSG: usize = 17;
 
 /// Frames the A/B entry spends on each side of the comparison: two bars at
 /// 112 BPM / 4 rows per beat / speed 8 = 2 * 16 * 8.
@@ -2659,13 +2666,13 @@ fn soundtest_script(entry: usize, play_frames: usize) -> Vec<u8> {
 fn the_soundtest_cart_loads_and_describes_itself() {
     let cart = Cart::parse(SOUNDTEST).unwrap();
     assert_eq!(cart.title(), "Sound Test");
-    // 18 instruments, 26 sfx, one self-looping pattern per audition entry (the
+    // 21 instruments, 30 sfx, one self-looping pattern per audition entry (the
     // A/B entry re-uses the groove's pattern 12).
-    assert_eq!(cart.instruments().len(), 18);
-    assert_eq!(cart.audio().sfx_ids().count(), 26);
+    assert_eq!(cart.instruments().len(), 21);
+    assert_eq!(cart.audio().sfx_ids().count(), 30);
     let pats: Vec<u8> = cart.audio().pattern_ids().collect();
-    assert_eq!(pats, (0..=15).collect::<Vec<u8>>());
-    for id in 0..=15u8 {
+    assert_eq!(pats, (0..=16).collect::<Vec<u8>>());
+    for id in 0..=16u8 {
         assert_eq!(
             cart.pattern(id).unwrap().end,
             PatternEnd::Loop(id),
@@ -2776,13 +2783,14 @@ fn the_soundtest_menu_navigates_and_stops() {
     assert_eq!(con.music_pattern(), Some(2));
     assert!(con.audio_frame().iter().any(|&s| s != 0.0));
 
-    // Up wraps to the top of the list, i.e. onto the last entry (FM  2-OP).
+    // Up wraps to the top of the list, i.e. onto the last entry
+    // (PSG NOISE + TREM).
     for mask in [input::UP, 0, input::UP, 0, input::UP, 0, input::A, 0] {
         con.step(mask).unwrap();
     }
     assert_eq!(
         con.music_pattern(),
-        Some(15),
+        Some(16),
         "UP past the top wraps around"
     );
 
@@ -3708,7 +3716,7 @@ fn malformed_wavetables_are_line_numbered_cart_errors() {
     wt_err(
         "inst lead wave=wx\n",
         1,
-        "wave must be 0-6 (builtin) or w0-w7",
+        "wave must be 0-7 (builtin) or w0-w7",
     );
     // A slot name is reserved, so `w0` in a sfx row is never ambiguous.
     wt_err("inst w0 wave=1\n", 1, "must not look like a wavetable slot");
@@ -4010,14 +4018,14 @@ fn the_soundtest_wavetable_entry_uses_three_dc_free_tables() {
         .iter()
         .filter(|i| i.wave >= WAVE_TABLE_BASE)
         .count();
-    assert_eq!(table_voices, 3);
-    // Every other voice is a builtin or the FM oscillator, which is why
-    // entries 0-14 render exactly as they did before.
+    assert_eq!(table_voices, 4, "the three wt_ voices plus the tremolo pad");
+    // Every other voice is a builtin, the FM oscillator or periodic noise,
+    // which is why entries 0-14 render exactly as they did before.
     assert!(
         cart.instruments()
             .iter()
-            .filter(|i| !i.name.starts_with("wt_"))
-            .all(|i| i.wave < WAVE_COUNT || i.wave == WAVE_FM)
+            .filter(|i| !i.name.starts_with("wt_") && i.name != "trem_pad")
+            .all(|i| i.wave < WAVE_COUNT || i.wave == WAVE_FM || i.wave == WAVE_PERIODIC)
     );
 }
 
@@ -4149,8 +4157,8 @@ fn malformed_fm_is_a_line_numbered_cart_error() {
     fm_err("inst a wave=6 fm=1,x\n", 1, "fm index must be a number");
     fm_err("inst a wave=6 fm=1,4,16\n", 1, "fm decay must be 0-15");
 
-    // Wave 7 is still reserved.
-    fm_err("inst a wave=7 fm=1,4\n", 1, "wave must be 0-6");
+    // Wave 7 is periodic noise, which has no operators to modulate.
+    fm_err("inst a wave=7 fm=1,4\n", 1, "has `fm=` but `wave=7`");
 }
 
 #[test]
@@ -4576,4 +4584,498 @@ fn the_soundtest_fm_entry_never_falls_silent_between_notes() {
     );
     assert!(peak < 1.0, "the FM entry reached the clamp (peak {peak})");
     assert!(s.iter().all(|v| (-1.0..=1.0).contains(v)));
+}
+
+// ---------------------------------------------------------------------------
+// PoC v2: periodic noise (wave 7) and tremolo
+// ---------------------------------------------------------------------------
+
+/// One channel, one long row, nothing else: the cleanest way to look at a
+/// single oscillator. `speed=255` makes the row longer than any test needs.
+fn solo_cart(instruments: &str, row: &str) -> String {
+    format!(
+        "__lua__\nfunction _init() sfx(0, 0) end\n\n__instruments__\n{instruments}\n\n__sfx__\nsfx 0 speed=255\n{row}\n"
+    )
+}
+
+/// Peak absolute sample of frame `f`.
+fn frame_peak(samples: &[f32], f: usize) -> f32 {
+    samples[f * SAMPLES_PER_FRAME..(f + 1) * SAMPLES_PER_FRAME]
+        .iter()
+        .fold(0.0f32, |m, v| m.max(v.abs()))
+}
+
+#[test]
+fn periodic_noise_parses_from_a_bare_digit_and_from_an_instrument() {
+    // Wave 7 is self-contained - no ratio, no index, no table - so unlike FM
+    // it takes a bare digit in the wave column, exactly like 0-5 do.
+    let cart = Cart::parse("__lua__\nx=1\n\n__sfx__\nsfx 0 speed=8\nA5 7 6\n").unwrap();
+    assert_eq!(
+        cart.sfx(0).unwrap().rows[0],
+        SfxRow::Note {
+            note: 69,
+            wave: WAVE_PERIODIC,
+            vol: 6
+        }
+    );
+    assert!(cart.sfx(0).unwrap().row_mod(0).inst.is_none());
+
+    // ...and it is a wave source like any other, so an instrument may wrap it
+    // with the whole modulation vocabulary.
+    let cart = Cart::parse(
+        "__lua__\nx=1\n\n__instruments__\n\
+         inst drone wave=7 env=0,8,4 vib=20,6,2 trem=5,4 sweep=-3,10 duck=2,6 echo=3\n\n\
+         __sfx__\nsfx 0 speed=8\nA5 drone 6\n",
+    )
+    .unwrap();
+    let i = cart.instrument("drone").unwrap();
+    assert_eq!(i.wave, WAVE_PERIODIC);
+    assert!(i.fm.is_none());
+    assert_eq!(
+        i.env,
+        Some(Env {
+            attack: 0,
+            decay: 8,
+            sustain: 4
+        })
+    );
+    assert_eq!(
+        i.vib,
+        Some(Vib {
+            cents: 20,
+            rate: 6,
+            delay: 2
+        })
+    );
+    assert_eq!(
+        i.trem,
+        Some(Trem {
+            depth: 5,
+            rate: 4,
+            delay: 0
+        })
+    );
+    assert_eq!(
+        i.sweep,
+        Some(Sweep {
+            semis: -3,
+            frames: 10
+        })
+    );
+    assert_eq!(
+        i.duck,
+        Some(Duck {
+            depth: 2,
+            release: 6
+        })
+    );
+    assert_eq!(i.echo, 3);
+    assert!(!i.is_flat());
+}
+
+#[test]
+fn periodic_noise_is_a_one_in_sixteen_pulse_train_four_octaves_down() {
+    // A5 (index 69) is written; A1 is what should come out. The waveform is
+    // two-valued, so the pulse train can be measured exactly by counting
+    // rising edges rather than estimated from a spectrum.
+    let note = 69usize;
+    let samples = run_audio(&solo_cart("inst psg wave=7", "A5 psg 7"), 0, &[0u8; 60]);
+    let body = &samples[SAMPLES_PER_FRAME..]; // skip the click-guard ramp
+
+    let hi = body.iter().filter(|s| **s > 0.0).count();
+    let lo = body.iter().filter(|s| **s < 0.0).count();
+    assert_eq!(hi + lo, body.len(), "the pulse train has only two levels");
+    // 1-in-16 duty, to within the one partial pulse at each end of the window.
+    let duty = hi as f64 / body.len() as f64;
+    assert!((duty - 1.0 / 16.0).abs() < 0.002, "duty {duty} is not 1/16");
+
+    // Rising edges are one per period, so the mean spacing between the first
+    // and the last of them IS the fundamental - no windowing error to argue
+    // about, unlike counting edges over a fixed span.
+    let edges: Vec<usize> = body
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| w[0] < 0.0 && w[1] > 0.0)
+        .map(|(i, _)| i)
+        .collect();
+    assert!(edges.len() > 40, "only {} pulses in a second", edges.len());
+    let span = (edges[edges.len() - 1] - edges[0]) as f64;
+    let measured = (edges.len() - 1) as f64 * f64::from(SAMPLE_RATE) / span;
+    let want = f64::from(NOTE_FREQ[note]) / f64::from(PERIODIC_PERIOD);
+    assert!(
+        (measured - want).abs() < 0.05,
+        "measured {measured} Hz, wanted {want} Hz (note/16)"
+    );
+    // ...and that pitch is exactly A1, i.e. the written note transposed DOWN by
+    // PERIODIC_TRANSPOSE_SEMIS. This is the number a composer needs.
+    let heard = f64::from(NOTE_FREQ[note - usize::from(PERIODIC_TRANSPOSE_SEMIS)]);
+    assert!((measured - heard).abs() < 0.05, "{measured} Hz is not A1");
+}
+
+#[test]
+fn periodic_noise_reports_wave_seven_and_ignores_the_seed() {
+    let cart = solo_cart("inst psg wave=7", "A5 psg 7");
+    let mut con = Console::new(&cart, 0).unwrap();
+    con.step(0).unwrap();
+    assert_eq!(con.audio_channels()[0].wave, WAVE_PERIODIC);
+
+    // The pattern is a rotating bit, not a pseudo-random sequence, so nothing
+    // about it can depend on the console seed. (Wave 5 does not depend on it
+    // either - the noise LFSR has its own fixed seed - but for wave 7 the
+    // independence is structural: there is no seed to read.)
+    let a = run_audio(&cart, 0, &[0u8; 30]);
+    for seed in [1u64, 42, u64::MAX] {
+        let b = run_audio(&cart, seed, &[0u8; 30]);
+        assert_eq!(
+            a.iter().map(|s| s.to_bits()).collect::<Vec<_>>(),
+            b.iter().map(|s| s.to_bits()).collect::<Vec<_>>(),
+            "seed {seed} changed the periodic-noise stream"
+        );
+    }
+}
+
+#[test]
+fn periodic_noise_voices_do_not_clock_each_other() {
+    // Each channel owns its register, so two drones at two pitches sum
+    // *linearly*: the mix is exactly the two solos added, to the bit. If the
+    // register were shared (as the white-noise LFSR is) each voice would be
+    // clocked by the other and neither would land on its own pitch.
+    let two = "__lua__\nfunction _init() sfx(0, 0) sfx(1, 1) end\n\n\
+               __instruments__\ninst psg wave=7\ninst hiss wave=5\n\n\
+               __sfx__\nsfx 0 speed=255\nA5 psg 6\n\nsfx 1 speed=255\nE6 psg 5\n\
+               \nsfx 2 speed=255\nC7 hiss 5\n";
+    let one = "__lua__\nfunction _init() sfx(0, 0) end\n\n\
+               __instruments__\ninst psg wave=7\ninst hiss wave=5\n\n\
+               __sfx__\nsfx 0 speed=255\nA5 psg 6\n\nsfx 1 speed=255\nE6 psg 5\n\
+               \nsfx 2 speed=255\nC7 hiss 5\n";
+    let other = "__lua__\nfunction _init() sfx(1, 1) end\n\n\
+                 __instruments__\ninst psg wave=7\ninst hiss wave=5\n\n\
+                 __sfx__\nsfx 0 speed=255\nA5 psg 6\n\nsfx 1 speed=255\nE6 psg 5\n\
+                 \nsfx 2 speed=255\nC7 hiss 5\n";
+    let mix = run_audio(two, 0, &[0u8; 40]);
+    let a = run_audio(one, 0, &[0u8; 40]);
+    let b = run_audio(other, 0, &[0u8; 40]);
+    for i in 0..mix.len() {
+        assert_eq!(
+            mix[i].to_bits(),
+            (a[i] + b[i]).to_bits(),
+            "sample {i}: two periodic voices interfered"
+        );
+    }
+
+    // The same holds against a white-noise voice: the two modes keep separate
+    // registers, so neither mode's stream depends on the other's presence.
+    let with_hiss = "__lua__\nfunction _init() sfx(0, 0) sfx(2, 1) end\n\n\
+                     __instruments__\ninst psg wave=7\ninst hiss wave=5\n\n\
+                     __sfx__\nsfx 0 speed=255\nA5 psg 6\n\nsfx 1 speed=255\nE6 psg 5\n\
+                     \nsfx 2 speed=255\nC7 hiss 5\n";
+    let hiss_only = "__lua__\nfunction _init() sfx(2, 1) end\n\n\
+                     __instruments__\ninst psg wave=7\ninst hiss wave=5\n\n\
+                     __sfx__\nsfx 0 speed=255\nA5 psg 6\n\nsfx 1 speed=255\nE6 psg 5\n\
+                     \nsfx 2 speed=255\nC7 hiss 5\n";
+    let mixed = run_audio(with_hiss, 0, &[0u8; 40]);
+    let h = run_audio(hiss_only, 0, &[0u8; 40]);
+    for i in 0..mixed.len() {
+        assert_eq!(mixed[i].to_bits(), (a[i] + h[i]).to_bits(), "sample {i}");
+    }
+}
+
+#[test]
+fn tremolo_peaks_and_troughs_are_exact_amplitudes() {
+    // A square at vol 7 is +/-1 * MIX_GAIN, so every sample of every frame is
+    // the tremolo gain itself and there is nothing to estimate.
+    for depth in [1u8, 4, 8, MAX_TREM_DEPTH] {
+        let cart = solo_cart(&format!("inst sq wave=2 trem={depth},4"), "A3 sq 7");
+        let s = run_audio(&cart, 0, &[0u8; 60]);
+        let period = 16; // 64 / rate
+        for k in 1..3usize {
+            // Crest frames sit at the authored level, untouched.
+            assert_eq!(
+                frame_peak(&s, k * period),
+                0.25,
+                "depth {depth}: crest is not the authored amplitude"
+            );
+            // Trough frames sit at exactly `1 - depth/16` of it.
+            assert_eq!(
+                frame_peak(&s, k * period + period / 2),
+                0.25 * (1.0 - f32::from(depth) / 16.0),
+                "depth {depth}: trough amplitude"
+            );
+        }
+    }
+}
+
+#[test]
+fn tremolo_period_and_delay_are_frame_exact_in_the_mix() {
+    // rate 2 -> 32 frames a cycle; delay 20 -> the first 20 frames are flat.
+    let cart = solo_cart("inst sq wave=2 trem=8,2,20", "A3 sq 7");
+    let s = run_audio(&cart, 0, &[0u8; 120]);
+    for f in 1..20 {
+        assert_eq!(frame_peak(&s, f), 0.25, "frame {f} is inside the delay");
+    }
+    assert_eq!(frame_peak(&s, 20), 0.25, "the LFO must switch on at unity");
+    assert_eq!(frame_peak(&s, 36), 0.125, "half a cycle after the delay");
+    assert_eq!(frame_peak(&s, 52), 0.25, "one cycle after the delay");
+    assert_eq!(frame_peak(&s, 68), 0.125);
+}
+
+#[test]
+fn tremolo_multiplies_the_envelope_rather_than_replacing_it() {
+    // Order pinned: `env` picks the discrete level (4/7 here), tremolo scales
+    // the amplitude that level resolves to. A depth-8 trough is therefore
+    // (4/7) * 0.5 * MIX_GAIN and NOT, say, "level 4 minus 8/16 of a level".
+    let cart = solo_cart("inst sq wave=2 env=0,4,4 trem=8,4", "A3 sq 7");
+    let s = run_audio(&cart, 0, &[0u8; 60]);
+    let level = 4.0f32 / 7.0;
+    assert_eq!(frame_peak(&s, 16), level * 0.25, "crest = env level");
+    assert_eq!(
+        frame_peak(&s, 24),
+        level * 0.5 * 0.25,
+        "trough = env * gain"
+    );
+    assert_eq!(frame_peak(&s, 32), level * 0.25);
+
+    // Without the tremolo the same instrument holds the env level flat, which
+    // is what makes the comparison above a statement about ordering.
+    let flat = run_audio(
+        &solo_cart("inst sq wave=2 env=0,4,4", "A3 sq 7"),
+        0,
+        &[0u8; 60],
+    );
+    for f in 5..40 {
+        assert_eq!(frame_peak(&flat, f), level * 0.25);
+    }
+}
+
+#[test]
+fn tremolo_applies_to_fm_and_wavetable_voices_too() {
+    // Tremolo is a property of the level, not of the wave source, so it has to
+    // work on the two wave sources that are not simple oscillators. Measured
+    // as the ratio between a trough frame and a crest frame of the same voice.
+    let cases = [
+        (
+            "inst v wave=6 fm=2,6 trem=8,4",
+            "inst v wave=6 fm=2,6",
+            "A4 v 7",
+        ),
+        (
+            "wavetable 0 89acdeefffeedca976532110 00112356\ninst v wave=w0 trem=8,4",
+            "wavetable 0 89acdeefffeedca976532110 00112356\ninst v wave=w0",
+            "A4 v 7",
+        ),
+        ("inst v wave=7 trem=8,4", "inst v wave=7", "A5 v 7"),
+    ];
+    for (with, without, row) in cases {
+        let a = run_audio(&solo_cart(with, row), 0, &[0u8; 60]);
+        let b = run_audio(&solo_cart(without, row), 0, &[0u8; 60]);
+        let crest = frame_peak(&a, 16);
+        let trough = frame_peak(&a, 24);
+        let flat = frame_peak(&b, 16);
+        assert!(
+            (crest - flat).abs() < 1.0e-6,
+            "{with}: the crest should be the untremoloed level ({crest} vs {flat})"
+        );
+        assert!(
+            (f64::from(trough / crest) - 0.5).abs() < 1.0e-3,
+            "{with}: trough/crest = {}",
+            trough / crest
+        );
+        // ...and the un-tremoloed voice really is flat, so the ratio above is
+        // the tremolo and not the timbre. (Relative, because a frame's peak of
+        // a non-square wave depends slightly on where the 735-sample window
+        // falls in the cycle.)
+        assert!(
+            (f64::from(frame_peak(&b, 24) / flat) - 1.0).abs() < 5.0e-3,
+            "{without}: the untremoloed voice is not flat"
+        );
+    }
+}
+
+#[test]
+fn malformed_trem_is_a_line_numbered_cart_error() {
+    let trem_err = |body: &str, line: usize, needle: &str| {
+        expect_cart_error(
+            &format!("__lua__\nx=1\n\n__instruments__\n{body}"),
+            line,
+            needle,
+        );
+    };
+    trem_err(
+        "inst a wave=2 trem=8\n",
+        1,
+        "trem must be `trem=<depth>,<rate>[,<delay>]`",
+    );
+    trem_err("inst a wave=2 trem=8,4,0,0\n", 1, "trem must be `trem=");
+    // Depth 0 is a no-op, so it is a parse error rather than a silent nothing -
+    // the same rule `vib=0,...` follows.
+    trem_err("inst a wave=2 trem=0,4\n", 1, "trem depth must be 1-15");
+    trem_err("inst a wave=2 trem=16,4\n", 1, "trem depth must be 1-15");
+    trem_err("inst a wave=2 trem=8,0\n", 1, "trem rate must be 1-16");
+    trem_err("inst a wave=2 trem=8,17\n", 1, "trem rate must be 1-16");
+    trem_err(
+        "inst a wave=2 trem=8,4,256\n",
+        1,
+        "trem delay must be 0-255",
+    );
+    trem_err("inst a wave=2 trem=x,4\n", 1, "trem depth must be a number");
+    trem_err(
+        "inst a wave=2 tremolo=8,4\n",
+        1,
+        "unknown inst key \"tremolo\"",
+    );
+
+    // The optional delay really is optional, and defaults to 0.
+    let cart = Cart::parse("__lua__\nx=1\n\n__instruments__\ninst a wave=2 trem=8,4\n").unwrap();
+    assert_eq!(
+        cart.instrument("a").unwrap().trem,
+        Some(Trem {
+            depth: 8,
+            rate: 4,
+            delay: 0
+        })
+    );
+    // Bounds are inclusive at both ends.
+    let cart = Cart::parse(&format!(
+        "__lua__\nx=1\n\n__instruments__\ninst a wave=2 trem={MAX_TREM_DEPTH},{MAX_TREM_RATE},255\n"
+    ))
+    .unwrap();
+    assert_eq!(
+        cart.instrument("a").unwrap().trem,
+        Some(Trem {
+            depth: MAX_TREM_DEPTH,
+            rate: MAX_TREM_RATE,
+            delay: 255
+        })
+    );
+}
+
+#[test]
+fn carts_without_periodic_noise_or_tremolo_are_untouched() {
+    // The bit-identity guarantee is *measured* by the six older golden hashes,
+    // none of which moved. What is asserted here is the reason they could not:
+    // nothing a pre-wave-7 cart can write produces wave id 7 (it was a parse
+    // error), and a voice with no `trem=` multiplies by exactly 1.0.
+    let demo = Cart::parse(DEMO).unwrap();
+    for id in demo.audio().sfx_ids() {
+        for row in &demo.sfx(id).unwrap().rows {
+            if let SfxRow::Note { wave, .. } = row {
+                assert_ne!(*wave, WAVE_PERIODIC, "a pre-wave-7 row cannot be wave 7");
+            }
+        }
+    }
+    assert!(demo.instruments().iter().all(|i| i.trem.is_none()));
+
+    // In the soundtest cart only the new entry's voices reach either feature,
+    // so every entry before it renders exactly as it did.
+    let st = Cart::parse(SOUNDTEST).unwrap();
+    let psg: Vec<&str> = st
+        .instruments()
+        .iter()
+        .filter(|i| i.wave == WAVE_PERIODIC)
+        .map(|i| i.name.as_str())
+        .collect();
+    assert_eq!(psg, vec!["psg_bass", "psg_tom"]);
+    let trem: Vec<&str> = st
+        .instruments()
+        .iter()
+        .filter(|i| i.trem.is_some())
+        .map(|i| i.name.as_str())
+        .collect();
+    assert_eq!(trem, vec!["trem_pad"]);
+    // ...and all three are used by pattern 16 alone.
+    for id in st.audio().sfx_ids().filter(|id| *id < 26) {
+        for m in &st.sfx(id).unwrap().mods {
+            if let Some(i) = m.inst.and_then(|i| st.instruments().get(usize::from(i))) {
+                assert!(i.trem.is_none() && i.wave != WAVE_PERIODIC, "sfx {id}");
+            }
+        }
+    }
+}
+
+/// Golden hash of the soundtest cart's "PSG NOISE + TREM" entry (menu index 17,
+/// pattern 16): FNV-1a over the little-endian bits of the samples rendered
+/// while navigating there and then playing 150 frames, seed 0.
+///
+/// 150 frames is a bar and a bit of the whole four-channel arrangement, so it
+/// pins the rotate-only feedback, the 1/16 duty, the per-channel register, the
+/// tremolo's quarter-cycle phase offset and its exact dyadic gain ladder all at
+/// once - change any one of them and this moves.
+const SOUNDTEST_PSG_GOLDEN: u64 = 0xce62_bb94_533f_a853;
+
+#[test]
+fn soundtest_psg_matches_the_golden_hash() {
+    let hash = hash_samples(&run_audio(
+        SOUNDTEST,
+        0,
+        &soundtest_script(SOUNDTEST_PSG, 150),
+    ));
+    assert_eq!(
+        hash, SOUNDTEST_PSG_GOLDEN,
+        "soundtest PSG/trem audio changed; new hash is {hash:#018x}"
+    );
+}
+
+#[test]
+fn the_soundtest_psg_entry_plays_both_noise_modes_under_a_tremolo_pad() {
+    let cart = Cart::parse(SOUNDTEST).unwrap();
+    // The bass is written four octaves up so it is heard four octaves down:
+    // every one of its notes must therefore sit at or above C4, and its
+    // audible pitch is the row note minus 48.
+    let bass = cart.sfx(26).unwrap();
+    let notes: Vec<u8> = bass
+        .rows
+        .iter()
+        .filter_map(|r| match r {
+            SfxRow::Note { note, .. } => Some(*note),
+            SfxRow::Rest => None,
+        })
+        .collect();
+    assert_eq!(notes, vec![69, 69, 72, 69, 67, 67, 74, 76]); // A5 A5 C6 A5 G5 G5 D6 E6
+    for n in &notes {
+        assert!(*n >= PERIODIC_TRANSPOSE_SEMIS, "note {n} is below C4");
+        assert!(
+            *n - PERIODIC_TRANSPOSE_SEMIS < 36,
+            "note {n} is not heard as a bass note"
+        );
+    }
+    // Heard: A1 A1 C2 A1 G1 G1 D2 E2.
+    assert_eq!(notes[0] - PERIODIC_TRANSPOSE_SEMIS, 21);
+
+    // Both noise modes at once, on different channels.
+    let pat = cart.pattern(16).unwrap();
+    assert_eq!(pat.end, PatternEnd::Loop(16));
+    assert_eq!(cart.instrument("psg_bass").unwrap().wave, WAVE_PERIODIC);
+    assert_eq!(cart.instrument("psg_tom").unwrap().wave, WAVE_PERIODIC);
+    assert_eq!(cart.instrument("hat").unwrap().wave, 5);
+
+    // The pad's rows are long precisely so the LFO gets to run: the tremolo
+    // clock starts at note-on, so a chord restated every row would restart it.
+    let pad = cart.instrument("trem_pad").unwrap();
+    let t = pad.trem.unwrap();
+    assert_eq!((t.depth, t.rate, t.delay), (8, 4, 0));
+    let cycle = LFO_STEPS / u32::from(t.rate);
+    assert!(
+        u32::from(cart.sfx(28).unwrap().speed) >= 4 * cycle,
+        "the pad's rows must hold several tremolo cycles"
+    );
+    // ...and it is a wavetable voice, which is the point: tremolo is not tied
+    // to any particular wave source.
+    assert!(pad.wave >= WAVE_TABLE_BASE);
+
+    // The entry is loud enough to judge and never reaches the clamp.
+    let s = soundtest_played(SOUNDTEST_PSG, 140);
+    let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    assert!(peak > 0.2, "the PSG entry is too quiet (peak {peak})");
+    assert!(peak < 1.0, "the PSG entry reached the clamp (peak {peak})");
+    assert!(s.iter().all(|v| (-1.0..=1.0).contains(v)));
+
+    // The pad holds under the gaps between bass notes, so the entry never
+    // drops into silence.
+    let rms = |f: usize| -> f64 {
+        let x = &s[f * SAMPLES_PER_FRAME..(f + 1) * SAMPLES_PER_FRAME];
+        (x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / x.len() as f64).sqrt()
+    };
+    for f in 2..136 {
+        assert!(rms(f) > 0.01, "frame {f} of the PSG entry went silent");
+    }
 }
