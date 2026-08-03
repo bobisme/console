@@ -1,16 +1,19 @@
-//! Signature effects: `fillp` dither patterns, `sspr` scaled blits, `mosaic`.
+//! Signature effects: `fillp` dither patterns, `sspr` scaled blits, `mosaic`
+//! and `rshift`.
 //!
 //! The contract these tests pin down:
 //!
-//! * a cart that calls none of the three draws bit-identically to before they
+//! * a cart that calls none of them draws bit-identically to before they
 //!   existed (see [`the_new_effects_are_off_by_default`]);
 //! * `fillp` is a 4x4 grid anchored to **screen** space, MSB = top-left, and it
 //!   applies to the shape primitives only — never to `spr`, `map`, `print` or
 //!   `cls`;
 //! * `sspr` at 1:1 is byte-identical to `spr`, and every scale is
 //!   nearest-neighbour integer stepping;
-//! * `mosaic` is a **framebuffer** effect: it is in the goldens and in
-//!   `screen_text`, unlike the scanout-only display palette.
+//! * `mosaic` and `rshift` are **framebuffer** effects: they are in the goldens
+//!   and in `screen_text`, unlike the scanout-only display palette;
+//! * the end-of-frame order is `mosaic` then `rshift`, and `rshift` wraps each
+//!   scanline around the 144-pixel line rather than clipping it.
 
 use console_core::{Console, FB_LEN, MAX_MOSAIC, SCREEN_H, SCREEN_W};
 
@@ -63,6 +66,8 @@ fn the_new_effects_are_off_by_default() {
     let ds = run("cls(0)").draw_state();
     assert_eq!(ds.fillp(), 0, "the default fill is solid");
     assert_eq!(ds.mosaic(), 1, "mosaic is off");
+    assert!(!ds.rshift_active(), "no scanline is shifted");
+    assert!((0..SCREEN_H as i32).all(|y| ds.rshift(y) == 0));
 }
 
 #[test]
@@ -70,9 +75,13 @@ fn explicit_defaults_are_identical_to_untouched_state() {
     let scene = "cls(1) rectfill(10, 10, 30, 30, 7) circfill(70, 70, 12, 4)
                  print(\"HI\", 4, 4, 11) line(0, 0, 143, 255, 3) spr(0, 20, 90)";
     let plain = run(scene);
-    let reset = run(&format!("fillp() mosaic()\n{scene}"));
+    let reset = run(&format!("fillp() mosaic() rshift()\n{scene}"));
     assert_eq!(plain.framebuffer(), reset.framebuffer());
-    let reset = run(&format!("fillp(0) mosaic(1)\n{scene}"));
+    let reset = run(&format!("fillp(0) mosaic(1) rshift(0, 0)\n{scene}"));
+    assert_eq!(plain.framebuffer(), reset.framebuffer());
+    let reset = run(&format!(
+        "fillp(0) mosaic(1) for y = 0, 255 do rshift(y, 0) end\n{scene}"
+    ));
     assert_eq!(plain.framebuffer(), reset.framebuffer());
 }
 
@@ -631,6 +640,193 @@ fn mosaic_composes_with_the_rest_of_the_draw_state() {
 }
 
 // ---------------------------------------------------------------------------
+// rshift (per-scanline raster displacement)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_positive_shift_moves_the_line_right_pixel_by_pixel() {
+    // Asymmetric content, so the direction cannot be read either way round:
+    // colour 7 sits immediately left of colour 3.
+    let con = run("cls(9) pset(0, 5, 7) pset(1, 5, 3) rshift(5, 2)");
+    assert_eq!(px(&con, 0, 5), 9);
+    assert_eq!(px(&con, 1, 5), 9);
+    assert_eq!(px(&con, 2, 5), 7, "positive dx moves content RIGHT");
+    assert_eq!(px(&con, 3, 5), 3, "and keeps the two in order");
+    assert_eq!(px(&con, 4, 5), 9);
+    // Only that one scanline moved.
+    assert_eq!(count(&con, 7), 1);
+    assert_eq!(count(&con, 3), 1);
+    for y in [4, 6] {
+        assert!(
+            (0..SCREEN_W).all(|x| px(&con, x, y) == 9),
+            "row {y} is clean"
+        );
+    }
+    assert_eq!(con.draw_state().rshift(5), 2);
+    assert!(con.draw_state().rshift_active());
+}
+
+#[test]
+fn shifts_wrap_around_the_line_in_both_directions() {
+    // Right off the edge and back in at x = 0.
+    let con = run("cls(9) pset(0, 5, 7) pset(143, 5, 3) rshift(5, 1)");
+    assert_eq!(px(&con, 1, 5), 7);
+    assert_eq!(px(&con, 0, 5), 3, "the right edge wrapped to the left one");
+
+    // Negative dx moves left, and the left edge wraps to the right one.
+    let con = run("cls(9) pset(0, 5, 7) pset(1, 5, 3) rshift(5, -1)");
+    assert_eq!(px(&con, 143, 5), 7);
+    assert_eq!(px(&con, 0, 5), 3);
+}
+
+#[test]
+fn a_shift_is_reduced_modulo_the_screen_width() {
+    // dx, dx + 144 and dx - 144 are the same shift, so a sweep never has to
+    // clamp: -142 == 2 == 146 == 1010.
+    let two = run("cls(9) pset(0, 5, 7) pset(1, 5, 3) rshift(5, 2)");
+    for dx in ["146", "-142", "2 + 144 * 7", "2 - 144 * 7"] {
+        let con = run(&format!(
+            "cls(9) pset(0, 5, 7) pset(1, 5, 3) rshift(5, {dx})"
+        ));
+        assert_eq!(two.framebuffer(), con.framebuffer(), "rshift(5, {dx})");
+        assert_eq!(con.draw_state().rshift(5), 2, "stored as dx mod 144");
+    }
+    // A whole-screen-width shift is the identity, not a no-op call: it is
+    // stored as 0 and the pass is skipped.
+    let con = run("cls(9) pset(0, 5, 7) rshift(5, 144)");
+    assert_eq!(px(&con, 0, 5), 7);
+    assert_eq!(con.draw_state().rshift(5), 0);
+    assert!(!con.draw_state().rshift_active());
+}
+
+#[test]
+fn a_bare_rshift_clears_every_line_and_one_argument_clears_one() {
+    let plain = run("cls(9) rectfill(0, 0, 40, 40, 7) circfill(70, 70, 12, 3)");
+    let scene = "cls(9) rectfill(0, 0, 40, 40, 7) circfill(70, 70, 12, 3)";
+
+    let swept = run(&format!("for y = 0, 255 do rshift(y, y % 17) end {scene}"));
+    assert_ne!(plain.framebuffer(), swept.framebuffer(), "the sweep shows");
+
+    let cleared = run(&format!(
+        "for y = 0, 255 do rshift(y, y % 17) end rshift() {scene}"
+    ));
+    assert_eq!(plain.framebuffer(), cleared.framebuffer());
+    assert!(!cleared.draw_state().rshift_active());
+
+    // `rshift(y)` is `rshift(y, 0)`: it clears just that line.
+    let one = run(&format!("rshift(5, 9) rshift(9, 9) rshift(5) {scene}"));
+    assert_eq!(one.draw_state().rshift(5), 0);
+    assert_eq!(one.draw_state().rshift(9), 9);
+    assert!(one.draw_state().rshift_active());
+}
+
+#[test]
+fn a_scanline_off_the_screen_is_a_no_op() {
+    let plain = run("cls(9) rectfill(0, 0, 40, 40, 7)");
+    let con = run("cls(9) rectfill(0, 0, 40, 40, 7) rshift(-1, 5) rshift(256, 5) rshift(9999, 5)");
+    assert_eq!(plain.framebuffer(), con.framebuffer());
+    assert!(!con.draw_state().rshift_active());
+    assert_eq!(con.draw_state().rshift(-1), 0);
+    assert_eq!(con.draw_state().rshift(256), 0);
+}
+
+#[test]
+fn mosaic_runs_before_rshift() {
+    // mosaic(8) grows the 4x4 patch into the whole (0, 0) block, then the shift
+    // displaces row 0 of the *finished* frame — it never slices a block open.
+    let con = run("cls(9) rectfill(0, 0, 3, 3, 7) mosaic(8) rshift(0, 8)");
+    assert_eq!(
+        count(&con, 7),
+        64,
+        "the block survives, one row of it moved"
+    );
+    assert_eq!(px(&con, 0, 0), 9, "row 0 vacated its first 8 columns...");
+    assert_eq!(px(&con, 8, 0), 7, "...and landed 8 to the right");
+    // The discriminating pair: had the shift run first, mosaic would have
+    // re-blocked row 0 and (0, 1) would read 9 while (8, 1) read 7.
+    assert_eq!(px(&con, 0, 1), 7);
+    assert_eq!(px(&con, 8, 1), 9);
+}
+
+#[test]
+fn rshift_is_in_the_framebuffer_so_screen_text_shows_it() {
+    let con = run("cls(9) rectfill(0, 0, 3, 3, 7) rshift(1, 2)");
+    let text = screen_text(&con);
+    assert_eq!(text.len(), SCREEN_H);
+    assert_eq!(&text[0][..8], "77779999");
+    assert_eq!(&text[1][..8], "99777799");
+    assert_eq!(&text[2][..8], "77779999");
+}
+
+#[test]
+fn rshift_persists_across_frames_and_does_not_feed_back() {
+    let mut con = Console::new(
+        &cart("cls(9)\npset(0, 3, 7)\nraw = pget(0, 3)\nmoved = pget(5, 3)"),
+        0,
+    )
+    .unwrap();
+    con.eval("rshift(3, 5)").unwrap();
+    for _ in 0..5 {
+        con.step(0).unwrap();
+    }
+    assert_eq!(con.draw_state().rshift(3), 5, "nothing resets the table");
+
+    // `pget` reads the pristine draw buffer: the cart still sees its pixel
+    // where it drew it, un-shifted.
+    assert_eq!(con.get_global("raw").unwrap().as_i64(), Some(7));
+    assert_eq!(con.get_global("moved").unwrap().as_i64(), Some(9));
+    // Only the presented frame is displaced.
+    assert_eq!(px(&con, 0, 3), 9);
+    assert_eq!(px(&con, 5, 3), 7);
+
+    // Ten frames of an un-cleared, shifted screen do not compound: the effect
+    // is recomputed from the pristine draw buffer every frame, so the pixel
+    // sits at x = 5 forever instead of walking right.
+    let mut a = Console::new(&cart("pset(0, 3, 7) rshift(3, 5)"), 0).unwrap();
+    a.step(0).unwrap();
+    let first = *a.framebuffer();
+    for _ in 0..9 {
+        a.step(0).unwrap();
+    }
+    assert_eq!(&first, a.framebuffer());
+    assert_eq!(px(&a, 5, 3), 7);
+}
+
+#[test]
+fn rshift_composes_with_the_rest_of_the_draw_state() {
+    // The display palette stays scanout-only under a shift too.
+    let con = run("cls(9) rectfill(0, 0, 7, 7, 7) pal(7, 2, 1) rshift(0, 4)");
+    assert_eq!(count(&con, 7), 64);
+    assert_eq!(count(&con, 2), 0);
+    assert_eq!(con.display_palette()[7], 2);
+
+    // The clip rect bounds the drawing, not the raster pass: a shifted line
+    // wraps across the whole 144-pixel screen regardless of the clip.
+    let con = run("cls(9) clip(0, 0, 8, 8) cls(3) clip() rshift(0, 140)");
+    // The 8 clipped columns 0..7 land on 140..143 and wrap onto 0..3.
+    assert_eq!(px(&con, 140, 0), 3, "the clipped clear moved to the right");
+    assert_eq!(px(&con, 143, 0), 3);
+    assert_eq!(
+        px(&con, 3, 0),
+        3,
+        "and the overflow wrapped back to the left"
+    );
+    assert_eq!(px(&con, 4, 0), 9);
+    assert_eq!(px(&con, 139, 0), 9);
+    assert_eq!(count(&con, 3), 8 * 8, "nothing gained or lost");
+}
+
+#[test]
+fn a_full_sine_sweep_is_a_seamless_wrap() {
+    // The idiom carts use: 256 cheap calls a frame. Every pixel that leaves one
+    // edge arrives at the other, so no colour is ever created or destroyed.
+    let con = run("cls(9) rectfill(0, 0, 60, 255, 7)
+         for y = 0, 255 do rshift(y, 4 * sin(y / 32)) end");
+    assert_eq!(count(&con, 7), 61 * 256, "wrap, not clip: nothing is lost");
+    assert_eq!(count(&con, 9), FB_LEN - 61 * 256);
+}
+
+// ---------------------------------------------------------------------------
 // determinism
 // ---------------------------------------------------------------------------
 
@@ -648,6 +844,7 @@ fn the_effects_replay_identically() {
           circfill(70, 70, 20 + f % 9, 3)
           sspr(0, 0, 8, 8, f % 20, 40, 8 + f % 24, 8 + f % 13, f % 2 == 0, f % 3 == 0)
           mosaic(1 + f % 6)
+          for y = 0, 255 do rshift(y, (f % 5) * sin(y / 32 + t())) end
         end";
     let text = cart("").replace("function _draw()\n\nend", body);
 
@@ -660,6 +857,7 @@ fn the_effects_replay_identically() {
     assert_eq!(a.framebuffer(), b.framebuffer());
     assert_eq!(a.draw_state().fillp(), b.draw_state().fillp());
     assert_eq!(a.draw_state().mosaic(), b.draw_state().mosaic());
+    assert_eq!(a.draw_state(), b.draw_state(), "shift table included");
 
     // A fresh console replaying the same frames lands in the same place.
     let mut c = Console::new(&text, 7).unwrap();

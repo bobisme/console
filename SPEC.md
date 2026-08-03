@@ -82,6 +82,7 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `palt([c], [flag])` | mark color c transparent in `spr()`; no args resets to "only color 0" |
 | `fillp([p=0])` | 4×4 dither pattern for the **shape** primitives; 16-bit, bit 15 = top-left, row-major. Clear bit = the color's low nibble, set bit = its high nibble (or nothing when that nibble is 0). No args (or 0) = solid |
 | `mosaic([f=1])` | end-of-frame pixelation: every f×f block of the finished frame becomes its top-left pixel. f clamped to 1–32; 1 (or no args) = off |
+| `rshift([y], [dx=0])` | end-of-frame per-scanline horizontal shift: scanline y (0–255) is displaced dx pixels, positive = right, **wrapping** around the 144-wide line. dx is reduced mod 144 (so −1 = 143); y off screen is a no-op. Write-only: `rshift()` clears every line, `rshift(y)` clears line y |
 | `btn(i)` / `btnp(i)` | button held / just-pressed this frame |
 | `rnd([n=1])` | deterministic float in [0, n) — PCG32 or xoshiro seeded PRNG in Rust |
 | `srand(seed)` | reseed PRNG (reset seeds it to 0 unless overridden) |
@@ -93,8 +94,8 @@ All draw coordinates are floats, truncated toward negative infinity (`flr`) befo
 
 ### Draw state
 
-`camera`, `clip`, `pal`, `palt`, `fillp` and `mosaic` form one block of
-**persistent** draw state.
+`camera`, `clip`, `pal`, `palt`, `fillp`, `mosaic` and `rshift` form one block
+of **persistent** draw state.
 It is **never auto-reset at a frame boundary** (PICO-8 semantics): a cart that
 calls `camera(0, -8)` once keeps that offset until it changes it. Only a cart
 call — or a fresh console / `reset` — moves it. Every default is a no-op, so
@@ -143,9 +144,11 @@ carts that ignore all of this render exactly as before.
   - `pal()` does **not** reset `fillp` (nor does anything else): the palette
     maps, `palt` and the fill pattern are separate state, as in PICO-8. `cls`,
     `spr`, `sspr`, `map` and `print` all ignore the pattern entirely.
-- **mosaic(f)** — see [Frame pipeline](#frame-pipeline) below. It is draw state
-  in that it persists and lives beside the rest, but it is applied once per
-  frame rather than per drawing op.
+- **mosaic(f)** and **rshift(y, dx)** — see [Frame pipeline](#frame-pipeline)
+  below. They are draw state in that they persist and live beside the rest, but
+  they are applied once per frame rather than per drawing op. The 256-entry
+  shift table is console state like the tile map: it survives across frames and
+  a replay of the same inputs reproduces it exactly.
 
 `sspr()` shares the sprite pixel path with `spr()`: the camera offsets the
 destination rectangle, the clip rect bounds it, `palt` decides transparency on
@@ -158,10 +161,14 @@ Source pixels outside the 128×128 sheet are skipped, never wrapped.
 
 ### Frame pipeline
 
-Each frame: `_update()`, `_draw()`, then **`mosaic`**, then the frame is
-presented (screenshot, `screen_text`, web canvas) with the **display palette**
-applied by the host at scanout. The two post-effects sit on opposite sides of
-the ground truth:
+Each frame: `_update()`, `_draw()`, then **`mosaic`**, then **`rshift`**, then
+the frame is presented (screenshot, `screen_text`, web canvas) with the
+**display palette** applied by the host at scanout. The order is fixed and
+load-bearing: mosaic pixelates the finished frame, rshift then displaces the
+already-pixelated scanlines, so a shift can never slice a mosaic block into
+partial halves (and water-over-mosaic reads the way the hardware effect did).
+The post-effects sit on opposite sides of the ground truth from the display
+palette:
 
 - **mosaic(f)** rewrites the pixels. Every f×f block of the finished frame is
   replaced by its **top-left** pixel (top-left, not an average: the framebuffer
@@ -176,6 +183,30 @@ the ground truth:
   The effect is computed from the pristine draw buffer every frame and never
   fed back: `pget` and the next frame's drawing still see full-resolution
   pixels, so a mosaicked screen does not compound frame after frame.
+- **rshift(y, dx)** displaces one scanline of the finished frame horizontally —
+  the HDMA raster trick, and the cheapest parallax/water/heat-haze/wobble on
+  the machine. Scanline `y` (0–255) moves `dx` pixels; **positive `dx` moves
+  content right**, and the line **wraps**: the pixel at column `x` lands at
+  `(x + dx) mod 144`, so whatever leaves one edge arrives at the other. Wrap,
+  not clip — that is what makes a sine sweep seamless instead of torn.
+  - **Exact `dx` rule**: `dx` is reduced with a Euclidean remainder mod 144 and
+    stored as `dx mod 144` in 0–143. Every argument is therefore legal and
+    `dx`, `dx ± 144`, `dx ± 288`… are the same shift; `-1` is stored as 143 (a
+    one-pixel left shift *is* a 143-pixel right shift on a wrapping line), and
+    `rshift(y, 144)` stores 0, i.e. the identity. Fractional `dx` is floored
+    like every other coordinate. `y` outside 0–255 is a no-op, like a `pset`
+    off the screen.
+  - **Write-only API.** `rshift()` with no arguments clears the whole table to
+    0; `rshift(y)` is `rshift(y, 0)` and clears one line. There is no getter —
+    carts recompute the sweep each frame
+    (`for y=0,255 do rshift(y, 3*sin(t()+y/32)) end`), and that loop of 256
+    calls allocates nothing and touches no tables.
+  - Like mosaic it is a **framebuffer** effect, so it is in `screen_text`, in
+    PNG screenshots and in framebuffer goldens; it is computed from the
+    pristine draw buffer every frame, so `pget` and the next frame's drawing
+    are unaffected and a shifted screen never compounds. An all-zero table (the
+    default) skips the pass entirely, so a cart that never calls `rshift`
+    presents a byte-identical framebuffer to one from before it existed.
 - **pal(c0, c1, 1)** never touches the framebuffer at all (see above).
 
 `map()` is defined as a sequence of `spr()` calls and shares their pixel path
@@ -188,9 +219,10 @@ what lands in the framebuffer. Only the per-**cell** tile-0 skip is map-specific
 Host surfaces: `Console::display_palette() -> &[u8; 16]` (identity by default)
 and `Console::draw_state()`. `console-agent` applies the display palette when
 it renders PNG screenshots; `screen_text` stays raw. The web shell composes
-`palette[dpal[idx]]`. `DrawState::fillp()` and `DrawState::mosaic()` expose the
-two new fields; hosts need no code for either, because `mosaic` is already
-folded into `Console::framebuffer()`.
+`palette[dpal[idx]]`. `DrawState::fillp()`, `DrawState::mosaic()` and
+`DrawState::rshift(y)` / `rshift_table()` / `rshift_active()` expose the new
+fields; hosts need no code for any of them, because both post-effects are
+already folded into `Console::framebuffer()`.
 
 ## Cart format (`.cart`, UTF-8 text)
 

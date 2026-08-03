@@ -31,6 +31,9 @@ pub const MAP_LEN: usize = MAP_W * MAP_H;
 
 /// A screen's worth of palette indices.
 pub type Framebuffer = [u8; FB_LEN];
+/// One horizontal shift per scanline, already reduced to `0..SCREEN_W` (see
+/// [`DrawState::set_rshift`]). All zeros = no raster displacement.
+pub type ShiftTable = [u8; SCREEN_H];
 /// A full 128x128 sprite sheet of palette indices.
 pub type SpriteSheet = [u8; SHEET_LEN];
 /// A full 128x64 tile map: one sprite index per cell. Tile 0 is the empty
@@ -188,6 +191,12 @@ pub struct DrawState {
     fillp: u16,
     /// End-of-frame pixelation block edge; 1 = off.
     mosaic: u8,
+    /// End-of-frame per-scanline horizontal shift, each already reduced to
+    /// `0..SCREEN_W` rightward pixels. All zeros = off.
+    rshift: ShiftTable,
+    /// How many entries of `rshift` are non-zero, so the whole pass can be
+    /// skipped in O(1) for the overwhelmingly common "no raster effect" case.
+    rshift_lines: u16,
 }
 
 impl Default for DrawState {
@@ -204,6 +213,8 @@ impl Default for DrawState {
             palt: DEFAULT_PALT,
             fillp: SOLID_FILLP,
             mosaic: 1,
+            rshift: [0; SCREEN_H],
+            rshift_lines: 0,
         }
     }
 }
@@ -345,6 +356,54 @@ impl DrawState {
     /// The mosaic block edge in pixels. 1 = off (the default).
     pub fn mosaic(&self) -> u8 {
         self.mosaic
+    }
+
+    /// `rshift(y, dx)`: displace scanline `y` by `dx` pixels at end of frame,
+    /// positive = right, **wrapping** around the 144-pixel line.
+    ///
+    /// `dx` is reduced modulo [`SCREEN_W`] with a Euclidean remainder, so every
+    /// argument is legal and `dx`, `dx + 144` and `dx - 144` are the same
+    /// shift: `-1` is stored as 143 (a one-pixel left shift *is* a 143-pixel
+    /// right shift on a wrapping line). `y` outside `0..SCREEN_H` is a no-op,
+    /// exactly like a `pset` off the bottom of the screen.
+    pub fn set_rshift(&mut self, y: i32, dx: i32) {
+        if y < 0 || y as usize >= SCREEN_H {
+            return;
+        }
+        let dx = dx.rem_euclid(SCREEN_W as i32) as u8;
+        let slot = &mut self.rshift[y as usize];
+        match (*slot == 0, dx == 0) {
+            (true, false) => self.rshift_lines += 1,
+            (false, true) => self.rshift_lines -= 1,
+            _ => {}
+        }
+        *slot = dx;
+    }
+
+    /// `rshift()`: clear every scanline shift back to 0.
+    pub fn reset_rshift(&mut self) {
+        self.rshift = [0; SCREEN_H];
+        self.rshift_lines = 0;
+    }
+
+    /// The shift applied to scanline `y`, as stored: `0..SCREEN_W` rightward
+    /// pixels. Off-screen rows read as 0.
+    pub fn rshift(&self, y: i32) -> u8 {
+        if y < 0 || y as usize >= SCREEN_H {
+            return 0;
+        }
+        self.rshift[y as usize]
+    }
+
+    /// The whole shift table, for the once-per-frame raster pass.
+    pub fn rshift_table(&self) -> &ShiftTable {
+        &self.rshift
+    }
+
+    /// Is any scanline shifted? False (the default) lets the frame pipeline
+    /// skip the raster pass entirely.
+    pub fn rshift_active(&self) -> bool {
+        self.rshift_lines != 0
     }
 
     /// Resolve a shape colour argument (`c0 + c1 * 16`) against the current
@@ -896,6 +955,31 @@ pub fn apply_mosaic(fb: &mut Framebuffer, f: u8) {
             rest[..SCREEN_W].copy_from_slice(&top[row..row + SCREEN_W]);
         }
         by += f;
+    }
+}
+
+/// Displace each scanline of the framebuffer horizontally, in place, wrapping
+/// around the 144-pixel line. `shifts[y]` is the rightward shift for row `y`,
+/// already reduced to `0..SCREEN_W`; an all-zero table is a no-op.
+///
+/// This is `rshift(y, dx)` — the HDMA-style raster trick — run once at the end
+/// of every frame, **after** [`apply_mosaic`]: the frame is pixelated first and
+/// the finished pixels are then displaced, so a shift never slices a mosaic
+/// block in half. Like mosaic it is a **framebuffer** effect, so `screen_text`,
+/// PNG screenshots and framebuffer goldens all show it, and it is computed from
+/// the pristine draw buffer every frame, so it never compounds.
+///
+/// Wrap, not clip: pixels pushed off one edge reappear at the other, which is
+/// what makes a sine sweep read as water or heat haze instead of a torn edge.
+/// No allocation — each row is rotated in place.
+pub fn apply_rshift(fb: &mut Framebuffer, shifts: &ShiftTable) {
+    for (y, &dx) in shifts.iter().enumerate() {
+        let dx = dx as usize % SCREEN_W;
+        if dx == 0 {
+            continue;
+        }
+        let row = y * SCREEN_W;
+        fb[row..row + SCREEN_W].rotate_right(dx);
     }
 }
 

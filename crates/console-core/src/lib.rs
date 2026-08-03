@@ -49,7 +49,7 @@ pub use crate::cart::Cart;
 pub use crate::error::Error;
 pub use crate::gfx::{
     DrawState, FB_LEN, FILLP_SIZE, Framebuffer, IDENTITY_PAL, MAP_H, MAP_LEN, MAP_W, MAX_MOSAIC,
-    PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN, SHEET_W, SPRITE_SIZE, SpriteSheet, TileMap,
+    PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN, SHEET_W, SPRITE_SIZE, ShiftTable, SpriteSheet, TileMap,
 };
 pub use crate::gfx_meta::{AnimDef, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
@@ -348,17 +348,28 @@ impl Console {
 
     /// Refresh the presented frame from the draw framebuffer.
     ///
-    /// This is where `mosaic(f)` happens: the cart draws at full resolution and
-    /// the finished frame is pixelated on the way out, so the effect is part of
+    /// This is where the end-of-frame effects happen, in order: the cart draws
+    /// at full resolution, the finished frame is pixelated by `mosaic(f)` and
+    /// then displaced scanline by scanline by `rshift(y, dx)`. Both are part of
     /// the deterministic framebuffer (screenshots, `screen_text`, goldens) but
-    /// never feeds back into the next frame's drawing or into `pget`.
+    /// neither feeds back into the next frame's drawing or into `pget`.
+    ///
+    /// Mosaic first, rshift second: the raster shift moves finished pixels, so
+    /// it can never split a mosaic block, and water-over-pixelation looks the
+    /// way a real HDMA scanline effect on a mosaic-ed layer looked.
     fn sync_framebuffer(&mut self) {
         let s = self.state.borrow();
         self.fb.copy_from_slice(&s.fb[..]);
         self.dpal = *s.draw.display_palette();
         let mosaic = s.draw.mosaic();
+        // Copied out (256 bytes) only when a cart actually uses the effect, so
+        // the default path stays the plain framebuffer memcpy above.
+        let rshift = s.draw.rshift_active().then(|| *s.draw.rshift_table());
         drop(s);
         gfx::apply_mosaic(&mut self.fb, mosaic);
+        if let Some(shifts) = rshift {
+            gfx::apply_rshift(&mut self.fb, &shifts);
+        }
     }
 }
 

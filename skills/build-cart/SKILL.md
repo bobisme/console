@@ -106,6 +106,11 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
     frame becomes its top-left pixel (f 1-32, `mosaic()` = off). Unlike the
     display palette this really rewrites the framebuffer, so `screen_text` and
     screenshots show it.
+  - `rshift(y,dx)` — end-of-frame per-scanline shift: line `y` (0-255) slides
+    `dx` pixels, positive = RIGHT, WRAPPING around the 144-wide line (`dx` is
+    taken mod 144, so -1 == 143 and any value is legal). Write-only:
+    `rshift()` clears every line, `rshift(y)` clears one. Applied AFTER
+    `mosaic`, and in the framebuffer like it.
 - Input: `btn(i)` held / `btnp(i)` pressed-this-frame. 0=L 1=R 2=U 3=D
   4=A 5=B 6=menu (start/select-style; the web shell's triangle button).
 - Audio: `sfx(n,[ch])` with `ch` 0–5 (`sfx(-1,ch)` stops a channel),
@@ -124,6 +129,26 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
   scene in — no extra draw code, no shader, and it is in `screen_text` so you
   can assert on it. Pair it with a display-palette fade (`pal(i,0,1)`) for a
   dissolve to black that costs nothing either.
+- **Raster effects with `rshift`.** One line in `_draw()` buys the whole SNES
+  scanline-trick family, because the shift wraps instead of clipping:
+
+  ```lua
+  -- water / heat haze: a sine wave rolling down the screen
+  for y = 0, 255 do rshift(y, 3 * sin(t() + y / 32)) end
+  -- (sin takes TURNS here, so y/32 is 8 full waves down the 256 lines)
+
+  -- horizontal parallax: each band scrolls at its own speed
+  for y = 0, 255 do rshift(y, -t() * (10 + y / 8)) end
+
+  -- reflection: only the bottom half wobbles
+  rshift() for y = 160, 255 do rshift(y, 2 * sin(t() * 2 + y / 16)) end
+  ```
+
+  Clear it with `rshift()` before rebuilding the sweep if you only shift part
+  of the screen — the table persists across frames like every other bit of draw
+  state. It costs nothing to run and shows up in `screen_text`, so you can
+  assert on it. Because it runs after `mosaic`, `mosaic(4)` plus a sine sweep
+  gives chunky wobbling water rather than sliced-up blocks.
 - **Dither shading with `fillp`.** With only 16 fixed colors, the way to get a
   third shade between two palette entries is a pattern, not a color:
   `fillp(0x5a5a) rectfill(x0,y0,x1,y1, dark + light*16)` is a 50% blend of two
