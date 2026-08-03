@@ -97,7 +97,11 @@ Draw by editing hex in `__sprites__` (one hex digit per pixel). Never
 hand-shift hex — use the transforms. Declare every sprite and anim in
 `__gfx_meta__` (anchor at the feet/contact point for characters, visual
 center for floaters). Anim frame `i` = the sprite's rect displaced `i`
-widths rightward, wrapping down a row band.
+widths rightward, wrapping down a row band. Leave tile 0 blank — sprite 0
+is reserved as the empty tile by convention (color 0 is already `spr()`'s
+transparent color, so an all-zero sprite 0 is a natural no-op/placeholder
+id); nothing in the engine enforces this, but the demo cart follows it and
+its test suite checks for it.
 
 ```bash
 console-agent sprite render game.cart <sprite|anim|tx,ty,w,h> \

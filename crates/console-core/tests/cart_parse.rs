@@ -93,6 +93,18 @@ fn demo_cart_parses() {
     assert_eq!(cart.title(), "Micro Dash");
     // Sprite 1 (the player) starts at x=8 on sheet row 0.
     assert_ne!(cart.sprites()[8 + 2], 0);
-    // Sprite 0 is blank.
+    // Sprite 0 is blank. This is a cart-authoring convention, not an engine
+    // requirement -- console-core's `spr()` treats sprite index 0 like any
+    // other (see gfx.rs), so nothing in the runtime actually depends on it.
+    // The convention exists because color 0 is spr()'s transparent color
+    // (SPEC.md "Palette"), so an all-color-0 sprite 0 is a natural,
+    // by-construction no-op/placeholder id -- e.g. safe to pass to spr()
+    // before an animation table is populated, or to leave unused tile slots
+    // pointing at. demo.cart's own sprites all start at tile 1 (see
+    // `__gfx_meta__` below: `sprite player rect=1,0 ...`), so this assertion
+    // is really "nothing accidentally drew into the reserved slot" -- a
+    // regression guard for the shipped demo cart, documented in SKILL.md's
+    // sprite-authoring section so other carts can follow the same
+    // convention deliberately instead of tripping over it.
     assert!(cart.sprites()[0..8].iter().all(|&p| p == 0));
 }
