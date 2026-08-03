@@ -1451,7 +1451,7 @@ fn the_soundtest_cart_loads_and_describes_itself() {
     assert!(cart.instruments().iter().any(|i| i.env.is_some()));
     assert!(cart.instruments().iter().any(|i| i.vib.is_some()));
     assert!(cart.instruments().iter().any(|i| i.sweep.is_some()));
-    assert_eq!(cart.instrument("kick").unwrap().sweep.unwrap().semis, -14);
+    assert_eq!(cart.instrument("kick").unwrap().sweep.unwrap().semis, -18);
     // Tempo sugar drives most of it.
     let tempo = cart.audio().tempo().unwrap();
     assert_eq!((tempo.bpm, tempo.rows_per_beat, tempo.speed), (112, 4, 8));
@@ -1518,7 +1518,7 @@ fn the_soundtest_menu_navigates_and_stops() {
 /// This is the PoC v2 counterpart of [`DEMO_AUDIO_GOLDEN`]: it pins the
 /// envelope, vibrato, sweep, arpeggio, slide and fade paths all at once. If it
 /// changes, the new synth vocabulary changed.
-const SOUNDTEST_GROOVE_GOLDEN: u64 = 0x98fd_7369_d783_2a07;
+const SOUNDTEST_GROOVE_GOLDEN: u64 = 0x386a_fe87_02ce_af73;
 
 #[test]
 fn soundtest_groove_matches_the_golden_hash() {

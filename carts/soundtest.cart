@@ -144,9 +144,9 @@ __instruments__
 # inside the row or the vibrato never gets to speak - the 24-frame flute rows
 # can afford 8 frames of delay, the 8-frame groove rows only 2.
 inst lead      wave=1
-inst lead_vib  wave=1 vib=20,12,2
+inst lead_vib  wave=1 vib=16,12,2
 inst flute     wave=2 env=8,10,5
-inst flute_vib wave=2 env=8,10,5 vib=40,8,8
+inst flute_vib wave=2 env=8,10,5 vib=28,8,8
 inst pluck     wave=1 env=0,10,3
 inst bass      wave=3 env=0,6,4
 inst chord     wave=0
@@ -154,8 +154,8 @@ inst echo      wave=1 env=0,6,2
 
 # Percussion is just instruments: an ordinary note row gives the sweep its
 # start pitch and the envelope does the rest.
-inst kick      wave=3 sweep=-14,5 env=0,6,0
-inst snare     wave=5 sweep=-5,4  env=0,8,0
+inst kick      wave=3 sweep=-18,4 env=0,8,0
+inst snare     wave=5 sweep=-8,3  env=0,5,0
 inst hat       wave=5 env=0,2,0
 
 __sfx__
@@ -288,7 +288,7 @@ A5 flute_vib 5
 G5 flute_vib 5
 E5 flute_vib 5
 D5 flute_vib 5
-E5 flute_vib 5 vib70,10
+E5 flute_vib 5 vib48,10
 ---
 
 # ---- 8/9: arpeggio chords over a root bass -------------------------------
@@ -468,7 +468,7 @@ A4 lead_vib 6 arp3,7
 ---
 F4 lead_vib 5
 ---
-E4 lead_vib 6 vib60,10
+E4 lead_vib 6 vib40,10
 ---
 G4 lead_vib 6
 ---
@@ -490,44 +490,44 @@ C3 kick 7
 B6 hat 3
 B6 hat 2
 ---
-D5 snare 6
-B6 hat 2
-C3 kick 5
+D5 snare 7
 B6 hat 2
 C3 kick 6
+B6 hat 2
+C3 kick 7
 B6 hat 3
 ---
 B6 hat 2
-D5 snare 6
+D5 snare 7
 B6 hat 2
-C3 kick 4
+C3 kick 5
 B6 hat 2
 C3 kick 7
 B6 hat 3
 B6 hat 2
 ---
-D5 snare 6
-B6 hat 2
-C3 kick 5
+D5 snare 7
 B6 hat 2
 C3 kick 6
-B6 hat 3
-C3 kick 4
 B6 hat 2
-D5 snare 6
-D5 snare 4
+C3 kick 7
+B6 hat 3
+C3 kick 5
+B6 hat 2
+D5 snare 7
 D5 snare 5
 D5 snare 6
+D5 snare 7
 
 sfx 19 speed=auto
-A4 chord 3 arp3,7
-A4 chord 3 arp3,7
-A4 chord 3 arp3,7
-A4 chord 3 arp3,7
-A4 chord 3 arp3,7
-A4 chord 3 arp3,7
-A4 chord 3 arp3,7
-A4 chord 3 arp3,7
+A4 chord 2 arp3,7
+A4 chord 2 arp3,7
+A4 chord 2 arp3,7
+A4 chord 2 arp3,7
+A4 chord 2 arp3,7
+A4 chord 2 arp3,7
+A4 chord 2 arp3,7
+A4 chord 2 arp3,7
 A4 chord 3 arp3,8
 A4 chord 3 arp3,8
 A4 chord 3 arp3,8
