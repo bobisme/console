@@ -595,6 +595,9 @@ given ⇒ unchanged report-only behavior (exit 0, no `violations` key).
 `--summary` prints one line per anim (name, frame count, worst drift, worst
 changed-pixel count, unique-color count) instead of the full JSON; it
 combines with the threshold flags, which still gate the exit code.
+Unique-color comparison requires at least two frames: one-frame animations
+report it as not applicable (`unique_colors=n/a` in summaries) and never
+violate `--no-unique-colors` merely for using colors.
 
 RPC mirrors: `sprite_render`, `sprite_strip`, `sprite_onion`, `sprite_diff`,
 `sprite_ghost`, `sprite_lint` against the session's loaded cart.

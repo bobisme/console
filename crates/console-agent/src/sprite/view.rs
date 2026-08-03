@@ -600,7 +600,8 @@ pub struct LintThresholds {
     pub max_area_var: Option<f64>,
     /// Max allowed changed-pixel count between consecutive (or wrap) frames.
     pub max_changed: Option<u32>,
-    /// Any color that appears in exactly one frame is a violation.
+    /// Any color that appears in exactly one of at least two frames is a
+    /// violation. The comparison is not applicable to one-frame animations.
     pub no_unique_colors: bool,
 }
 
@@ -627,6 +628,8 @@ pub struct AnimSummary {
     pub worst_changed: Option<u32>,
     /// How many colors appear in exactly one frame.
     pub unique_colors: usize,
+    /// False when the animation has fewer than two frames to compare.
+    pub unique_colors_applicable: bool,
 }
 
 impl AnimSummary {
@@ -639,9 +642,14 @@ impl AnimSummary {
         let changed = self
             .worst_changed
             .map_or_else(|| "-".to_string(), |c| format!("{c}px"));
+        let unique = if self.unique_colors_applicable {
+            self.unique_colors.to_string()
+        } else {
+            "n/a".to_string()
+        };
         format!(
-            "{}: frames={} worst_drift={drift} worst_changed={changed} unique_colors={}",
-            self.anim, self.frame_count, self.unique_colors,
+            "{}: frames={} worst_drift={drift} worst_changed={changed} unique_colors={unique}",
+            self.anim, self.frame_count,
         )
     }
 }
@@ -807,11 +815,15 @@ fn lint_anim_gated(
             e.2 = count;
         }
     }
-    let unique_entries: Vec<(u8, usize, u32)> = seen
-        .iter()
-        .filter(|(_, (frames_using, _, _))| *frames_using == 1)
-        .map(|(&color, &(_, frame, count))| (color, frame, count))
-        .collect();
+    let unique_colors_applicable = n > 1;
+    let unique_entries: Vec<(u8, usize, u32)> = if unique_colors_applicable {
+        seen.iter()
+            .filter(|(_, (frames_using, _, _))| *frames_using == 1)
+            .map(|(&color, &(_, frame, count))| (color, frame, count))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let unique: Vec<Value> = unique_entries
         .iter()
         .map(|&(color, frame, count)| json!({"color": color, "frame": frame, "count": count}))
@@ -879,6 +891,7 @@ fn lint_anim_gated(
         worst_drift: worst_drift.map(round2),
         worst_changed,
         unique_colors: unique_entries.len(),
+        unique_colors_applicable,
     };
 
     let value = json!({
@@ -892,6 +905,10 @@ fn lint_anim_gated(
         "frames": frames_json,
         "pairs": pairs,
         "colors_unique_to_single_frame": unique,
+        "unique_color_analysis": {
+            "applicable": unique_colors_applicable,
+            "reason": if unique_colors_applicable { Value::Null } else { json!("requires_at_least_two_frames") },
+        },
     });
 
     Ok((value, violations, summary))

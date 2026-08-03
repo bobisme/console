@@ -533,6 +533,7 @@ fn m_sprite_lint(session: &Session, params: &Value) -> Result<Value, RpcErr> {
                     "worst_drift": s.worst_drift,
                     "worst_changed": s.worst_changed,
                     "unique_colors": s.unique_colors,
+                    "unique_colors_applicable": s.unique_colors_applicable,
                 })
             })
             .collect();

@@ -60,6 +60,7 @@ __gfx_meta__
 sprite dot rect=0,0 size=1x1 anchor=4,7
 anim dot.wave frames=0,1 fps=4 loop
 anim dot.tri frames=0,1,2 fps=4 loop
+anim dot.still frames=0 fps=4
 ";
 
 fn cart() -> Cart {
@@ -297,6 +298,26 @@ fn no_unique_colors_off_by_default_is_not_a_violation() {
     assert!(!violated);
 }
 
+#[test]
+fn no_unique_colors_is_not_applicable_to_a_one_frame_animation() {
+    let cart = cart();
+    let thresholds = LintThresholds {
+        no_unique_colors: true,
+        ..LintThresholds::default()
+    };
+    let (value, violated) =
+        view::lint_gated(&cart, &["dot.still".to_string()], &thresholds).expect("lint_gated");
+    assert!(!violated);
+    assert_eq!(value["violations"], json!([]));
+    let anim = &value["anims"][0];
+    assert_eq!(anim["colors_unique_to_single_frame"], json!([]));
+    assert_eq!(anim["unique_color_analysis"]["applicable"], false);
+    assert_eq!(
+        anim["unique_color_analysis"]["reason"],
+        "requires_at_least_two_frames"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // --summary
 // ---------------------------------------------------------------------------
@@ -316,7 +337,25 @@ fn summary_reports_frame_count_worst_drift_worst_changed_and_unique_colors() {
     approx(&json!(s.worst_drift.unwrap()), 2.95);
     assert_eq!(s.worst_changed, Some(3));
     assert_eq!(s.unique_colors, 1);
+    assert!(s.unique_colors_applicable);
     assert!(s.line().starts_with("dot.wave: frames=2"), "{}", s.line());
+}
+
+#[test]
+fn summary_marks_one_frame_unique_color_analysis_not_applicable() {
+    let cart = cart();
+    let (summaries, violations, violated) = view::lint_summary(
+        &cart,
+        &["dot.still".to_string()],
+        &LintThresholds::default(),
+    )
+    .expect("lint_summary");
+    assert!(!violated);
+    assert!(violations.is_empty());
+    let summary = &summaries[0];
+    assert_eq!(summary.unique_colors, 0);
+    assert!(!summary.unique_colors_applicable);
+    assert!(summary.line().ends_with("unique_colors=n/a"));
 }
 
 #[test]
@@ -357,6 +396,19 @@ fn cli_exit_code_is_one_when_a_threshold_is_violated() {
     ]));
     let _ = std::fs::remove_file(&path);
     assert_eq!(code, 1);
+}
+
+#[test]
+fn cli_no_unique_colors_accepts_a_one_frame_animation() {
+    let path = temp_cart();
+    let code = view::cli_view(&args(&[
+        "lint",
+        path.to_str().unwrap(),
+        "dot.still",
+        "--no-unique-colors",
+    ]));
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(code, 0);
 }
 
 #[test]
@@ -455,6 +507,7 @@ fn rpc_sprite_lint_summary_mirrors_the_cli_summary_shape() {
     assert_eq!(anim["anim"], "dot.wave");
     assert_eq!(anim["frames"], 2);
     assert_eq!(anim["unique_colors"], 1);
+    assert_eq!(anim["unique_colors_applicable"], true);
     approx(&anim["worst_drift"], 2.95);
     assert_eq!(anim["worst_changed"], 3);
     assert_eq!(resp["result"]["violated"], false);
@@ -474,4 +527,22 @@ fn rpc_sprite_lint_no_unique_colors_param_violates() {
         resp["result"]["violations"][0],
         json!({"anim": "dot.wave", "frame": 1, "metric": "unique_color", "value": 9, "limit": 0})
     );
+}
+
+#[test]
+fn rpc_sprite_lint_no_unique_colors_accepts_a_one_frame_animation() {
+    let mut session = loaded_session();
+    let resp = call(
+        &mut session,
+        "sprite_lint",
+        json!({"anims": ["dot.still"], "no_unique_colors": true, "summary": true}),
+    );
+    assert!(resp.get("error").is_none(), "{resp}");
+    assert_eq!(resp["result"]["violated"], false);
+    assert_eq!(resp["result"]["violations"], json!([]));
+    assert_eq!(
+        resp["result"]["anims"][0]["unique_colors_applicable"],
+        false
+    );
+    assert_eq!(resp["result"]["anims"][0]["unique_colors"], 0);
 }
