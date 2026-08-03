@@ -46,8 +46,8 @@ pub use crate::audio::{
 pub use crate::cart::Cart;
 pub use crate::error::Error;
 pub use crate::gfx::{
-    DrawState, FB_LEN, Framebuffer, IDENTITY_PAL, PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN, SHEET_W,
-    SPRITE_SIZE, SpriteSheet,
+    DrawState, FB_LEN, Framebuffer, IDENTITY_PAL, MAP_H, MAP_LEN, MAP_W, PALETTE, SCREEN_H,
+    SCREEN_W, SHEET_LEN, SHEET_W, SPRITE_SIZE, SpriteSheet, TileMap,
 };
 pub use crate::gfx_meta::{AnimDef, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
@@ -128,6 +128,7 @@ impl Console {
 
         let st = Rc::new(RefCell::new(state::State::new(
             Box::new(*cart.sprites()),
+            Box::new(*cart.map()),
             seed,
             cart.audio().clone(),
         )));

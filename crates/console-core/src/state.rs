@@ -1,7 +1,7 @@
 //! Mutable console state shared between Rust and the Lua closures.
 
 use crate::audio::{Audio, AudioBank};
-use crate::gfx::{DrawState, FB_LEN, Framebuffer, SHEET_LEN, SpriteSheet};
+use crate::gfx::{DrawState, FB_LEN, Framebuffer, MAP_LEN, SHEET_LEN, SpriteSheet, TileMap};
 use crate::rng::Pcg32;
 
 /// Everything the Lua API can touch. Owned by the [`Console`](crate::Console)
@@ -13,6 +13,10 @@ pub struct State {
     /// cart call (or a fresh console) changes it.
     pub draw: DrawState,
     pub sheet: Box<SpriteSheet>,
+    /// The live 128x64 tile map: the cart's `__map__` at load, then whatever
+    /// `mset` has made of it. Mutations persist across frames and are part of
+    /// console state, so a replay of the same inputs reproduces them exactly.
+    pub map: Box<TileMap>,
     /// Button mask for the frame being processed.
     pub input: u8,
     /// Button mask from the previous frame (drives `btnp`).
@@ -28,11 +32,12 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(sheet: Box<SpriteSheet>, seed: u64, bank: AudioBank) -> State {
+    pub fn new(sheet: Box<SpriteSheet>, map: Box<TileMap>, seed: u64, bank: AudioBank) -> State {
         State {
             fb: Box::new([0u8; FB_LEN]),
             draw: DrawState::new(),
             sheet,
+            map,
             input: 0,
             prev_input: 0,
             frame: 0,
@@ -45,6 +50,11 @@ impl State {
 
 impl Default for State {
     fn default() -> Self {
-        State::new(Box::new([0u8; SHEET_LEN]), 0, AudioBank::default())
+        State::new(
+            Box::new([0u8; SHEET_LEN]),
+            Box::new([0u8; MAP_LEN]),
+            0,
+            AudioBank::default(),
+        )
     }
 }

@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use mlua::{Lua, Result as LuaResult, Table, Value, Variadic};
 
-use crate::gfx::{self, col, fl};
+use crate::gfx::{self, MAP_H, MAP_W, col, fl};
 use crate::state::State;
 
 /// Number of buttons in the input mask.
@@ -52,6 +52,24 @@ fn num(v: f64) -> Value {
     } else {
         Value::Number(v)
     }
+}
+
+/// Flat index of map cell `(cx, cy)`, or `None` when it is off the map.
+/// Coordinates are floored the same way every other draw coordinate is.
+fn cell(cx: f64, cy: f64) -> Option<usize> {
+    let (x, y) = (fl(cx), fl(cy));
+    if x < 0 || y < 0 || x as usize >= MAP_W || y as usize >= MAP_H {
+        return None;
+    }
+    Some(y as usize * MAP_W + x as usize)
+}
+
+/// Floor a Lua float to a tile id, masked into 0..=255 (the sprite-sheet range
+/// wraps, mirroring how [`col`] masks colours).
+fn tile(v: f64) -> u8 {
+    let f = v.floor();
+    let i = if f.is_nan() { 0i64 } else { f as i64 };
+    (i & 0xff) as u8
 }
 
 /// Globals removed by [`sandbox`].
@@ -256,6 +274,74 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                 (fl(w.unwrap_or(1.0)), fl(h.unwrap_or(1.0))),
                 (truthy(fx.as_ref()), truthy(fy.as_ref())),
             );
+            Ok(())
+        })?,
+    )?;
+
+    // ---- tile map -----------------------------------------------------------
+    // `map([cel_x=0], [cel_y=0], [sx=0], [sy=0], [cel_w=MAP_W], [cel_h=MAP_H])`:
+    // blit a block of map cells. Bare `map()` draws the whole map at (0, 0).
+    // Every cell goes through the same low-level blit as `spr`, so the camera,
+    // the clip rect, `pal` and `palt` all apply exactly as they do to sprites.
+    // Tile 0 is the empty cell and is skipped.
+    type MapArgs = (
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+    );
+    let st = state.clone();
+    g.set(
+        "map",
+        lua.create_function(move |_, (cx, cy, sx, sy, cw, ch): MapArgs| {
+            let mut s = st.borrow_mut();
+            let State {
+                fb,
+                draw,
+                sheet,
+                map,
+                ..
+            } = &mut *s;
+            gfx::map(
+                fb,
+                draw,
+                sheet,
+                map,
+                (fl(cx.unwrap_or(0.0)), fl(cy.unwrap_or(0.0))),
+                (fl(sx.unwrap_or(0.0)), fl(sy.unwrap_or(0.0))),
+                (
+                    fl(cw.unwrap_or(MAP_W as f64)),
+                    fl(ch.unwrap_or(MAP_H as f64)),
+                ),
+            );
+            Ok(())
+        })?,
+    )?;
+
+    // `mget(cx, cy)`: tile id at a map cell; off the map reads as 0.
+    let st = state.clone();
+    g.set(
+        "mget",
+        lua.create_function(move |_, (cx, cy): (f64, f64)| {
+            Ok(match cell(cx, cy) {
+                Some(i) => st.borrow().map[i],
+                None => 0,
+            })
+        })?,
+    )?;
+
+    // `mset(cx, cy, [v=0])`: write a tile id. Off the map is a no-op. The map
+    // is ordinary console state, so the change persists across frames and a
+    // replay of the same inputs reproduces it.
+    let st = state.clone();
+    g.set(
+        "mset",
+        lua.create_function(move |_, (cx, cy, v): (f64, f64, Option<f64>)| {
+            if let Some(i) = cell(cx, cy) {
+                st.borrow_mut().map[i] = tile(v.unwrap_or(0.0));
+            }
             Ok(())
         })?,
     )?;

@@ -1,11 +1,11 @@
-//! Cart text format parser (`__meta__` / `__lua__` / `__sprites__` /
-//! `__instruments__` / `__sfx__` / `__music__`).
+//! Cart text format parser (`__meta__` / `__lua__` / `__sprites__` / `__map__`
+//! / `__instruments__` / `__sfx__` / `__music__`).
 
 use std::collections::BTreeMap;
 
 use crate::audio::{AudioBank, Instrument, Master, Pattern, Sfx};
 use crate::error::Error;
-use crate::gfx::{SHEET_LEN, SHEET_W, SpriteSheet};
+use crate::gfx::{MAP_H, MAP_LEN, MAP_W, SHEET_LEN, SHEET_W, SpriteSheet, TileMap};
 use crate::gfx_meta::GfxMeta;
 
 /// A parsed cart.
@@ -14,6 +14,7 @@ pub struct Cart {
     meta: BTreeMap<String, String>,
     lua: String,
     sprites: Box<SpriteSheet>,
+    map: Box<TileMap>,
     audio: AudioBank,
     gfx_meta: GfxMeta,
     /// Raw text of every section, keyed by section name (without the `__`
@@ -62,6 +63,11 @@ impl Cart {
             None => Box::new([0u8; SHEET_LEN]),
         };
 
+        let map = match sections.get("map") {
+            Some(text) => parse_map(text)?,
+            None => Box::new([0u8; MAP_LEN]),
+        };
+
         let audio = AudioBank::parse(
             sections.get("instruments").map(String::as_str),
             sections.get("sfx").map(String::as_str),
@@ -74,6 +80,7 @@ impl Cart {
             meta,
             lua,
             sprites,
+            map,
             audio,
             gfx_meta,
             sections,
@@ -88,6 +95,16 @@ impl Cart {
     /// The 128x128 sprite sheet (all zeros if the cart had no sprites).
     pub fn sprites(&self) -> &SpriteSheet {
         &self.sprites
+    }
+
+    /// The cart's 128x64 tile map from `__map__` (all zeros — i.e. every cell
+    /// empty — if the cart had no `__map__` section).
+    ///
+    /// This is the *initial* map. The running console owns a mutable copy that
+    /// `mset` writes to; the cart's own copy never changes, so a `reset` always
+    /// replays from the authored map.
+    pub fn map(&self) -> &TileMap {
+        &self.map
     }
 
     /// The cart's `__sfx__` + `__music__` data (empty if it had neither).
@@ -205,6 +222,73 @@ fn parse_sprites(text: &str) -> Result<Box<SpriteSheet>, Error> {
         y += 1;
     }
     Ok(sheet)
+}
+
+const MAP_SEC: &str = "__map__";
+
+fn map_err(line: usize, msg: impl AsRef<str>) -> Error {
+    Error::Cart(format!("{MAP_SEC} line {line}: {}", msg.as_ref()))
+}
+
+/// `__map__`: rows of tile ids, **two hex digits per cell**, following the same
+/// hex-grid conventions as `__sprites__`.
+///
+/// Short rows pad with tile 0 and missing rows are all tile 0, so the common
+/// case (a small map at the top-left) stays a small block of text. Unlike
+/// `__sprites__`, overlong input is an error rather than silent truncation: a
+/// map row that runs past the edge is nearly always a miscount, and losing
+/// terrain quietly is much worse than failing to load.
+fn parse_map(text: &str) -> Result<Box<TileMap>, Error> {
+    let mut tiles = Box::new([0u8; MAP_LEN]);
+    let mut y = 0usize;
+
+    for (i, raw) in text.lines().enumerate() {
+        let lineno = i + 1;
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if y >= MAP_H {
+            return Err(map_err(
+                lineno,
+                format!("map is at most {MAP_H} rows tall, found row {}", y + 1),
+            ));
+        }
+        let bytes = line.as_bytes();
+        if bytes.len() % 2 != 0 {
+            return Err(map_err(
+                lineno,
+                format!(
+                    "each cell is 2 hex digits, so a row needs an even length, found {}",
+                    bytes.len()
+                ),
+            ));
+        }
+        let cells = bytes.len() / 2;
+        if cells > MAP_W {
+            return Err(map_err(
+                lineno,
+                format!("map is {MAP_W} cells wide, found {cells}"),
+            ));
+        }
+        let row = y * MAP_W;
+        for (x, pair) in bytes.chunks_exact(2).enumerate() {
+            let hi = map_hex(lineno, pair[0])?;
+            let lo = map_hex(lineno, pair[1])?;
+            tiles[row + x] = hi * 16 + lo;
+        }
+        y += 1;
+    }
+    Ok(tiles)
+}
+
+fn map_hex(line: usize, b: u8) -> Result<u8, Error> {
+    char::from(b).to_digit(16).map(|v| v as u8).ok_or_else(|| {
+        map_err(
+            line,
+            format!("expected hex digit, found {:?}", char::from(b)),
+        )
+    })
 }
 
 #[cfg(test)]

@@ -71,6 +71,9 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `rect(x0, y0, x1, y1, c)` / `rectfill(...)` | outline / filled rectangle (inclusive coords) |
 | `circ(x, y, r, c)` / `circfill(...)` | midpoint circle outline / filled |
 | `spr(n, x, y, [w=1], [h=1], [flip_x=false], [flip_y=false])` | draw sprite n (w×h sprites); color 0 transparent |
+| `map([cel_x=0], [cel_y=0], [sx=0], [sy=0], [cel_w=128], [cel_h=64])` | draw a cel_w×cel_h block of map cells from cell (cel_x, cel_y) to (sx, sy); **tile 0 is skipped**. `map()` draws the whole map at 0,0 |
+| `mget(cx, cy)` | tile id at map cell (cx, cy); off the map reads 0 |
+| `mset(cx, cy, [v=0])` | write a tile id (0–255, masked); off the map is a no-op |
 | `print(s, x, y, [c=12])` | draw text with built-in 4×6 font (ASCII 32–126; lowercase may render as uppercase) |
 | `camera([x=0], [y=0])` | draw offset subtracted from all later draw coords; no args resets |
 | `clip([x, y, w, h])` | clip rectangle in **screen** space; no args resets to full screen |
@@ -95,8 +98,8 @@ carts that ignore all of this render exactly as before.
 
 - **camera(x, y)** — an integer offset subtracted from the coordinates of
   every subsequent drawing op (`pset`, `line`, `rect`, `rectfill`, `circ`,
-  `circfill`, `spr`, `print`). `pget` reads **screen** space and is unaffected;
-  `cls` covers the whole screen and is unaffected.
+  `circfill`, `spr`, `map`, `print`). `pget` reads **screen** space and is
+  unaffected; `cls` covers the whole screen and is unaffected.
 - **clip(x, y, w, h)** — an inclusive rectangle in **screen** space, applied
   *after* the camera offset, clamped to the screen. `w` or `h` ≤ 0 (or a rect
   entirely off screen) yields an empty clip that draws nothing. **`cls`
@@ -115,6 +118,13 @@ carts that ignore all of this render exactly as before.
   color 0). Transparency is tested on the sprite's **source** color, *before*
   the draw palette remaps it, so `pal(1, 0)` draws color-1 pixels as color 0
   rather than making them vanish.
+
+`map()` is defined as a sequence of `spr()` calls and shares their pixel path
+exactly: the camera offsets its destination, the clip rect bounds it, `palt`
+decides per-pixel transparency on the source color and the draw palette remaps
+what lands in the framebuffer. Only the per-**cell** tile-0 skip is map-specific
+— it happens before any pixel is read, so an empty cell is invisible even under
+`palt(0, false)`.
 
 Host surfaces: `Console::display_palette() -> &[u8; 16]` (identity by default)
 and `Console::draw_state()`. `console-agent` applies the display palette when
@@ -138,7 +148,30 @@ __sprites__
 128 lines × 128 hex chars (0-f), one char per pixel.
 Sprite sheet is 128×128 px = 16×16 sprites of 8×8 px.
 Sprite n occupies pixels (n%16*8, n//16*8)..+8. Missing/short section = all zeros.
+
+__map__
+Up to 64 lines × up to 128 cells, **2 hex chars per cell** = a tile id 00-ff
+indexing the sprite sheet. Map is a fixed 128×64 cells of 8×8 px.
 ```
+
+`__map__` follows the same hex-grid conventions as `__sprites__`: `#` starts a
+comment line, blank lines and comments do not consume a row, and rows shorter
+than 128 cells pad with tile 0 (missing rows are all tile 0). Unlike
+`__sprites__` it **rejects** rather than truncates: a row longer than 128 cells,
+a row with an odd number of digits, more than 64 rows, or a non-hex digit is an
+`Error::Cart` naming the section-relative line — losing terrain silently is much
+worse than failing to load.
+
+**Tile 0 is the empty cell.** `map()` skips those cells entirely rather than
+drawing sprite 0, which is the same convention that reserves sprite 0 as blank
+(see "Sprite & animation authoring"). A cart with no `__map__` gets an all-zero
+map, so `map()` draws nothing and `mget` reads 0 — carts written before the map
+existed are byte-identical.
+
+The map is **runtime-mutable**: `mset` writes to the console's live copy (the
+parsed cart keeps the authored one), mutations persist across frames like any
+other console state, and because they are driven only by cart code they replay
+deterministically from `(cart, seed, input log)` with no special handling.
 
 ## Determinism contract
 
@@ -459,7 +492,7 @@ channel, ABC notation import.
 
 ## Out of scope for PoC
 
-Map section, multiple carts, save data, interactive
+Multiple carts, save data, map authoring/preview tooling, interactive
 sprite/sfx editors, sfx effects columns (arpeggio/slide/vibrato), stereo,
 runtime anim helpers (`aspr()` — revisit once `__gfx_meta__` proves out).
 Design must not preclude them. (A minimal pause menu — RESUME/RESET —

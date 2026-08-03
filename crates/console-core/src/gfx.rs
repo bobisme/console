@@ -22,10 +22,20 @@ pub const SPRITE_SIZE: i32 = 8;
 /// Sprites per sheet row.
 pub const SPRITES_PER_ROW: i32 = 16;
 
+/// Tile map width in cells.
+pub const MAP_W: usize = 128;
+/// Tile map height in cells.
+pub const MAP_H: usize = 64;
+/// Tile map length in bytes (one tile id per cell, row-major).
+pub const MAP_LEN: usize = MAP_W * MAP_H;
+
 /// A screen's worth of palette indices.
 pub type Framebuffer = [u8; FB_LEN];
 /// A full 128x128 sprite sheet of palette indices.
 pub type SpriteSheet = [u8; SHEET_LEN];
+/// A full 128x64 tile map: one sprite index per cell. Tile 0 is the empty
+/// cell — [`map`] skips it entirely rather than drawing sprite 0.
+pub type TileMap = [u8; MAP_LEN];
 
 /// The fixed 16-colour Sweetie-16 palette, as RGB triples.
 pub const PALETTE: [[u8; 3]; 16] = [
@@ -438,34 +448,40 @@ pub fn circfill(fb: &mut Framebuffer, ds: &DrawState, cx: i32, cy: i32, r: i32, 
     }
 }
 
-/// Draw sprite `n` (a `w`x`h` block of 8x8 sprites) at `(x, y)`.
+/// Top-left pixel of sprite `n` on the sheet.
+#[inline]
+fn sheet_origin(n: i32) -> (i32, i32) {
+    (
+        (n % SPRITES_PER_ROW) * SPRITE_SIZE,
+        (n / SPRITES_PER_ROW) * SPRITE_SIZE,
+    )
+}
+
+/// Blit a `px_w`x`px_h` rectangle of sheet pixels to **already camera-adjusted**
+/// screen coordinates.
 ///
-/// Transparency is decided by `palt` on the sprite's **source** colour, before
-/// the draw palette remaps it (PICO-8 semantics). By default only colour 0 is
-/// transparent. `flip` mirrors the whole block. Sprites whose source pixels
-/// fall outside the sheet read as 0.
-// Positional by design: this mirrors Lua's `spr(n, x, y, w, h, fx, fy)`.
+/// The single low-level sprite path: [`spr`] and [`map`] both funnel through it,
+/// so they agree on clipping, `palt` and the draw palette by construction. It
+/// allocates nothing and touches no state beyond the framebuffer.
+///
+/// Transparency is decided by `palt` on the **source** colour, before the draw
+/// palette remaps it (PICO-8 semantics). Source pixels outside the sheet are
+/// skipped.
 #[allow(clippy::too_many_arguments)]
-pub fn spr(
+#[inline]
+fn blit(
     fb: &mut Framebuffer,
     ds: &DrawState,
     sheet: &SpriteSheet,
-    n: i32,
-    x: i32,
-    y: i32,
-    size: (i32, i32),
+    src: (i32, i32),
+    dest: (i32, i32),
+    px: (i32, i32),
     flip: (bool, bool),
 ) {
-    let (w, h) = size;
-    if w <= 0 || h <= 0 || n < 0 {
-        return;
-    }
-    let (x, y) = (ds.sx(x), ds.sy(y));
+    let (base_x, base_y) = src;
+    let (x, y) = dest;
+    let (px_w, px_h) = px;
     let (flip_x, flip_y) = flip;
-    let base_x = (n % SPRITES_PER_ROW) * SPRITE_SIZE;
-    let base_y = (n / SPRITES_PER_ROW) * SPRITE_SIZE;
-    let px_w = w * SPRITE_SIZE;
-    let px_h = h * SPRITE_SIZE;
 
     for dy in 0..px_h {
         let dest_y = y + dy;
@@ -489,6 +505,114 @@ pub fn spr(
             if !ds.transparent(c) {
                 fb[dest_y as usize * SCREEN_W + dest_x as usize] = ds.remap(c);
             }
+        }
+    }
+}
+
+/// Draw sprite `n` (a `w`x`h` block of 8x8 sprites) at `(x, y)`.
+///
+/// Transparency is decided by `palt` on the sprite's **source** colour, before
+/// the draw palette remaps it (PICO-8 semantics). By default only colour 0 is
+/// transparent. `flip` mirrors the whole block. Sprites whose source pixels
+/// fall outside the sheet read as 0.
+// Positional by design: this mirrors Lua's `spr(n, x, y, w, h, fx, fy)`.
+#[allow(clippy::too_many_arguments)]
+pub fn spr(
+    fb: &mut Framebuffer,
+    ds: &DrawState,
+    sheet: &SpriteSheet,
+    n: i32,
+    x: i32,
+    y: i32,
+    size: (i32, i32),
+    flip: (bool, bool),
+) {
+    let (w, h) = size;
+    if w <= 0 || h <= 0 || n < 0 {
+        return;
+    }
+    blit(
+        fb,
+        ds,
+        sheet,
+        sheet_origin(n),
+        (ds.sx(x), ds.sy(y)),
+        (w * SPRITE_SIZE, h * SPRITE_SIZE),
+        flip,
+    );
+}
+
+/// Draw a `cel_w`x`cel_h` block of map cells starting at map cell `cel` to the
+/// world position `dest`.
+///
+/// Every cell is an ordinary 8x8 sprite blit through the same path as [`spr`],
+/// so the camera offsets `dest`, the clip rectangle bounds the result, `palt`
+/// decides per-pixel transparency and the draw palette remaps what lands in the
+/// framebuffer. **Tile 0 is skipped entirely** (PICO-8's empty cell) — it is not
+/// drawn as sprite 0, which is what makes an unset map cell free and invisible.
+/// Cells outside the 128x64 map are simply not drawn: no wrap, no error.
+pub fn map(
+    fb: &mut Framebuffer,
+    ds: &DrawState,
+    sheet: &SpriteSheet,
+    tiles: &TileMap,
+    cel: (i32, i32),
+    dest: (i32, i32),
+    size: (i32, i32),
+) {
+    if ds.clip_is_empty() {
+        return;
+    }
+    // Range maths in i64: Lua can hand us any i32, including ones that would
+    // overflow when scaled to pixels.
+    let (cel_x, cel_y) = (i64::from(cel.0), i64::from(cel.1));
+    let (cel_w, cel_h) = (i64::from(size.0), i64::from(size.1));
+    if cel_w <= 0 || cel_h <= 0 {
+        return;
+    }
+    // Clamp the cel block to the cells that actually exist, so the loops are
+    // bounded by the map and the pixel arithmetic below cannot overflow.
+    let i0 = (-cel_x).max(0);
+    let i1 = (MAP_W as i64 - cel_x).min(cel_w);
+    let j0 = (-cel_y).max(0);
+    let j1 = (MAP_H as i64 - cel_y).min(cel_h);
+    if i0 >= i1 || j0 >= j1 {
+        return;
+    }
+
+    let step = i64::from(SPRITE_SIZE);
+    let sx = i64::from(ds.sx(dest.0));
+    let sy = i64::from(ds.sy(dest.1));
+    let (clip_x0, clip_y0) = (i64::from(ds.clip_x0), i64::from(ds.clip_y0));
+    let (clip_x1, clip_y1) = (i64::from(ds.clip_x1), i64::from(ds.clip_y1));
+
+    for j in j0..j1 {
+        let dest_y = sy + j * step;
+        // Whole tile row outside the clip window: skip its cells wholesale.
+        if dest_y + step - 1 < clip_y0 || dest_y > clip_y1 {
+            continue;
+        }
+        let row = (cel_y + j) as usize * MAP_W;
+        for i in i0..i1 {
+            let t = tiles[row + (cel_x + i) as usize];
+            if t == 0 {
+                continue; // the empty cell
+            }
+            let dest_x = sx + i * step;
+            if dest_x + step - 1 < clip_x0 || dest_x > clip_x1 {
+                continue;
+            }
+            // Both coordinates now intersect the clip rect, which is always
+            // clamped to the screen, so these casts are in range.
+            blit(
+                fb,
+                ds,
+                sheet,
+                sheet_origin(i32::from(t)),
+                (dest_x as i32, dest_y as i32),
+                (SPRITE_SIZE, SPRITE_SIZE),
+                (false, false),
+            );
         }
     }
 }

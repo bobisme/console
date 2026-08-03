@@ -56,6 +56,7 @@ included.
 __meta__          title=... author=... version=...
 __lua__           the game (Lua 5.4, sandboxed)
 __sprites__       128 lines x 128 hex chars; 1 char = 1 pixel; sprite n at (n%16*8, n//16*8)
+__map__           up to 64 lines x up to 128 cells; 2 hex chars = 1 tile id (00-ff); tile 00 = empty
 __gfx_meta__      sprite <name> rect=tx,ty size=WxH [anchor=px,py]
                   anim <sprite>.<label> frames=i0,i1,... fps=N [loop]
 __instruments__   inst <name> wave=0-5 [env=a,d,s] [vib=cents,rate,delay] [sweep=semis,frames] [duck=depth,release]
@@ -73,6 +74,10 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
 - Draw: `cls([c]) pset pget line rect rectfill circ circfill
   spr(n,x,y,[w,h,flip_x,flip_y]) print(s,x,y,[c])`. Color 0 is transparent
   in `spr()`.
+- Tile map: `map([cel_x,cel_y,sx,sy,cel_w,cel_h])` draws a block of map cells as
+  sprites (bare `map()` = the whole 128x64 map at 0,0; tile 0 cells are skipped;
+  camera/clip/pal/palt apply exactly as to `spr`), `mget(cx,cy)` reads a tile id
+  (0 off the map), `mset(cx,cy,v)` writes one.
 - Draw state (all four PERSIST across frames — nothing auto-resets them):
   - `camera([x],[y])` — offset every later draw by `-(x,y)`; no args resets.
     `pget` and `cls` are unaffected.
@@ -136,6 +141,36 @@ steady within ~15%, no colors unique to a single frame (usually a typo'd
 hex digit), small `changed_pixels` between adjacent frames. At runtime,
 drive frames from your own Lua table + `t()` (the runtime does not read
 `__gfx_meta__`; keep the two in sync).
+
+## Tile map authoring
+
+The map is hex text like the sprite sheet, but **2 chars per cell**, and the
+number you write is a sprite index — `01` is sprite 1, `1f` is sprite 31. Count
+in pairs, not characters: the screen is 18 cells wide (144/8) and 32 tall, so a
+screenful is 36 characters per line. Rows can be short (they pad with tile 0)
+and you can leave rows off entirely, so a ground plane is a few lines, not 64.
+
+```
+__map__
+# 18 cells = one screen wide
+000000000000000000000000000000000000
+010101010101010101010101010101010101
+```
+
+Tile `00` is the empty cell — `map()` skips it, so it costs nothing and shows
+nothing. That is why sprite 0 is left blank by convention: id 0 means "no tile"
+in both systems. Keep terrain tiles at ids you can read at a glance (a 1x row of
+ground, `1x` a row of decoration) — you will be editing this by hand.
+
+`map()` is the same pixel path as `spr()`, so a scrolling level is
+`camera(cam_x, cam_y) map()` and the clip rect windows it for free. For dynamic
+terrain — a block you break, a door that opens, a tile that burns — use
+`mset(cx, cy, id)`; the change persists across frames and replays
+deterministically, so it needs no save/restore of its own. `mget` is also your
+collision lookup: `mget(flr(x/8), flr(y/8)) ~= 0` is "is there something here".
+
+To check the map without vision, `screen_text` after a `map()` draw, or
+`--eval "mget(3,4)"`.
 
 ## Music & sfx authoring
 

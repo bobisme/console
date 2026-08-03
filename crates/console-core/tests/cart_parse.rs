@@ -72,13 +72,13 @@ fn crlf_and_trailing_whitespace_are_tolerated() {
 
 #[test]
 fn unknown_sections_are_preserved_not_rejected() {
-    let text = "__lua__\nx=1\n\n__map__\nsome future data\n\n__gfx_flags__\n01\n";
+    let text = "__lua__\nx=1\n\n__save__\nsome future data\n\n__gfx_flags__\n01\n";
     let cart = Cart::parse(text).unwrap();
-    assert_eq!(cart.section("map").unwrap().trim(), "some future data");
+    assert_eq!(cart.section("save").unwrap().trim(), "some future data");
     assert!(cart.section("gfx_flags").is_some());
     assert!(cart.section("nothing").is_none());
     let names: Vec<&str> = cart.section_names().collect();
-    assert_eq!(names, vec!["gfx_flags", "lua", "map"]);
+    assert_eq!(names, vec!["gfx_flags", "lua", "save"]);
 }
 
 #[test]
