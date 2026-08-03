@@ -12,6 +12,7 @@ use console_core::input;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::map;
 use crate::session::{Session, SessionError};
 use crate::sprite::view::{self, Image, OverlayOpts, RenderOpts};
 use crate::value::lua_to_json;
@@ -165,6 +166,9 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "sprite_diff" => m_sprite_diff(session, params),
         "sprite_ghost" => m_sprite_ghost(session, params),
         "sprite_lint" => m_sprite_lint(session, params),
+        "map_render" => m_map_render(session, params),
+        "map_dump" => m_map_dump(session, params),
+        "map_lint" => m_map_lint(session),
         other => Err(RpcErr::new(-32601, format!("unknown method {other:?}"))),
     }
 }
@@ -497,4 +501,43 @@ fn m_sprite_lint(session: &Session, params: &Value) -> Result<Value, RpcErr> {
         }
     };
     view::lint(session.console()?.cart(), &anims).map_err(RpcErr::bad_params)
+}
+
+// ---------------------------------------------------------------------------
+// Map inspection verbs — the RPC mirrors of `console-agent map render|dump|
+// lint`, against the session's currently loaded cart (no stepping
+// involved). Like the sprite_* mirrors above, these are READ-ONLY: there is
+// no `map_poke`/`map_edit` RPC verb, matching the CLI-only, cart-file-
+// rewriting nature of `sprite poke`/`sprite edit` and `map poke`/`map edit`
+// — mutating a cart file is a CLI-only operation by design.
+// ---------------------------------------------------------------------------
+
+/// Optional `"region"` param (`"cx,cy,cw,ch"`), defaulting like the CLI does
+/// to the used extent when omitted.
+fn region_param(params: &Value, cart: &console_core::Cart) -> Result<(u32, u32, u32, u32), RpcErr> {
+    map::parse_region(string_param(params, "region"), cart.map()).map_err(RpcErr::bad_params)
+}
+
+fn m_map_render(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let path = required_str(params, "map_render", "path")?;
+    let cart = session.console()?.cart();
+    let region = region_param(params, cart)?;
+    let opts = map::view::MapRenderOpts {
+        zoom: zoom_param(params),
+        grid: bool_param(params, "grid"),
+        ids: bool_param(params, "ids"),
+    };
+    let image = map::view::render(cart, region, &opts).map_err(RpcErr::bad_params)?;
+    write_image(path, &image)
+}
+
+fn m_map_dump(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let cart = session.console()?.cart();
+    let region = region_param(params, cart)?;
+    let text = map::view::dump(cart, region).map_err(RpcErr::bad_params)?;
+    Ok(json!({ "text": text }))
+}
+
+fn m_map_lint(session: &Session) -> Result<Value, RpcErr> {
+    Ok(map::view::lint(session.console()?.cart()))
 }

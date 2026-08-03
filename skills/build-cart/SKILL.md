@@ -41,8 +41,9 @@ steps): `console-agent serve` — JSON-RPC 2.0, one request per line on
 stdin. Verbs: `load_cart{path|text} reset{seed} step{frames,input}
 screenshot{path} screen_text eval{code} get_global{name} logs
 save_state{name} load_state{name} info audio_state audio_events
-audio_stats spectrogram{path} wav{path}` plus the `sprite_*` mirrors of the
-CLI tools below.
+audio_stats spectrogram{path} wav{path}` plus the `sprite_*` and `map_*`
+(read-only: `map_render`, `map_dump`, `map_lint`) mirrors of the CLI tools
+below.
 
 Iterate in small steps: change one thing → step → screenshot/eval →
 verify. `screen_text` returns the framebuffer as 256 rows of 144 hex chars —
@@ -236,7 +237,7 @@ __map__
 Tile `00` is the empty cell — `map()` skips it, so it costs nothing and shows
 nothing. That is why sprite 0 is left blank by convention: id 0 means "no tile"
 in both systems. Keep terrain tiles at ids you can read at a glance (a 1x row of
-ground, `1x` a row of decoration) — you will be editing this by hand.
+ground, `1x` a row of decoration).
 
 `map()` is the same pixel path as `spr()`, so a scrolling level is
 `camera(cam_x, cam_y) map()` and the clip rect windows it for free. For dynamic
@@ -247,6 +248,37 @@ collision lookup: `mget(flr(x/8), flr(y/8)) ~= 0` is "is there something here".
 
 To check the map without vision, `screen_text` after a `map()` draw, or
 `--eval "mget(3,4)"`.
+
+### Map agent tooling
+
+You don't have to hand-edit the hex grid blind — `console-agent map` mirrors
+the sprite tools' shape (data, then numbers, then pictures) one level up,
+cells instead of pixels:
+
+```bash
+console-agent map render <cart> [cx,cy,cw,ch] [--zoom 8] [--grid] [--ids] -o out.png
+console-agent map dump   <cart> [cx,cy,cw,ch]                          # print cells as hex rows
+console-agent map poke   <cart> [cx,cy,cw,ch] --rows <hex,hex,...>     # write cells back
+console-agent map poke   <cart> [cx,cy,cw,ch] --stdin                 # rows on stdin
+console-agent map lint   <cart>                                       # JSON quality numbers, whole map
+console-agent map edit   <cart> copy|shift|fill|clear ... [--dry-run] # region transforms
+```
+
+`render`/`dump`/`poke` default their `[cx,cy,cw,ch]` region to the **used
+extent** (the bounding box of non-zero cells) when omitted; `map edit`
+always requires the region explicitly, since a region transform is
+destructive. `map dump | map poke --stdin` round-trips cleanly, same as the
+sprite tools (`--stdin` skips `#`-prefixed lines, so the dump header passes
+through harmlessly). `fill`/`clear` and `poke`'s rows all use the `__map__`
+alphabet directly — 1-2 hex digits, `00`-`ff`.
+
+Workflow: `map lint` first — its `blank_sprite_tiles` list is the map's
+version of "color unique to one frame": a tile id the map references whose
+sprite-sheet region is entirely blank is almost always a typo'd digit. Then
+`map render --ids` to see the grid's structure at a glance, each cell
+labelled with its own tile id, before or after editing. Both `map edit` and
+`map poke` rewrite only the changed lines of `__map__` and create the
+section (positioned right after `__sprites__`) if the cart has none yet.
 
 ## Music & sfx authoring
 

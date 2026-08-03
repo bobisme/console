@@ -497,6 +497,66 @@ changed lines of `__sprites__`; every other byte of the cart file survives
 verbatim (text carts must stay git-diff friendly). `--dry-run` prints the
 would-be new hex lines instead of writing.
 
+## Tile map agent tooling (PoC v1)
+
+Agents author the `__map__` grid as hex text with no way to see the 128x64
+cells it assembles into. Tooling mirrors the sprite tools' shape one level
+up — cells instead of pixels, tile ids instead of palette indices — so the
+same ground-truth/numeric-lint/render progression and the same atomic,
+only-touch-changed-lines rewrite apply here too.
+
+### Inspection tools (console-agent `map` subcommands + RPC verbs)
+
+All operate on a cart file directly (no stepping). A `[cx,cy,cw,ch]` region
+argument (cell coordinates) is optional on `render`/`dump`/`poke`, defaulting
+to the **used extent** — the bounding box of non-zero cells, or a single
+cell at the origin if the map is entirely empty. `render` reuses the sprite
+tools' pixel path exactly: zoom defaults to 8, tile 0 shows the same dark
+checkerboard sprite renders use for transparency (and, within a non-empty
+tile, its own color-0 pixels are individually transparent too — only the
+whole-cell tile-0 skip is map-specific), `--grid` overlays cell (= tile)
+boundaries, `--ids` labels every non-empty cell with its tile id using the
+sprite tools' hex-glyph font.
+
+| command | output |
+|---------|--------|
+| `map render <cart> [cx,cy,cw,ch] [--zoom Z] [--grid] [--ids] -o out.png` | the region, zoomed, exactly as `map()` would draw it |
+| `map dump <cart> [cx,cy,cw,ch]` | the region as hex rows (2 chars/cell), `#`-header naming the coordinates, mirroring `sprite dump` |
+| `map lint <cart>` | JSON over the whole map: used extent, cell counts by tile id (top N), tile ids referenced whose sprite-sheet region is entirely blank (the map analog of "color unique to one frame" — usually a typo), and % fill. Report-only; agents do the asserting. |
+
+RPC mirrors: `map_render`, `map_dump`, `map_lint` against the session's
+loaded cart — read-only, like the `sprite_*` mirrors: there is no
+`map_poke`/`map_edit` RPC verb, since mutating a cart file is a CLI-only
+operation by design.
+
+### Transforms (console-agent `map poke`/`map edit` — CLI only, rewrites the cart file)
+
+```
+map poke <cart> [cx,cy,cw,ch] (--rows <hex,hex,...> | --stdin) [--dry-run]
+map edit <cart> copy  <cx,cy,cw,ch> <dest_cx,dest_cy>       [--dry-run]
+map edit <cart> shift <cx,cy,cw,ch> [--dx <n>] [--dy <n>]   [--dry-run]
+map edit <cart> fill  <cx,cy,cw,ch> <tile-hex>              [--dry-run]
+map edit <cart> clear <cx,cy,cw,ch>                         [--dry-run]
+```
+
+`poke` writes rows back through the same region convention `dump` reads them
+with, so `map dump | map poke --stdin` round-trips as a no-op (`--stdin`
+skips `#`-prefixed lines, same as `sprite poke`). `map edit`'s region is
+always explicit — unlike `render`/`dump`/`poke` it never defaults to the
+used extent, since a region transform is destructive by nature. `shift`
+drops cells that fall outside the region (no wrap) and fills vacated cells
+with tile 0; `fill`/`clear` take a tile id in the `__map__` alphabet
+directly (1-2 hex digits, `00`-`ff`).
+
+Both rewrite ONLY the changed lines of `__map__`, exactly like `sprite
+edit`/`sprite poke`: a changed row is re-encoded at the full 128-cell width,
+and every other byte of the cart file — other sections, comments, ordering,
+line endings — survives verbatim. If the cart has no `__map__` section yet,
+`poke`/`edit` create one, inserted right after the cart's `__sprites__`
+section (or right before `__gfx_meta__` if there is no `__sprites__`, or at
+EOF if there is neither) — `__map__`'s slot in the cart anatomy above.
+`--dry-run` prints the would-be new hex lines instead of writing.
+
 ## Music authoring (PoC v2)
 
 The synth's expressiveness is the ceiling on music quality, so phase 1 is
@@ -711,8 +771,8 @@ channel, ABC notation import.
 
 ## Out of scope for PoC
 
-Multiple carts, save data, map authoring/preview tooling, interactive
-sprite/sfx editors, sfx effects columns (arpeggio/slide/vibrato), stereo,
-runtime anim helpers (`aspr()` — revisit once `__gfx_meta__` proves out).
+Multiple carts, save data, interactive sprite/sfx editors, sfx effects
+columns (arpeggio/slide/vibrato), stereo, runtime anim helpers (`aspr()` —
+revisit once `__gfx_meta__` proves out).
 Design must not preclude them. (A minimal pause menu — RESUME/RESET —
 already exists in the web shell.)

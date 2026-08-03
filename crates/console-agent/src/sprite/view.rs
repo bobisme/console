@@ -53,8 +53,10 @@ const GHOST_NEXT: [u8; 3] = [0, 255, 0];
 const DIFF_DIM: f32 = 0.35;
 const DIFF_MARK: [u8; 3] = [255, 0, 255];
 /// Glyph ink for `--indices`, picked per cell by background luminance.
-const INK_LIGHT: [u8; 3] = [0xf4, 0xf4, 0xf4];
-const INK_DARK: [u8; 3] = [0x1a, 0x1c, 0x2c];
+/// `pub(crate)`: also used by `map::view` to ink its `--ids` cell-id glyphs
+/// against the same background-luminance rule `--indices` uses here.
+pub(crate) const INK_LIGHT: [u8; 3] = [0xf4, 0xf4, 0xf4];
+pub(crate) const INK_DARK: [u8; 3] = [0x1a, 0x1c, 0x2c];
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -856,7 +858,9 @@ fn one_positional<'a>(rest: &'a [String], cmd: &str, what: &str) -> Result<&'a s
 // Target / frame resolution
 // ---------------------------------------------------------------------------
 
-fn check_zoom(zoom: u32) -> Result<u32, String> {
+/// `pub(crate)`: `map::view` validates its own `--zoom` against the same
+/// bound this module uses.
+pub(crate) fn check_zoom(zoom: u32) -> Result<u32, String> {
     if zoom == 0 || zoom > MAX_ZOOM {
         return Err(format!("zoom must be 1-{MAX_ZOOM}, got {zoom}"));
     }
@@ -936,7 +940,12 @@ fn anim_frames<'c>(
 // ---------------------------------------------------------------------------
 
 /// One frame's palette indices, `w`x`h`, copied out of the sheet.
-struct Frame {
+///
+/// `pub(crate)`, along with [`read_rect`] and [`draw_frame`] below: `map::view`
+/// reuses exactly this pixel path for one map cell's 8x8 tile, so a rendered
+/// map tile is pixel-identical to `sprite render <tx,ty,8,8>` of the same
+/// sheet rect.
+pub(crate) struct Frame {
     w: u32,
     h: u32,
     px: Vec<u8>,
@@ -948,7 +957,7 @@ impl Frame {
     }
 }
 
-fn read_rect(cart: &Cart, rect: (u32, u32, u32, u32)) -> Frame {
+pub(crate) fn read_rect(cart: &Cart, rect: (u32, u32, u32, u32)) -> Frame {
     let (x0, y0, w, h) = rect;
     let sheet = cart.sprites();
     let mut px = Vec::with_capacity((w * h) as usize);
@@ -998,15 +1007,22 @@ fn align(frames: &[Frame], anchor: (i32, i32)) -> Layout {
 // Canvas
 // ---------------------------------------------------------------------------
 
+/// `pub(crate)`: `map::view` builds `Rect`s of its own to reuse [`Canvas`]'s
+/// `fill`/`blend_fill` and [`draw_grid`] directly.
 #[derive(Debug, Clone, Copy)]
-struct Rect {
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
+pub(crate) struct Rect {
+    pub(crate) x: u32,
+    pub(crate) y: u32,
+    pub(crate) w: u32,
+    pub(crate) h: u32,
 }
 
-struct Canvas {
+/// `pub(crate)`: the checkerboard-backed RGBA canvas every render command
+/// draws into. `map::view` reuses it as-is (checkerboard, `fill`/`blend_fill`,
+/// PNG `finish`) so a map render shares byte-for-byte the same background and
+/// PNG encoding as the sprite tools, per SPEC's "tile 0 = checkerboard like
+/// sprite tools render transparency".
+pub(crate) struct Canvas {
     w: u32,
     h: u32,
     rgba: Vec<u8>,
@@ -1015,7 +1031,7 @@ struct Canvas {
 impl Canvas {
     /// A canvas pre-filled with the dark checkerboard. `zoom` sets the
     /// checker cell size: [`CHECKER_LOGICAL`] sheet pixels square.
-    fn new(w: u32, h: u32, zoom: u32) -> Canvas {
+    pub(crate) fn new(w: u32, h: u32, zoom: u32) -> Canvas {
         let cell = (CHECKER_LOGICAL * zoom).max(1);
         let mut c = Canvas {
             w,
@@ -1050,7 +1066,7 @@ impl Canvas {
         self.rgba[i + 3] = 255;
     }
 
-    fn get(&self, x: u32, y: u32) -> [u8; 3] {
+    pub(crate) fn get(&self, x: u32, y: u32) -> [u8; 3] {
         let i = self.idx(x, y);
         [self.rgba[i], self.rgba[i + 1], self.rgba[i + 2]]
     }
@@ -1068,7 +1084,7 @@ impl Canvas {
         self.set(x, y, out);
     }
 
-    fn fill(&mut self, r: Rect, rgb: [u8; 3]) {
+    pub(crate) fn fill(&mut self, r: Rect, rgb: [u8; 3]) {
         for y in r.y..r.y.saturating_add(r.h) {
             for x in r.x..r.x.saturating_add(r.w) {
                 self.set(x, y, rgb);
@@ -1091,7 +1107,7 @@ impl Canvas {
         self.rgba
     }
 
-    fn finish(self, frames: usize) -> Image {
+    pub(crate) fn finish(self, frames: usize) -> Image {
         let png = encode_png_rgba(&self.rgba, self.w, self.h);
         Image {
             png,
@@ -1138,7 +1154,12 @@ fn encode_png_rgba(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 
 /// Opaque frame pixels; color 0 is left as-is so the checkerboard (or a
 /// ghost already painted underneath) shows through.
-fn draw_frame(canvas: &mut Canvas, frame: &Frame, origin: (u32, u32), zoom: u32) {
+///
+/// `pub(crate)`: `map::view` calls this directly for each non-empty map
+/// cell's 8x8 tile, so per-pixel color-0 transparency within a tile matches
+/// `spr()`'s rules exactly (only the whole-cell tile-0 skip is map-specific,
+/// and that check happens before this is ever called).
+pub(crate) fn draw_frame(canvas: &mut Canvas, frame: &Frame, origin: (u32, u32), zoom: u32) {
     for y in 0..frame.h {
         for x in 0..frame.w {
             let v = frame.at(x, y);
@@ -1187,7 +1208,10 @@ fn tint_frame(
 }
 
 /// Tile (8 sheet pixels) boundaries, including the closing edges.
-fn draw_grid(canvas: &mut Canvas, cell: Rect, zoom: u32) {
+///
+/// `pub(crate)`: `map::view`'s `--grid` reuses this unmodified — a map cell
+/// is exactly one tile, so the same 8-sheet-pixel step draws cell boundaries.
+pub(crate) fn draw_grid(canvas: &mut Canvas, cell: Rect, zoom: u32) {
     let step = 8 * zoom;
     let mut x = cell.x;
     while x <= cell.x + cell.w {
@@ -1307,12 +1331,17 @@ fn draw_label(canvas: &mut Canvas, cell: Rect, label: &str) {
     }
 }
 
-fn luminance(rgb: [u8; 3]) -> f32 {
+/// `pub(crate)`: `map::view` picks its `--ids` glyph ink the same way
+/// `--indices` does here — light ink on a dark cell, dark ink on a light one.
+pub(crate) fn luminance(rgb: [u8; 3]) -> f32 {
     0.299 * f32::from(rgb[0]) + 0.587 * f32::from(rgb[1]) + 0.114 * f32::from(rgb[2])
 }
 
 /// 3x5 hex digits `0`-`F`, one `u8` bitmask per row (bit 2 = leftmost pixel).
-const GLYPHS: [[u8; 5]; 16] = [
+///
+/// `pub(crate)`: `map::view`'s `--ids` overlay draws two of these side by
+/// side (high/low nibble) per non-empty cell to label its tile id.
+pub(crate) const GLYPHS: [[u8; 5]; 16] = [
     [0b111, 0b101, 0b101, 0b101, 0b111], // 0
     [0b010, 0b110, 0b010, 0b010, 0b111], // 1
     [0b111, 0b001, 0b111, 0b100, 0b111], // 2
