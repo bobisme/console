@@ -395,6 +395,8 @@ console-agent music score      game.cart [--song N]                  # the song 
 console-agent music lint       game.cart [--strict]                  # JSON diagnostics
 console-agent music piano-roll game.cart [--song N | --patterns a,b] [--cell N] [--row-h N] -o roll.png
 console-agent music render     game.cart [--song N] [--loops K | --frames F] -o out.wav
+console-agent music edit       game.cart <verb> ...                  # rewrite __sfx__ in place
+console-agent music import-abc game.cart tune.abc --sfx 0            # ABC notation -> sfx rows
 ```
 
 1. **The score**: `music score` prints the whole song — the form chain
@@ -429,7 +431,9 @@ console-agent music render     game.cart [--song N] [--loops K | --frames F] -o 
 `serve` mirrors the read-only three: `music_score{song?}`,
 `music_lint{}`, `music_piano_roll{path, song?, patterns?, cell?, row_h?}`.
 There is no `music_render` verb — in a session that is just
-`eval{"music(n)"}` + `step` + `wav`.
+`eval{"music(n)"}` + `step` + `wav` — and no `music_edit`/`music_import_abc`
+either: like `sprite edit` and `map edit`, rewriting a cart file is CLI-only.
+Run the write verbs between sessions, then `load_cart` again.
 
 Facts that bite (all but the last three are `music lint` rules):
 - `env` sustain is an ABSOLUTE level — quiet rows on an env instrument
@@ -475,6 +479,118 @@ Facts that bite (all but the last three are `music lint` rules):
 - Echo ADDS level (the return is post-fader and pre-mix-gain). Heavy sends plus
   high feedback can reach the clamp — check `audio_stats` for clipped samples,
   and `master drive=1` will soft-limit it for free.
+
+### Score-level editing: never hand-shift tracker rows
+
+`music edit` is the `sprite edit`/`map edit` of `__sfx__`: six verbs, all
+CLI-only, all atomic, all with `--dry-run`, and all touching only the lines of
+the cart they actually change.
+
+```bash
+console-agent music edit game.cart transpose  0-2 -12          # a whole part down an octave
+console-agent music edit game.cart transpose  3 +7 --clamp     # clamp instead of erroring
+console-agent music edit game.cart copy       0 8              # variate a groove without retyping it
+console-agent music edit game.cart shift-rows 1 2              # rotate the phrase two rows later
+console-agent music edit game.cart set-vol    2 -2             # duck a part against the mix
+console-agent music edit game.cart set-inst   2 fmbass --where 3   # re-voice, optionally only some rows
+console-agent music edit game.cart stretch    1 2              # half-time grid, same wall clock
+```
+
+- `<sfx-ids>` on `transpose` is an id, a range `0-5`, or a list `0,2,5-7`.
+  Signed operands (`-12`, `+7`) are operands, not flags.
+- **`transpose` refuses to fall off the note table** and tells you what would
+  fit: `sfx 0 row 0: C4 -60 leaves the note table (C0-B7); the selection fits
+  any shift in -48..=+40 — nearest to -60 is -48`. Take the number or pass
+  `--clamp`.
+- `set-vol` takes `0-7` absolute or `+n`/`-n` relative, clamped, and leaves
+  rests as rests. `set-inst` validates the voice against the cart (wave digit,
+  `w<slot>` or instrument name) and `--where <old>` matches the spelling
+  `music score` prints.
+- `stretch 2` inserts a `---` after every row and halves `speed=`; `stretch
+  0.5` drops the odd rows (erroring if any carries a note — `--force` to mean
+  it) and doubles `speed=`. Wall-clock length is preserved when the integer
+  speed divides; when it does not, the summary prints the exact
+  before/after frame count and the rounding delta. `speed=auto` is resolved to
+  a number and a `loop=` range is rescaled with the rows.
+- `copy` needs a free destination id (`--force` to overwrite), because
+  `__sfx__` rejects duplicate ids.
+- Your formatting survives: the single-column verbs swap one token and let the
+  following whitespace absorb the width change, so a hand-aligned grid stays
+  aligned and `sl+2`-style effect columns ride along untouched.
+
+The loop is: **`music score` to read what you have → `music edit` to change it
+→ `music score`/`music lint` to confirm → `music render` when you want ears on
+it.** Everything is `--dry-run`-able first, and every rewrite is re-parsed with
+`Cart::parse` before it reaches disk, so a bad edit fails instead of
+corrupting the cart.
+
+### ABC import: start from a real tune
+
+`music import-abc` turns a monophonic ABC tune into consecutive `__sfx__`
+entries. ABC is the format melodies actually travel in, so this is usually the
+fastest way to get *something musical* into a cart and then bend it.
+
+```bash
+cat > tune.abc <<'ABC'
+X:1
+T:The Butterfly
+M:9/8
+L:1/8
+Q:3/8=100
+K:Em
+|:B2E G2E FED|B2E G2E FED|B2d e2f g3-|g3 gfe dBA:|
+ABC
+
+console-agent music import-abc game.cart tune.abc --sfx 2 --inst lead --dry-run
+console-agent music import-abc game.cart tune.abc --sfx 2 --inst lead
+console-agent music score game.cart --song 0      # read what landed
+console-agent music edit  game.cart transpose 2-3 -12   # ... and bend it
+console-agent music edit  game.cart set-vol   2 -1     # (set-vol takes one id)
+console-agent music lint  game.cart
+console-agent music render game.cart -o tune.wav
+```
+
+The report tells you everything the mapping decided:
+
+```
+import-abc: "The Butterfly": 25 note(s), 0 rest(s) -> 36 row(s)
+  key: E minor (F#) | meter: 9/8 | L:1/8 default note
+  1 row = 1/8 note; speed=12 frames per row (Q:3/8=100)
+  sfx ids: 2 (32 rows), 3 (4 rows)
+  split at row 32 (the 32-row cap per sfx); a held note simply restates its row...
+  suggested __music__ tempo header: bpm=150 rows_per_beat=2 (speed=auto then resolves to 12)
+  suggested __music__ pattern(s):
+    pat 0 : 2 - - -
+    pat 1 stop : 3 - - -
+  warning: repeat mark `|:` unrolled once: ...
+```
+
+`import-abc` writes `__sfx__` only — paste the suggested `pat` lines into
+`__music__` yourself (consecutive pattern ids chain by the sequencer's "next
+existing id" rule, so two sfx play back to back with no `loop=`).
+
+Facts worth knowing before you import:
+- **One row = the gcd of the tune's note lengths**, so every note is a whole
+  number of rows. A held note **repeats its row** (the console has no
+  note-off). On a wave digit or a flat instrument that is sample-identical to
+  a sustain; on an `env`/`sweep`/`duck` instrument every repeat re-attacks —
+  import with a flat voice if you want legato.
+- **Repeats are played once.** `|: … :|` is a `__music__` `loop=`, not an sfx
+  feature, and the importer warns and moves on.
+- **Out-of-range notes are an error that names the ABC token and computes the
+  transpose that fits** — copy the `--transpose <n>` out of the message.
+- Tempo comes from `Q:` (with the rounding to whole frames reported), or
+  `--speed` if you have a number in mind. No `Q:` means "assume quarter=120",
+  said out loud.
+- Supported: `M: L: Q: K: V:`, octave marks, accidentals with key-signature
+  and bar-local memory, all seven modes, rests, length multipliers/divisors,
+  ties, broken rhythm (`>` `<`), bars, repeats/endings, chords (first note
+  kept), grace notes and decorations (dropped). Tuplets `(3` and voice
+  overlays `&` are rejected by name — rewrite them at their true lengths or
+  split the voices.
+- Multi-voice files import **voice 1** and warn; run the command again per
+  voice with a different `--sfx`, then put the parts in different channel
+  slots of one pattern.
 
 ### Wavetables: your own waveforms
 
@@ -660,6 +776,8 @@ pauses the game (rAF suspension — not a bug).
 - [ ] `sprite lint` quiet on every anim; strips/onions reviewed
 - [ ] `music score` reads as the song you meant, form chain included;
       `music lint` quiet (or every warning deliberate); piano-roll eyeballed
+      (`music edit` and `music import-abc` are how you get there without
+      hand-shifting rows — every one of them re-parses before it writes)
 - [ ] `audio_events` matches the score in the running game; `audio_stats`
       shows no clipping; spectrogram eyeballed
 - [ ] Determinism: same seed + input script run twice ⇒ identical

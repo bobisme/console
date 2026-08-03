@@ -602,6 +602,14 @@ fn m_map_lint(session: &Session) -> Result<Value, RpcErr> {
 // itself. From RPC the equivalent is `eval{"music(n)"}` + `step` + `wav`,
 // with the session's own console — the CLI command exists to spare a oneshot
 // caller that dance, not to add a second stepping engine to the RPC surface.
+//
+// `music edit` and `music import-abc` have no mirror either, and for the
+// established reason rather than a new one: **mutating a cart file is a
+// CLI-only operation by design** (see the `map_poke`/`map_edit` note above).
+// A `serve` session holds a console built from cart text it loaded; rewriting
+// the file underneath it would leave the two disagreeing until the next
+// `load_cart`, and the write verbs are batch operations an agent runs between
+// sessions, not during one. Run them from the CLI, then `load_cart` again.
 // ---------------------------------------------------------------------------
 
 fn u8_param(params: &Value, name: &str) -> Result<Option<u8>, RpcErr> {

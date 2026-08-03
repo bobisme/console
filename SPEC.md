@@ -365,7 +365,7 @@ Subcommands beyond `run`/`serve`, all of them operating on a cart file
 directly (no stepping): `console-agent sprite
 <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke>`, `console-agent map
 <render|dump|lint|edit|poke>`, `console-agent music
-<score|lint|piano-roll|render>`.
+<score|lint|piano-roll|render|edit|import-abc>`.
 
 ## Single-file HTML (`console-pack`)
 
@@ -1174,8 +1174,127 @@ read-only, like the `sprite_*`/`map_*` mirrors. There is deliberately **no**
 `wav` with the session's own console, and a second stepping engine on the RPC
 surface would only be a way for the two to disagree.
 
-Phase 3 (planned): `music summarize` (chord skeleton per bar),
-transposes/copies/double-time, auto-echo onto a free channel, ABC import.
+### Transforms (console-agent `music edit` — CLI only, rewrites the cart file) — phase 3
+
+```
+music edit <cart> transpose  <sfx-ids> <semitones> [--clamp]           [--dry-run]
+music edit <cart> copy       <src-sfx> <dst-sfx> [--force]             [--dry-run]
+music edit <cart> shift-rows <sfx-id> <n>                              [--dry-run]
+music edit <cart> set-vol    <sfx-id> <0-7|+n|-n>                      [--dry-run]
+music edit <cart> set-inst   <sfx-id> <inst|0-5|w0-w7> [--where <old>] [--dry-run]
+music edit <cart> stretch    <sfx-id> <2|0.5> [--force]                [--dry-run]
+```
+
+Exactly six verbs — the operations an agent performs while iterating on a
+groove, and no more. `<sfx-ids>` is an id (`3`), a range (`0-5`) or a comma
+list mixing both (`0,2,5-7`); `<semitones>` and `<n>` are signed and a leading
+`-` is an operand, not a flag.
+
+- **`transpose`** shifts every note row of the selection. A note that would
+  leave the C0–B7 note table is an **error** naming the sfx, the row and the
+  note, and it computes the shift range that *would* fit
+  (`the selection fits any shift in -48..=+40 — nearest to -60 is -48`);
+  `--clamp` clamps instead.
+- **`copy`** duplicates an entry under a new id. The destination must be
+  unused unless `--force`, since `__sfx__` rejects duplicate ids.
+- **`shift-rows`** rotates the rows (wrapping): row *i* takes what row *i−n*
+  played, so `shift-rows 0 1` moves the phrase one row later and the last row
+  wraps to the front. A `loop=` range does **not** follow the rows; the
+  summary says so.
+- **`set-vol`** takes an absolute `0-7` or a signed `+n`/`-n` change, clamped
+  to 0–7. Rests are preserved as rests — scaling a rest would turn silence
+  into a note.
+- **`set-inst`** rewrites the voice column to a wave digit, a `w<slot>`
+  wavetable or an instrument name (validated against the cart, with the
+  alternatives listed on failure). `--where <old>` restricts it to rows
+  currently using that voice, matched against the same spelling `music score`
+  prints.
+- **`stretch`** doubles the rhythmic grid (a `---` inserted after every row)
+  or halves it (odd rows dropped — an **error** if any of them carries a note,
+  unless `--force`), and compensates `speed=` so wall-clock length is
+  preserved. `speed` is an integer count of frames, so the compensation is
+  exact only when it divides: doubling uses `max(1, ceil(speed / 2))` (round
+  half **up**, so `speed=5` becomes 3) and halving uses `speed * 2`. When the
+  compensated value would leave 1–255 (`speed=1` cannot be halved, `speed>127`
+  cannot be doubled) the speed is left alone. Every run prints the before/after
+  frame count and the rounding delta, so nothing is silent. A `speed=auto`
+  header is resolved to a number (the row count moved under it), and a `loop=`
+  range is rescaled with the rows.
+
+Every verb rewrites ONLY the changed lines of `__sfx__`, exactly like `sprite
+edit` and `map edit`: other sections, comments, blank lines, ordering and line
+endings survive verbatim, and the rewritten text is re-parsed with
+`Cart::parse` before anything reaches disk. The single-column verbs
+(`transpose`/`set-vol`/`set-inst`) do **token surgery** on the row line — the
+whitespace run after the changed token absorbs the width difference, so a
+hand-aligned tracker grid stays aligned and effect columns ride along
+untouched. `shift-rows`, `copy` and `stretch` move the original row text.
+`--dry-run` prints the would-be new lines (and `(removed)` for lines that
+disappear) instead of writing.
+
+### ABC import (console-agent `music import-abc` — CLI only) — phase 3
+
+```
+music import-abc <cart> <file.abc|-> --sfx <start-id>
+    [--inst <name|0-5|w0-w7>] [--vol <0-7>] [--speed <1-255>]
+    [--transpose <n>] [--force] [--dry-run]
+```
+
+ABC is the lingua franca for exchanging melodies as text, so it is the one
+music format an agent can be handed and a human can write. A **monophonic**
+tune (voice 1 if the file declares several, with a warning naming the rest)
+becomes consecutive `__sfx__` entries. The mapping:
+
+- **Durations are rational** — every length is an exact fraction of `L:`, so
+  `a3/2`, a tie across a bar line and a `Q:` tempo compose without drift.
+- **One row = the gcd of the tune's note lengths**, not the shortest note
+  (which breaks the moment a tune mixes 2- and 3-unit notes). The gcd makes
+  every note a whole number of rows, and equals the shortest note in the
+  common case.
+- **A held note repeats its row.** The console has no note-off, so a 4-row
+  note is the same note row four times. On a bare wave digit or a flat
+  instrument that is *sample-identical* to a sustain (`apply_row` writes the
+  same freq/wave/vol, phase is continuous, the 64-sample ramp never fires); on
+  an `env`/`sweep`/`duck` instrument each repeat re-attacks, and the report
+  says so.
+- **Splitting is free.** Longer than 32 rows, the tune splits at an exact row
+  boundary into consecutive sfx ids — a note held across the boundary simply
+  restates its row — and the split points are reported.
+- **Tempo.** `--speed` wins; otherwise `Q:` gives frames per row
+  (`row_dur * 3600 / (unit * bpm)`, rounded, with the rounding error
+  reported), and with no `Q:` the importer assumes quarter = 120 and says so.
+  The summary also suggests the `bpm=`/`rows_per_beat=` header that reproduces
+  the row rate exactly, when one exists.
+- **Out of range.** A note outside C0–B7 after `--transpose` is an error
+  naming the ABC token *and computing the nearest transpose that fits*
+  (`the tune fits any --transpose in +12..=+35; the nearest fitting one is
+  --transpose 12`).
+
+The supported ABC subset: `X: T: M: L: Q: K: V:` fields (inline `[K:…]` too),
+notes with octave marks (`C,` `c` `c'`), `^ ^^ _ __ =` accidentals with
+key-signature and bar-local memory, all seven modes in `K:`, rests
+(`z`/`x`/`Z`), length multipliers and divisors (`a2`, `a/`, `a/2`, `a3/2`),
+ties (merged into one longer note), broken rhythm (`>` `<`), bar lines
+(validated against `M:` when both are present, but never required), repeats
+and endings (played **once**, with a warning — `__music__` patterns are where
+repeats belong), chords (reduced to the first note, with a warning), and grace
+notes / decorations / annotations / `%` comments (dropped). Tuplets (`(3`) and
+voice overlays (`&`) are **rejected by name** rather than mis-imported. The
+parser is hand-rolled; no new dependencies.
+
+Output (identical under `--dry-run`): notes and rests imported, rows used, the
+key/meter/`L:` it read, the row grid and speed with their derivation, the sfx
+ids written with their row counts, the split points, a suggested `pat` line
+per sfx for `__music__` (consecutive ids chain by the sequencer's "next
+existing pattern" rule) and every warning.
+
+**No RPC mirror** for either `music edit` or `music import-abc`, matching
+`sprite edit`/`sprite poke` and `map edit`/`map poke`: mutating a cart file is
+a CLI-only operation by design, and a `serve` session's console would disagree
+with the file until the next `load_cart`.
+
+Phase 3 remaining (planned): `music summarize` (chord skeleton per bar),
+auto-echo onto a free channel.
 
 ## Out of scope for PoC
 

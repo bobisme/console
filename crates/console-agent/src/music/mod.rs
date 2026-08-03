@@ -9,6 +9,12 @@
 //! except [`render`] works straight off a parsed [`Cart`], so it is cheap and
 //! has no side effects.
 //!
+//! [`transform`] and [`abc`] are the write half, the music counterparts of
+//! `sprite edit` / `map edit`: score-level transforms (`music edit`) and ABC
+//! import (`music import-abc`), both rewriting only the changed lines of
+//! `__sfx__` through [`sfxtext`]. Like every other cart-mutating tool here
+//! they are **CLI only** — see the note in `rpc.rs`.
+//!
 //! The one concept the whole module shares is the **song plan**
 //! ([`SongPlan`]): `__music__` is not a flat list of patterns but a chain —
 //! each pattern says `stop`, `loop=<id>` or (by default) "play the next
@@ -17,10 +23,13 @@
 //! because form is the thing that is hardest to see in the cart text and
 //! easiest to get wrong.
 
+pub mod abc;
 pub mod lint;
 pub mod render;
 pub mod roll;
 pub mod score;
+pub mod sfxtext;
+pub mod transform;
 
 use std::collections::BTreeMap;
 
@@ -424,6 +433,10 @@ pub fn cli_music(args: &[String]) -> i32 {
         "lint" => lint::cli_lint(&args[1..]),
         "piano-roll" => roll::cli_piano_roll(&args[1..]),
         "render" => render::cli_render(&args[1..]),
+        // The two write verbs own their exit codes and their own usage text,
+        // exactly like `sprite edit` / `map edit`.
+        "edit" => return transform::cli_edit(&args[1..]),
+        "import-abc" => return abc::cli_import(&args[1..]),
         _ => {
             eprintln!("{MUSIC_USAGE}");
             return 2;
@@ -445,9 +458,13 @@ usage:
   console-agent music lint       <cart> [--strict]
   console-agent music piano-roll <cart> [--song N | --patterns a,b,c] [--cell N] [--row-h N] -o out.png
   console-agent music render     <cart> [--song N] [--loops K | --frames F] [--seed N] -o out.wav
+  console-agent music edit       <cart> <transpose|copy|shift-rows|set-vol|set-inst|stretch> ...
+  console-agent music import-abc <cart> <file.abc|-> --sfx <start-id> [--inst NAME] [--speed N]
   (--song N means music(N): the chain is followed from pattern N, so `score`
    and `piano-roll` show the whole song, intro and loop body. --song defaults
-   to the lowest defined pattern id.)";
+   to the lowest defined pattern id. `edit` and `import-abc` rewrite the cart
+   file in place and take --dry-run; run them with no arguments for their own
+   usage.)";
 
 /// The flag set shared by the four `music` subcommands — small enough that
 /// one parser beats four, and it keeps the flag spellings identical across
