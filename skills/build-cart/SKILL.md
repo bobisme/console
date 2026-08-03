@@ -22,7 +22,7 @@ format; this skill is the working knowledge.
 ## Console facts
 
 144×256 portrait, fixed 16-color palette (Sweetie-16, indices 0–15), 60fps
-fixed timestep, 7 buttons (d-pad, A, B, menu), 4 audio channels, Lua 5.4 in
+fixed timestep, 7 buttons (d-pad, A, B, menu), 6 audio channels, Lua 5.4 in
 a sandbox. `_update()` then `_draw()` every frame.
 
 ## The dev loop
@@ -61,7 +61,8 @@ __gfx_meta__      sprite <name> rect=tx,ty size=WxH [anchor=px,py]
 __instruments__   inst <name> wave=0-5 [env=a,d,s] [vib=cents,rate,delay] [sweep=semis,frames] [duck=depth,release]
                   master drive=0-8 [tone=0-8] [hiss=0-4]
 __sfx__           sfx <id> speed=<n|auto> [loop=start,end]  then rows: NOTE WAVE|INST VOL [FX]  or  ---
-__music__         [bpm=N [rows_per_beat=R]]  then: pat <id> [stop|loop=<id>] : ch0 ch1 ch2 ch3
+__music__         [bpm=N [rows_per_beat=R]]  then: pat <id> [stop|loop=<id>] : ch0 ch1 ch2 ch3 [ch4 ch5]
+                  4 to 6 slots; a slot you leave off is silent, so old 4-slot lines still parse
 ```
 
 Only `__lua__` is required. `#` starts a comment in the data sections.
@@ -74,8 +75,9 @@ Only `__lua__` is required. `#` starts a comment in the data sections.
   in `spr()`.
 - Input: `btn(i)` held / `btnp(i)` pressed-this-frame. 0=L 1=R 2=U 3=D
   4=A 5=B 6=menu (start/select-style; the web shell's triangle button).
-- Audio: `sfx(n,[ch])` (`sfx(-1,ch)` stops a channel), `music(n)` /
-  `music(-1)`, `master(drive,[tone],[hiss])` for saturation/tone at runtime.
+- Audio: `sfx(n,[ch])` with `ch` 0–5 (`sfx(-1,ch)` stops a channel),
+  `music(n)` / `music(-1)`, `master(drive,[tone],[hiss])` for saturation/tone
+  at runtime.
 - Math: `flr ceil abs min max mid sin cos rnd([n]) srand(seed) t()`.
   `sin/cos` take TURNS, not radians (`sin(x)` = `math.sin(x*2π)`), standard
   sign — NOT PICO-8's inverted sin. `t()` = frames/60, exact.
@@ -139,8 +141,14 @@ Facts that bite:
 - `env` sustain is an ABSOLUTE level — quiet rows on an env instrument
   swell UP to it. Voices needing per-row dynamics should carry no env.
 - Vibrato `delay` must fit inside the row or it never speaks.
-- `sfx(n)` auto-channel picks the first free and steals ch3 when all are
-  busy — leave a channel free for blips or they eat your melody.
+- **Channel budget**: there are 6 channels and `sfx(n)` auto-allocation takes
+  the lowest one music does not own, stealing **ch5** when all six are busy.
+  So write songs for 4 or 5 slots and leave 1–2 channels free for blips;
+  a 6-slot song works, but the first auto `sfx()` will eat channel 5.
+- Six full-scale (vol 7) voices in phase sum past full scale and hard-clip —
+  the mix gain is 0.25 per channel regardless of how many are sounding. Keep
+  dense arrangements at vol 4–5, or set `master drive=1`, which soft-limits
+  and cannot reach the clamp. Check with `audio_stats` (clipped count).
 - Under `music()`, sfx `loop=` flags are ignored; a pattern lasts one pass
   of its longest slot.
 - Song structure: intro patterns first, final pattern `loop=<id>` jumps

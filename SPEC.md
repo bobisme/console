@@ -179,7 +179,12 @@ Principles: **deterministic** (const note table + linear ops + LFSR only — no
 
 - 44100 Hz, mono f32, exactly **735 samples per frame** (44100/60). The synth
   advances inside `step()`; a halted console renders silence.
-- **4 channels**, summed with 0.25 gain each, output clamped to [-1, 1].
+- **6 channels**, summed with **0.25 gain each** (frozen at the four-channel
+  value, so carts written for 4 channels render bit-identical samples), output
+  clamped to [-1, 1]. Headroom is therefore authored, not enforced: four
+  full-scale voices in phase reach exactly 1.0, six reach 1.5 and the final
+  clamp hard-clips. Any non-zero `master drive` bounds the output below full
+  scale (see the master bus) and acts as a free limiter.
 - Waveforms: 0 = pulse 12.5%, 1 = pulse 25%, 2 = square 50%, 3 = triangle,
   4 = saw, 5 = noise (16-bit LFSR, NES-style taps, clocked from the channel
   frequency).
@@ -206,10 +211,12 @@ sfx keeps playing (looped sfx play until the channel is stopped or stolen).
 ### `__music__` section
 
 ```
-pat <id 0-63> [stop|loop=<pat-id>] : <sfx|-> <sfx|-> <sfx|-> <sfx|->
+pat <id 0-63> [stop|loop=<pat-id>] : ch0 ch1 ch2 ch3 [ch4 ch5]
 ```
 
-Four slots = channels 0–3, `-` = silent channel. Pattern duration = one pass
+Each slot is `<sfx id>` or `-` (silent channel). **4 to 6 slots**: slot *n* is
+channel *n*, and trailing slots a line omits are silent, so every pre-6-channel
+4-slot pattern parses exactly as before. Pattern duration = one pass
 of `max(rows*speed)` over its sfx (sfx `loop` flags are ignored under music).
 When a pattern ends: `loop=<id>` jumps there, `stop` halts music, otherwise
 play the next existing pattern id, else halt.
@@ -218,8 +225,15 @@ play the next existing pattern id, else halt.
 
 | fn | behavior |
 |----|----------|
-| `sfx(n, [ch=-1])` | play sfx n; ch −1 auto-picks the first channel not busy with music or sfx, stealing channel 3 if all are busy. `sfx(-1, ch)` stops that channel. |
+| `sfx(n, [ch=-1])` | play sfx n; `ch` is 0–5, or −1 to auto-pick the lowest channel not busy with music or sfx, stealing channel **5** if all are busy. `sfx(-1, ch)` stops that channel; `sfx(-1)` stops every sfx channel. |
 | `music(n)` | start music at pattern n (claims that pattern's non-`-` channels; re-claims per pattern). `music(-1)` stops music. |
+
+**Channel budget (best practice).** Music owns the channels its pattern names
+and `sfx()` auto-allocation prefers the ones it does not, so a song may use all
+six voices but **should leave one or two free**: a 4-slot song leaves channels 4
+and 5 genuinely free for blips, whereas a 6-slot song forces the next
+auto-allocated `sfx()` to steal channel 5 out from under the music (the old
+4-channel behavior, where every song lost channel 3).
 
 ### Host surfaces
 
@@ -393,7 +407,7 @@ by ear; agents render entries to WAV via the harness for the same purpose.
 
 ### Phase 2 (after phase 1 lands — planned, spec to be detailed then)
 
-`music score` (all 4 channels as one time-aligned text grid), `music lint`
+`music score` (all channels as one time-aligned text grid), `music lint`
 (slot length/speed mismatches, out-of-key notes, vertical clashes, range
 sanity), `music summarize` (chord skeleton per bar as text), piano-roll PNG,
 `music render <cart> <pat> -o out.wav --loops N` (synth without stepping a

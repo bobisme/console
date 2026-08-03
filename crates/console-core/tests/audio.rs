@@ -67,7 +67,7 @@ D#5 4 5
 __music__
 pat 0 : 0 - - 63
 pat 7 stop : - 63 - -
-pat 9 loop=0 : 0 0 0 0
+pat 9 loop=0 : 0 0 0 0 0 0
 ";
 
 #[test]
@@ -105,13 +105,15 @@ fn music_section_round_trips() {
     assert_eq!(ids, vec![0, 7, 9]);
 
     let p0 = cart.pattern(0).unwrap();
-    assert_eq!(p0.slots, [Some(0), None, None, Some(63)]);
+    // A 4-slot line parses exactly as it always did; channels 4/5 stay silent.
+    assert_eq!(p0.slots, [Some(0), None, None, Some(63), None, None]);
     assert_eq!(p0.end, PatternEnd::Next);
 
     let p7 = cart.pattern(7).unwrap();
-    assert_eq!(p7.slots, [None, Some(63), None, None]);
+    assert_eq!(p7.slots, [None, Some(63), None, None, None, None]);
     assert_eq!(p7.end, PatternEnd::Stop);
 
+    // ...and a full six-slot line fills every channel.
     let p9 = cart.pattern(9).unwrap();
     assert_eq!(p9.slots, [Some(0); CHANNEL_COUNT]);
     assert_eq!(p9.end, PatternEnd::Loop(0));
@@ -119,6 +121,43 @@ fn music_section_round_trips() {
     assert_eq!(cart.audio().next_pattern_after(0), Some(7));
     assert_eq!(cart.audio().next_pattern_after(7), Some(9));
     assert_eq!(cart.audio().next_pattern_after(9), None);
+}
+
+/// A `pat` line may list 4, 5 or 6 slots. Four is the pre-widening format and
+/// must keep parsing byte-for-byte identically; the slots a shorter line omits
+/// are silent, exactly like an explicit `-`.
+#[test]
+fn pattern_lines_accept_four_to_six_slots() {
+    const HEAD: &str = "__lua__\n\n__sfx__\nsfx 0 speed=1\nC4 0 1\n\n__music__\n";
+
+    let four = Cart::parse(&format!("{HEAD}pat 0 : 0 - - 0\n")).unwrap();
+    assert_eq!(
+        four.pattern(0).unwrap().slots,
+        [Some(0), None, None, Some(0), None, None]
+    );
+
+    let five = Cart::parse(&format!("{HEAD}pat 0 : 0 - - 0 0\n")).unwrap();
+    assert_eq!(
+        five.pattern(0).unwrap().slots,
+        [Some(0), None, None, Some(0), Some(0), None]
+    );
+
+    let six = Cart::parse(&format!("{HEAD}pat 0 : 0 - - 0 0 -\n")).unwrap();
+    assert_eq!(
+        six.pattern(0).unwrap().slots,
+        [Some(0), None, None, Some(0), Some(0), None]
+    );
+
+    // A trailing `-` is exactly the same pattern as leaving the slot off.
+    assert_eq!(five.pattern(0), six.pattern(0));
+
+    // Flags still parse in front of the wider slot list.
+    let flagged = Cart::parse(&format!("{HEAD}pat 3 loop=3 : - - - - - 0\n")).unwrap();
+    assert_eq!(flagged.pattern(3).unwrap().end, PatternEnd::Loop(3));
+    assert_eq!(
+        flagged.pattern(3).unwrap().slots,
+        [None, None, None, None, None, Some(0)]
+    );
 }
 
 #[test]
@@ -209,7 +248,9 @@ fn malformed_sfx_is_a_line_numbered_cart_error() {
 #[test]
 fn malformed_music_is_a_line_numbered_cart_error() {
     const SFX: &str = "__lua__\n\n__sfx__\nsfx 0 speed=1\nC4 0 1\n\n__music__\n";
-    expect_cart_error(&format!("{SFX}pat 0 : 0 - -\n"), 1, "4 channel slots");
+    // Fewer than 4 slots and more than 6 are both rejected.
+    expect_cart_error(&format!("{SFX}pat 0 : 0 - -\n"), 1, "4-6 channel slots");
+    expect_cart_error(&format!("{SFX}pat 0 : 0 - - - - - -\n"), 1, "4-6 channel slots");
     expect_cart_error(&format!("{SFX}pat 0 0 - - -\n"), 1, "expected `pat");
     expect_cart_error(&format!("{SFX}nope 0 : - - - -\n"), 1, "must start with `pat`");
     expect_cart_error(&format!("{SFX}pat 64 : - - - -\n"), 1, "pattern id must be 0-63");
@@ -386,6 +427,12 @@ fn audio_does_not_depend_on_the_prng_seed() {
 ///
 /// This value must also be produced by the wasm build - downstream agents
 /// cross-check it against `con_audio()`. If it ever changes, the synth changed.
+///
+/// It survived the 4 -> 6 channel widening untouched, and that is the point:
+/// `demo.cart` is a four-channel cart, `MIX_GAIN` did not move, and the two
+/// channels the widening added stay silent unless a cart asks for them. This
+/// test passing *is* the back-compat proof — `web/smoke.cjs`'s `AUDIO_GOLDEN`
+/// still matches, so the committed wasm engine needs no rebuild.
 const DEMO_AUDIO_GOLDEN: u64 = 0xbc2b_d5e1_f8c7_f31e;
 
 #[test]
@@ -395,6 +442,108 @@ fn demo_cart_audio_matches_the_golden_hash() {
         hash, DEMO_AUDIO_GOLDEN,
         "demo audio changed; new hash is {hash:#018x}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Mix headroom (the 4 -> 6 channel widening)
+// ---------------------------------------------------------------------------
+
+/// `MIX_GAIN` stayed at 1/4 when the console went from four channels to six, so
+/// every cart written before the widening renders bit-identical samples (see
+/// [`DEMO_AUDIO_GOLDEN`] and [`SOUNDTEST_GROOVE_GOLDEN`], both unchanged). The
+/// price is that six voices can now ask for more than full scale. These three
+/// tests pin exactly where that line sits.
+///
+/// The probe is the worst case a cart can actually build: `n` channels all
+/// playing the *same* triangle note, started on the same frame, so their phases
+/// are locked together and the sum is `n * MIX_GAIN` times one triangle. A
+/// triangle (rather than a square) makes clipping observable: an unclipped
+/// triangle only touches its peak for an instant, while a clipped one sits flat
+/// at ±1.0 for a measurable share of every half-cycle.
+fn saturated_channels(n: usize, extra_init: &str) -> Vec<f32> {
+    let starts: String = (0..n).map(|ch| format!("sfx(0, {ch}) ")).collect();
+    let cart = format!(
+        "__lua__\nfunction _init() {starts}{extra_init} end\n\n__sfx__\nsfx 0 speed=120\nC2 3 7\n"
+    );
+    let mut con = console(&cart);
+    // Frame 1 is the 64-sample amplitude ramp; measure the steady state.
+    collect(&mut con, 1);
+    collect(&mut con, 10)
+}
+
+/// Fraction of samples pinned at exactly full scale.
+fn pinned_fraction(samples: &[f32]) -> f32 {
+    let pinned = samples.iter().filter(|s| s.abs() == 1.0).count();
+    pinned as f32 / samples.len() as f32
+}
+
+#[test]
+fn mix_headroom_four_channels_is_unchanged() {
+    let samples = saturated_channels(4, "");
+    let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    // Four full-scale voices sum to exactly 1.0 — the ceiling, touched but
+    // never exceeded, exactly as in the four-channel console.
+    assert!(peak <= 1.0, "peak {peak} exceeded full scale");
+    assert!(peak > 0.99, "probe never got loud (peak {peak})");
+    // A triangle only grazes its peak, so hardly any sample is pinned.
+    let pinned = pinned_fraction(&samples);
+    assert!(pinned < 0.01, "{pinned} of samples pinned: this is clipping");
+}
+
+#[test]
+fn mix_headroom_six_channels_hard_clips_without_drive() {
+    let samples = saturated_channels(6, "");
+    let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    assert_eq!(peak, 1.0, "the final clamp bounds the output");
+    // Six aligned full-scale voices want 6 * 0.25 = 1.5, so |sum| > 1 for the
+    // outer third of the triangle: about a third of the samples come back
+    // flat-topped. DOCUMENTED, not fixed — leaving MIX_GAIN alone is what keeps
+    // every pre-existing cart bit-identical. Songs should not run six vol-7
+    // voices in phase; `master drive=1` (below) is the cheap insurance.
+    let pinned = pinned_fraction(&samples);
+    assert!(
+        (0.30..0.36).contains(&pinned),
+        "expected ~1/3 of samples clipped, got {pinned}"
+    );
+}
+
+#[test]
+fn mix_headroom_six_channels_never_reaches_the_clamp_with_drive() {
+    for drive in 1..=MAX_DRIVE {
+        let samples = saturated_channels(6, &format!("master({drive})"));
+        let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        // The shaper's output is bounded by MAKEUP[drive] < 1, so the hard
+        // clamp is never engaged: any non-zero drive is a free limiter.
+        assert!(peak < 1.0, "drive {drive} still hit the clamp (peak {peak})");
+        assert_eq!(
+            pinned_fraction(&samples),
+            0.0,
+            "drive {drive} pinned samples at full scale"
+        );
+        assert!(peak > 0.6, "drive {drive} probe went quiet (peak {peak})");
+    }
+}
+
+/// The mix is only tight when voices *align*; a realistic six-voice arrangement
+/// at sane levels has plenty of room.
+#[test]
+fn mix_headroom_six_moderate_channels_are_clean() {
+    let starts: String = (0..CHANNEL_COUNT)
+        .map(|ch| format!("sfx({ch}, {ch}) "))
+        .collect();
+    let mut sfx = String::new();
+    for (i, note) in ["C2", "E2", "G2", "C3", "E3", "G3"].iter().enumerate() {
+        sfx.push_str(&format!("\nsfx {i} speed=120\n{note} 3 4\n"));
+    }
+    let mut con = console(&format!(
+        "__lua__\nfunction _init() {starts}end\n\n__sfx__{sfx}"
+    ));
+    collect(&mut con, 1);
+    let samples = collect(&mut con, 10);
+    let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    // 6 voices * (4/7) * 0.25 = 0.857 worst case, and they are not in phase.
+    assert!(peak < 0.86, "peak {peak}");
+    assert_eq!(pinned_fraction(&samples), 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -570,7 +719,55 @@ fn music_claims_its_slots_and_marks_them() {
     let ch = con.audio_channels();
     assert!(ch[0].from_music && ch[0].busy);
     assert!(ch[1].from_music && ch[1].busy);
-    assert!(!ch[2].busy && !ch[3].busy);
+    // A 2-slot pattern leaves the other four channels genuinely free.
+    assert!(ch[2..].iter().all(|c| !c.busy), "{ch:?}");
+}
+
+/// Slots 4 and 5 sequence like any other channel, and the slots a shorter
+/// pattern line omits stay unclaimed — the recommended song shape, since it is
+/// what keeps `sfx()` off the melody.
+#[test]
+fn music_sequences_the_widened_slots() {
+    // Six slots: every channel is owned by music and playing.
+    let six = SEQ.replace("pat 0 : 0 1 - -", "pat 0 : 0 1 2 0 1 2");
+    let mut con = Console::new(
+        &six.replace(
+            "function _update() end",
+            "function _init() music(0) end\nfunction _update() end",
+        ),
+        0,
+    )
+    .unwrap();
+    let ch = con.audio_channels();
+    assert!(ch.iter().all(|c| c.from_music && c.busy), "{ch:?}");
+    assert_eq!(
+        ch.map(|c| c.sfx),
+        [Some(0), Some(1), Some(2), Some(0), Some(1), Some(2)]
+    );
+    // Channel 5 really sequences: sfx 2 is speed 2, so row 1 lands on frame 2.
+    con.step(0).unwrap();
+    con.step(0).unwrap();
+    assert_eq!(con.audio_channels()[5].row, 1);
+
+    // Five slots: channel 5 is left free for sfx.
+    let five = SEQ.replace("pat 0 : 0 1 - -", "pat 0 : 0 1 2 0 1");
+    let mut con = Console::new(
+        &five.replace(
+            "function _update() end",
+            "function _init() music(0) end\nfunction _update() end",
+        ),
+        0,
+    )
+    .unwrap();
+    assert!(con.audio_channels()[..5].iter().all(|c| c.from_music));
+    assert!(!con.audio_channels()[5].busy);
+    con.eval("sfx(2)").unwrap();
+    assert_eq!(
+        con.audio_channels()[5].sfx,
+        Some(2),
+        "the free slot absorbs the blip instead of stealing from the song"
+    );
+    assert!(con.audio_channels()[..5].iter().all(|c| c.from_music));
 }
 
 #[test]
@@ -584,21 +781,51 @@ fn sfx_during_music_picks_a_free_channel() {
     assert_eq!(ch[0].sfx, Some(0));
     assert_eq!(ch[1].sfx, Some(1));
 
-    // The next auto sfx takes the remaining free channel.
+    // Auto-alloc keeps walking upward through the non-music channels.
     con.eval("sfx(0)").unwrap();
     assert_eq!(con.audio_channels()[3].sfx, Some(0));
+    con.eval("sfx(0)").unwrap();
+    assert_eq!(con.audio_channels()[4].sfx, Some(0));
+    assert!(!con.audio_channels()[5].busy, "channel 5 is still free");
 }
 
 #[test]
-fn auto_sfx_steals_channel_three_when_everything_is_busy() {
+fn auto_sfx_steals_the_highest_channel_when_everything_is_busy() {
     let mut con = seq_console("music(0)");
-    con.eval("sfx(2) sfx(2)").unwrap();
-    assert!(con.audio_channels().iter().all(|c| c.busy));
+    // pat 0 owns channels 0 and 1; four blips fill 2, 3, 4 and 5.
+    con.eval("sfx(2) sfx(2) sfx(2) sfx(2)").unwrap();
+    let ch = con.audio_channels();
+    assert!(ch.iter().all(|c| c.busy), "{ch:?}");
+    assert_eq!(ch[5].sfx, Some(2), "the fourth blip landed on channel 5");
+
     con.eval("sfx(0)").unwrap();
     let ch = con.audio_channels();
-    assert_eq!(ch[3].sfx, Some(0), "channel 3 is the steal target");
+    assert_eq!(ch[5].sfx, Some(0), "channel 5 is the steal target");
     assert_eq!(ch[0].sfx, Some(0), "music channel 0 is left alone");
-    assert_eq!(ch[2].sfx, Some(2), "channel 2 is left alone");
+    assert_eq!(ch[1].sfx, Some(1), "music channel 1 is left alone");
+    for (i, c) in ch.iter().enumerate().take(5).skip(2) {
+        assert_eq!(c.sfx, Some(2), "channel {i} is left alone");
+    }
+}
+
+/// The steal target is the highest channel even when *music* owns it: a
+/// six-slot song gives up channel 5 to the next auto-allocated `sfx()`. This is
+/// why the recommended song shape leaves one or two channels unclaimed.
+#[test]
+fn auto_sfx_steals_from_music_when_a_song_claims_every_channel() {
+    let cart = SEQ.replace("pat 0 : 0 1 - -", "pat 0 : 0 1 0 1 0 1");
+    let cart = cart.replace(
+        "function _update() end",
+        "function _init() music(0) end\nfunction _update() end",
+    );
+    let mut con = Console::new(&cart, 0).unwrap();
+    assert!(con.audio_channels().iter().all(|c| c.from_music));
+
+    con.eval("sfx(2)").unwrap();
+    let ch = con.audio_channels();
+    assert_eq!(ch[5].sfx, Some(2));
+    assert!(!ch[5].from_music, "channel 5 was taken away from music");
+    assert!(ch[..5].iter().all(|c| c.from_music), "{ch:?}");
 }
 
 #[test]
@@ -631,6 +858,20 @@ fn sfx_minus_one_stops_a_channel() {
 
     // sfx(-1) with no channel stops every sfx channel.
     con.eval("sfx(-1)").unwrap();
+    assert!(con.audio_channels().iter().all(|c| !c.busy));
+}
+
+/// The two channels the widening added are ordinary channels in every respect.
+#[test]
+fn sfx_minus_one_stops_the_new_top_channels() {
+    let mut con = seq_console("sfx(1, 4) sfx(1, 5)");
+    assert!(con.audio_channels()[4].busy && con.audio_channels()[5].busy);
+
+    con.eval("sfx(-1, 5)").unwrap();
+    assert!(!con.audio_channels()[5].busy);
+    assert!(con.audio_channels()[4].busy, "only channel 5 stops");
+
+    con.eval("sfx(-1, 4)").unwrap();
     assert!(con.audio_channels().iter().all(|c| !c.busy));
 }
 
@@ -705,8 +946,17 @@ fn out_of_range_ids_error_clearly() {
     assert!(msg.contains("out of range"), "{msg}");
     let msg = lua_error(SEQ, "sfx(-2)");
     assert!(msg.contains("out of range"), "{msg}");
-    let msg = lua_error(SEQ, "sfx(0, 4)");
-    assert!(msg.contains("channel 4 out of range"), "{msg}");
+    // Channels are 0-5 now; 6 is the first one past the end.
+    let msg = lua_error(SEQ, "sfx(0, 6)");
+    assert!(msg.contains("channel 6 out of range"), "{msg}");
+    assert!(msg.contains("expected 0-5"), "{msg}");
+    let msg = lua_error(SEQ, "sfx(0, -2)");
+    assert!(msg.contains("channel -2 out of range"), "{msg}");
+    // ...and 4/5 are perfectly legal.
+    let mut con = Console::new(SEQ, 0).unwrap();
+    con.eval("sfx(0, 4) sfx(0, 5)").expect("channels 4 and 5 exist");
+    assert_eq!(con.audio_channels()[4].sfx, Some(0));
+    assert_eq!(con.audio_channels()[5].sfx, Some(0));
     let msg = lua_error(SEQ, "music(-2)");
     assert!(msg.contains("out of range"), "{msg}");
 }
@@ -2229,6 +2479,10 @@ fn the_soundtest_menu_navigates_and_stops() {
 /// number, because the cart declares no `master` line and this entry sets
 /// `master(0)` every frame - see
 /// [`soundtest_ab_is_bit_identical_to_the_groove_while_it_is_dry`].
+///
+/// Unmoved by the 4 -> 6 channel widening: `MIX_GAIN` stayed at 1/4 and the
+/// groove is a four-slot pattern, so channels 4 and 5 render silence into the
+/// sum. See the `mix_headroom_*` tests for what six loud channels do instead.
 const SOUNDTEST_GROOVE_GOLDEN: u64 = 0x993e_e511_8be1_bec4;
 
 #[test]

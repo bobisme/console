@@ -38,7 +38,12 @@ pub const SAMPLE_RATE: u32 = 44100;
 pub const SAMPLES_PER_FRAME: usize = 735;
 
 /// Number of synth channels.
-pub const CHANNEL_COUNT: usize = 4;
+pub const CHANNEL_COUNT: usize = 6;
+
+/// Smallest number of slots a `__music__` pattern line may list. Patterns
+/// predate the 4 -> 6 channel widening, so a 4-slot line stays legal forever
+/// and the missing trailing slots are silent.
+pub const MIN_PATTERN_SLOTS: usize = 4;
 
 /// One frame of mono f32 audio.
 pub type AudioFrame = [f32; SAMPLES_PER_FRAME];
@@ -91,7 +96,25 @@ pub const RAMP_SAMPLES: u32 = 64;
 /// ramp is bit-reproducible and lands exactly on its target.
 const RAMP_STEP: f32 = 1.0 / RAMP_SAMPLES as f32;
 
-/// Per-channel mix gain; four channels sum to at most 1.0 before clamping.
+/// Per-channel mix gain. Deliberately **frozen at 1/4** even though the console
+/// now has six channels: rescaling it to 1/6 would change every sample of every
+/// existing cart (and every audio golden) for no musical gain, and would make
+/// the four-voice carts written against PoC v1/v2 a third quieter.
+///
+/// Headroom, therefore, is authored rather than enforced:
+///
+/// - Four full-scale voices in phase still sum to exactly `1.0` — the old
+///   worst case, unchanged.
+/// - Six full-scale voices in phase sum to `1.5`, and the final
+///   `clamp(-1.0, 1.0)` hard-clips the excess. Reaching it takes six
+///   simultaneous vol-7 square/saw voices with aligned phase, which is a
+///   mixing mistake in any tracker.
+/// - Any non-zero `master drive` moves the peak onto the soft shaper, whose
+///   output is bounded by `MAKEUP[drive] < 1.0`, so a driven mix cannot reach
+///   the clamp at all — `drive=1` is effectively a free limiter.
+///
+/// `audio_stats` reports clipped-sample counts, and `mix_headroom_*` in
+/// `tests/audio.rs` pins all three behaviours.
 const MIX_GAIN: f32 = 0.25;
 
 /// Initial (and only) seed of the noise LFSR. Non-zero, fixed forever: the
@@ -708,10 +731,11 @@ pub enum PatternEnd {
     Loop(u8),
 }
 
-/// A parsed `__music__` entry: four channel slots plus a continuation rule.
+/// A parsed `__music__` entry: one slot per channel plus a continuation rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pattern {
-    /// Per-channel sfx id, `None` for a `-` slot.
+    /// Per-channel sfx id, `None` for a `-` slot or a slot the pattern line
+    /// omitted entirely (a 4-slot line leaves channels 4 and 5 silent).
     pub slots: [Option<u8>; CHANNEL_COUNT],
     pub end: PatternEnd,
 }
@@ -1601,7 +1625,9 @@ fn parse_music_section(text: &str, sfx: &BTreeMap<u8, Sfx>) -> Result<MusicParse
             return Err(cart_err(
                 SEC,
                 line,
-                format!("expected `pat <id> [stop|loop=<id>] : a b c d`, found {body:?}"),
+                format!(
+                    "expected `pat <id> [stop|loop=<id>] : ch0 ch1 ch2 ch3 [ch4 ch5]`, found {body:?}"
+                ),
             ));
         };
         let head: Vec<&str> = head.split_whitespace().collect();
@@ -1635,13 +1661,15 @@ fn parse_music_section(text: &str, sfx: &BTreeMap<u8, Sfx>) -> Result<MusicParse
             }
         }
 
+        // 4 slots (the pre-6-channel format) through 6 (one per channel).
+        // Trailing slots a line omits stay `None`, i.e. silent.
         let slot_tokens: Vec<&str> = tail.split_whitespace().collect();
-        if slot_tokens.len() != CHANNEL_COUNT {
+        if !(MIN_PATTERN_SLOTS..=CHANNEL_COUNT).contains(&slot_tokens.len()) {
             return Err(cart_err(
                 SEC,
                 line,
                 format!(
-                    "expected {CHANNEL_COUNT} channel slots after `:`, found {}",
+                    "expected {MIN_PATTERN_SLOTS}-{CHANNEL_COUNT} channel slots after `:`, found {}",
                     slot_tokens.len()
                 ),
             ));
@@ -2084,7 +2112,8 @@ impl Audio {
     // ---- Lua entry points --------------------------------------------------
 
     /// `sfx(n, ch)`. `n == -1` stops (that channel, or every sfx channel when
-    /// `ch == -1`). `ch == -1` auto-picks a channel.
+    /// `ch == -1`). `ch == -1` auto-picks a channel: see [`Audio::auto_channel`].
+    /// Explicit channels are `0..=5`.
     pub fn lua_sfx(&mut self, n: i32, ch: i32) -> Result<(), String> {
         if !(-1..=i32::from(MAX_ID)).contains(&n) {
             return Err(format!(
@@ -2191,7 +2220,10 @@ impl Audio {
 
     // ---- sequencing --------------------------------------------------------
 
-    /// First channel busy with neither music nor a sfx; channel 3 if all busy.
+    /// The lowest channel busy with neither music nor a sfx — so auto-allocated
+    /// blips land on channels a song's pattern did not claim. When every
+    /// channel is busy the highest one ([`CHANNEL_COUNT`] - 1, i.e. channel 5)
+    /// is stolen, music or not.
     fn auto_channel(&self) -> usize {
         self.channels
             .iter()

@@ -161,7 +161,7 @@ fn audio_state_reports_busy_music_channels() {
     let channels = resp["result"]["channels"]
         .as_array()
         .expect("channels array");
-    assert_eq!(channels.len(), 4);
+    assert_eq!(channels.len(), 6);
     assert_eq!(channels[0]["busy"], true);
     assert_eq!(channels[0]["from_music"], true);
     assert_eq!(channels[1]["busy"], true);
