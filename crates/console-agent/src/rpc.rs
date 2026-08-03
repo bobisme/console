@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::session::{Session, SessionError};
-use crate::sprite::view::{self, Image, RenderOpts};
+use crate::sprite::view::{self, Image, OverlayOpts, RenderOpts};
 use crate::value::lua_to_json;
 
 /// A JSON-RPC error: `code` + `message` are always present, `data` carries
@@ -440,9 +440,19 @@ fn m_sprite_strip(session: &Session, params: &Value) -> Result<Value, RpcErr> {
 fn m_sprite_onion(session: &Session, params: &Value) -> Result<Value, RpcErr> {
     let anim = required_str(params, "sprite_onion", "anim")?;
     let path = required_str(params, "sprite_onion", "path")?;
-    let frame = u32_param(params, "frame").unwrap_or(0);
-    let image = view::onion(session.console()?.cart(), anim, frame, zoom_param(params))
-        .map_err(RpcErr::bad_params)?;
+    let opts = OverlayOpts {
+        zoom: zoom_param(params),
+        grid: bool_param(params, "grid"),
+        anchor: bool_param(params, "anchor"),
+    };
+    let cart = session.console()?.cart();
+    let image = if bool_param(params, "all") {
+        view::onion_all(cart, anim, &opts)
+    } else {
+        let frame = u32_param(params, "frame").unwrap_or(0);
+        view::onion(cart, anim, frame, &opts)
+    }
+    .map_err(RpcErr::bad_params)?;
     write_image(path, &image)
 }
 
@@ -459,8 +469,13 @@ fn m_sprite_diff(session: &Session, params: &Value) -> Result<Value, RpcErr> {
 fn m_sprite_ghost(session: &Session, params: &Value) -> Result<Value, RpcErr> {
     let anim = required_str(params, "sprite_ghost", "anim")?;
     let path = required_str(params, "sprite_ghost", "path")?;
-    let image = view::ghost(session.console()?.cart(), anim, zoom_param(params))
-        .map_err(RpcErr::bad_params)?;
+    let opts = OverlayOpts {
+        zoom: zoom_param(params),
+        grid: bool_param(params, "grid"),
+        anchor: bool_param(params, "anchor"),
+    };
+    let image =
+        view::ghost(session.console()?.cart(), anim, &opts).map_err(RpcErr::bad_params)?;
     write_image(path, &image)
 }
 

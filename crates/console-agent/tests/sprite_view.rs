@@ -18,7 +18,7 @@
 
 use console_agent::rpc::handle;
 use console_agent::session::Session;
-use console_agent::sprite::view::{self, Image, RenderOpts};
+use console_agent::sprite::view::{self, Image, OverlayOpts, RenderOpts};
 use console_core::{Cart, PALETTE};
 use serde_json::{Value, json};
 
@@ -46,6 +46,7 @@ sprite dot rect=0,0 size=1x1 anchor=4,7
 anim dot.wave frames=0,1 fps=4 loop
 anim dot.once frames=0,1 fps=4
 anim dot.tri frames=0,1,2 fps=4 loop
+anim dot.tri3 frames=0,1,2 fps=4
 ";
 
 const CHECKER_A: [u8; 3] = [0x14, 0x16, 0x1f];
@@ -68,6 +69,12 @@ fn cell(img: &Image, zoom: u32, sx: u32, sy: u32) -> [u8; 3] {
 
 fn temp_path(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("console-agent-sprite-{}-{name}", std::process::id()))
+}
+
+/// `OverlayOpts` at `zoom`, grid/anchor off — the shape most `onion`/`ghost`
+/// tests want; tests that care about grid/anchor build their own.
+fn overlay(zoom: u32) -> OverlayOpts {
+    OverlayOpts { zoom, ..OverlayOpts::default() }
 }
 
 fn approx(value: &Value, expected: f64) {
@@ -312,7 +319,7 @@ fn is_greenish(p: [u8; 3]) -> bool {
 fn onion_tints_neighbours_red_and_green_around_a_solid_frame() {
     let cart = cart();
     // dot.tri loops, so frame 0's neighbours are frame 2 (prev) and 1 (next).
-    let img = view::onion(&cart, "dot.tri", 0, 4).expect("onion dot.tri 0");
+    let img = view::onion(&cart, "dot.tri", 0, &overlay(4)).expect("onion dot.tri 0");
     assert_eq!((img.width, img.height), (32, 32));
     assert_eq!(img.frames, 3);
 
@@ -340,14 +347,14 @@ fn onion_tints_neighbours_red_and_green_around_a_solid_frame() {
 fn onion_clamps_at_the_ends_of_a_non_looping_anim() {
     let cart = cart();
     // dot.once does not loop, so frame 0 has no previous frame at all.
-    let img = view::onion(&cart, "dot.once", 0, 4).expect("onion dot.once 0");
+    let img = view::onion(&cart, "dot.once", 0, &overlay(4)).expect("onion dot.once 0");
     assert_eq!(img.frames, 2, "solid + next only");
     let any_red = (0..img.height).any(|y| (0..img.width).any(|x| is_reddish(px(&img, x, y))));
     assert!(!any_red, "a clamped first frame must have no red ghost");
     let any_green = (0..img.height).any(|y| (0..img.width).any(|x| is_greenish(px(&img, x, y))));
     assert!(any_green, "frame 1 should still ghost in green");
 
-    let err = view::onion(&cart, "dot.once", 2, 4).unwrap_err();
+    let err = view::onion(&cart, "dot.once", 2, &overlay(4)).unwrap_err();
     assert!(err.contains("out of range"), "unexpected error: {err}");
 }
 
@@ -393,7 +400,7 @@ fn diff_marks_exactly_the_changed_pixels_in_magenta() {
 #[test]
 fn ghost_overlays_every_frame_at_low_alpha() {
     let cart = cart();
-    let img = view::ghost(&cart, "dot.tri", 4).expect("ghost dot.tri");
+    let img = view::ghost(&cart, "dot.tri", &overlay(4)).expect("ghost dot.tri");
     assert_eq!((img.width, img.height), (32, 32));
     assert_eq!(img.frames, 3);
 
@@ -420,6 +427,155 @@ fn ghost_overlays_every_frame_at_low_alpha() {
 
     assert!(twice3[0] > once3[0], "overlap must accumulate");
     assert_ne!(twice3, PALETTE[3], "ghosts are never fully opaque");
+}
+
+#[test]
+fn ghost_grid_and_anchor_overlays_draw_extra_pixels() {
+    let cart = cart();
+    let plain = view::ghost(&cart, "dot.tri", &overlay(4)).expect("plain ghost");
+    let grid = view::ghost(&cart, "dot.tri", &OverlayOpts { grid: true, ..overlay(4) })
+        .expect("grid ghost");
+    let anchored = view::ghost(&cart, "dot.tri", &OverlayOpts { anchor: true, ..overlay(4) })
+        .expect("anchor ghost");
+
+    assert_eq!((plain.width, plain.height), (grid.width, grid.height));
+    assert_ne!(plain.rgba, grid.rgba, "--grid must draw something");
+    assert_ne!(plain.rgba, anchored.rgba, "--anchor must draw something");
+
+    let has_color_4 =
+        |img: &Image| (0..img.height).any(|y| (0..img.width).any(|x| px(img, x, y) == PALETTE[4]));
+    assert!(!has_color_4(&plain));
+    assert!(has_color_4(&anchored));
+}
+
+// ---------------------------------------------------------------------------
+// onion: --anchor / --grid
+// ---------------------------------------------------------------------------
+
+#[test]
+fn onion_grid_and_anchor_overlays_draw_extra_pixels() {
+    let cart = cart();
+    let plain = view::onion(&cart, "dot.tri", 0, &overlay(4)).expect("plain onion");
+    let grid = view::onion(&cart, "dot.tri", 0, &OverlayOpts { grid: true, ..overlay(4) })
+        .expect("grid onion");
+    let anchored = view::onion(&cart, "dot.tri", 0, &OverlayOpts { anchor: true, ..overlay(4) })
+        .expect("anchor onion");
+
+    assert_eq!((plain.width, plain.height), (grid.width, grid.height));
+    assert_ne!(plain.rgba, grid.rgba, "--grid must draw something");
+    assert_ne!(plain.rgba, anchored.rgba, "--anchor must draw something");
+
+    let has_color_4 =
+        |img: &Image| (0..img.height).any(|y| (0..img.width).any(|x| px(img, x, y) == PALETTE[4]));
+    assert!(!has_color_4(&plain));
+    assert!(has_color_4(&anchored));
+}
+
+// ---------------------------------------------------------------------------
+// onion --all (contact sheet)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn onion_all_lays_out_every_frame_with_a_caption_band() {
+    let cart = cart();
+    let img = view::onion_all(&cart, "dot.tri", &overlay(4)).expect("onion_all dot.tri");
+
+    // 3 frames, each a 1x1-tile (8 sheet px) cell at zoom 4 = 32px square,
+    // separated by the same 2px gutter `strip` uses.
+    let cell = 32;
+    assert_eq!(img.width, 3 * cell + 2 * 2, "3 cells + 2 gutters");
+    assert!(img.height > cell, "must reserve a caption band below the frames");
+    assert_eq!(img.frames, 3);
+}
+
+#[test]
+fn onion_all_cell_matches_a_standalone_onion_of_that_frame() {
+    let cart = cart();
+    let all = view::onion_all(&cart, "dot.tri", &overlay(4)).expect("onion_all");
+    let single = view::onion(&cart, "dot.tri", 0, &overlay(4)).expect("onion frame 0");
+
+    // Cell 0 of the contact sheet must be pixel-identical, within the shared
+    // frame area, to a standalone `onion --frame 0` render — same ghosts,
+    // same solid frame, same overlays.
+    for y in 0..single.height {
+        for x in 0..single.width {
+            assert_eq!(px(&all, x, y), px(&single, x, y), "mismatch at ({x},{y})");
+        }
+    }
+}
+
+#[test]
+fn onion_all_labels_differ_between_frames() {
+    let cart = cart();
+    let img = view::onion_all(&cart, "dot.tri", &overlay(4)).expect("onion_all");
+    // The caption band sits below the 32px-tall cells; sample it across cell
+    // 0 and cell 1 (each 34px wide including its gutter) and confirm the
+    // digit "0" and digit "1" glyphs don't render identically.
+    let band_y = 34;
+    let row0: Vec<[u8; 3]> = (0..32).map(|x| px(&img, x, band_y)).collect();
+    let row1: Vec<[u8; 3]> = (34..66).map(|x| px(&img, x, band_y)).collect();
+    assert_ne!(row0, row1, "frame 0 and frame 1 labels must differ");
+}
+
+#[test]
+fn onion_all_is_loop_aware_like_onion() {
+    let cart = cart();
+    // dot.tri3 is the same three frames as dot.tri but without `loop`: frame
+    // 0 must get no red (previous) ghost, and frame 2 (the last) must get no
+    // green (next) ghost. Frame 2's silhouette is disjoint from frame 1's, so
+    // (unlike dot.once, where frame 1 fully contains frame 0's pixels and
+    // would hide a red ghost regardless) its previous ghost is fully visible
+    // — a clean positive check, not just an absence.
+    let img = view::onion_all(&cart, "dot.tri3", &overlay(4)).expect("onion_all dot.tri3");
+    assert_eq!(img.frames, 3);
+
+    let (cell, gutter) = (32, 2);
+    let any_in = |cell_index: u32, pred: &dyn Fn([u8; 3]) -> bool| {
+        let x0 = cell_index * (cell + gutter);
+        (0..cell).any(|y| (x0..x0 + cell).any(|x| pred(px(&img, x, y))))
+    };
+
+    assert!(!any_in(0, &is_reddish), "first frame has no previous ghost");
+    assert!(any_in(0, &is_greenish), "first frame still ghosts its next frame");
+
+    assert!(any_in(2, &is_reddish), "last frame still ghosts its previous frame");
+    assert!(!any_in(2, &is_greenish), "last frame has no next ghost");
+}
+
+// ---------------------------------------------------------------------------
+// onion --all vs --frame at the CLI layer
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cli_onion_all_and_frame_are_mutually_exclusive() {
+    let path = temp_path("onion-all-conflict.cart");
+    std::fs::write(&path, CART).expect("write temp cart");
+    let out = temp_path("onion-all-conflict.png");
+
+    let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+    let code = view::cli_view(&args(&[
+        "onion",
+        path.to_str().unwrap(),
+        "dot.tri",
+        "--all",
+        "--frame",
+        "0",
+        "-o",
+        out.to_str().unwrap(),
+    ]));
+    assert_ne!(code, 0, "--all and --frame together must be rejected");
+    assert!(!out.exists(), "no file should be written on error");
+
+    let code = view::cli_view(&args(&[
+        "onion",
+        path.to_str().unwrap(),
+        "dot.tri",
+        "--all",
+        "-o",
+        out.to_str().unwrap(),
+    ]));
+    assert_eq!(code, 0, "--all alone must succeed");
+    assert!(out.exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -517,7 +673,7 @@ fn lint_with_no_names_reports_every_anim() {
         .iter()
         .map(|a| a["anim"].as_str().expect("anim name"))
         .collect();
-    assert_eq!(names, ["dot.once", "dot.tri", "dot.wave"]);
+    assert_eq!(names, ["dot.once", "dot.tri", "dot.tri3", "dot.wave"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -530,7 +686,7 @@ fn anim_only_commands_reject_sprites_and_rects() {
     for target in ["dot", "0,0,1,1"] {
         let err = view::strip(&cart, target, 8, false).unwrap_err();
         assert!(err.contains("is not an anim"), "strip {target}: {err}");
-        let err = view::ghost(&cart, target, 8).unwrap_err();
+        let err = view::ghost(&cart, target, &overlay(8)).unwrap_err();
         assert!(err.contains("is not an anim"), "ghost {target}: {err}");
         let err = view::lint(&cart, &[target.to_string()]).unwrap_err();
         assert!(err.contains("is not an anim"), "lint {target}: {err}");
@@ -592,9 +748,22 @@ fn rpc_sprite_verbs_write_images_and_report_sizes() {
     let resp = call(
         &mut session,
         "sprite_onion",
-        json!({"anim": "dot.tri", "frame": 1, "zoom": 4, "path": p}),
+        json!({"anim": "dot.tri", "frame": 1, "zoom": 4, "grid": true, "anchor": true, "path": p}),
     );
+    assert!(resp.get("error").is_none(), "sprite_onion: {resp}");
     assert_eq!(resp["result"]["frames"], 3);
+    let _ = std::fs::remove_file(&path);
+
+    let path = temp_path("onion-all.png");
+    let p = path.to_str().expect("utf-8 path");
+    let resp = call(
+        &mut session,
+        "sprite_onion",
+        json!({"anim": "dot.tri", "all": true, "zoom": 4, "path": p}),
+    );
+    assert!(resp.get("error").is_none(), "sprite_onion --all: {resp}");
+    assert_eq!(resp["result"]["frames"], 3, "one contact-sheet image depicting all 3 frames");
+    assert_eq!(resp["result"]["width"], 32 * 3 + 2 * 2, "3 cells + 2 gutters");
     let _ = std::fs::remove_file(&path);
 
     let path = temp_path("diff.png");
@@ -612,8 +781,9 @@ fn rpc_sprite_verbs_write_images_and_report_sizes() {
     let resp = call(
         &mut session,
         "sprite_ghost",
-        json!({"anim": "dot.tri", "zoom": 4, "path": p}),
+        json!({"anim": "dot.tri", "zoom": 4, "grid": true, "anchor": true, "path": p}),
     );
+    assert!(resp.get("error").is_none(), "sprite_ghost: {resp}");
     assert_eq!(resp["result"]["frames"], 3);
     let _ = std::fs::remove_file(&path);
 
@@ -626,7 +796,7 @@ fn rpc_sprite_verbs_write_images_and_report_sizes() {
     let resp = call(&mut session, "sprite_lint", json!({}));
     assert_eq!(
         resp["result"]["anims"].as_array().expect("anims").len(),
-        3,
+        4,
         "no \"anims\" param means every anim"
     );
 }

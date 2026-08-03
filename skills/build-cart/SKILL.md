@@ -129,9 +129,10 @@ its test suite checks for it.
 console-agent sprite render game.cart <sprite|anim|tx,ty,w,h> \
     [--frame N] [--zoom 12] [--grid] [--indices] [--anchor] -o out.png
 console-agent sprite strip  game.cart <anim> --zoom 12 --anchor -o out.png  # frames baseline-aligned
-console-agent sprite onion  game.cart <anim> --frame N -o out.png           # red ghost=prev, green=next
+console-agent sprite onion  game.cart <anim> --frame N [--grid] [--anchor] -o out.png  # red ghost=prev, green=next
+console-agent sprite onion  game.cart <anim> --all [--grid] [--anchor] -o out.png      # contact sheet, every frame
 console-agent sprite diff   game.cart <anim> A B -o out.png                 # magenta = changed pixels
-console-agent sprite ghost  game.cart <anim> -o out.png                     # motion accumulation
+console-agent sprite ghost  game.cart <anim> [--grid] [--anchor] -o out.png # motion accumulation
 console-agent sprite lint   game.cart [anim ...]                            # JSON quality numbers
 console-agent sprite edit   game.cart copy|shift|flip|rotate|clear ... [--dry-run]
 console-agent sprite dump   game.cart <sprite|anim|tx,ty,w,h> [--frame N]    # print pixels as hex rows

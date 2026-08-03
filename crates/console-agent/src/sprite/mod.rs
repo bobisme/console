@@ -124,9 +124,10 @@ pub const SPRITE_USAGE: &str = "\
 usage:
   console-agent sprite render <cart> <target> [--frame N] [--zoom Z] [--grid] [--indices] [--anchor] -o out.png
   console-agent sprite strip  <cart> <anim> [--zoom Z] [--anchor] -o out.png
-  console-agent sprite onion  <cart> <anim> --frame N [--zoom Z] -o out.png
+  console-agent sprite onion  <cart> <anim> --frame N [--zoom Z] [--grid] [--anchor] -o out.png
+  console-agent sprite onion  <cart> <anim> --all [--zoom Z] [--grid] [--anchor] -o out.png
   console-agent sprite diff   <cart> <anim> <frameA> <frameB> [--zoom Z] -o out.png
-  console-agent sprite ghost  <cart> <anim> [--zoom Z] -o out.png
+  console-agent sprite ghost  <cart> <anim> [--zoom Z] [--grid] [--anchor] -o out.png
   console-agent sprite lint   <cart> [anim ...]
   console-agent sprite edit   <cart> <shift|flip|rotate|copy|clear> ... [--dry-run]
   console-agent sprite dump   <cart> <target> [--frame N]

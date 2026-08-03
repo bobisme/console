@@ -17,7 +17,11 @@
 //! - `--grid` overlays tile (8px) boundaries, `--indices` writes the palette
 //!   index into each pixel cell as a 3x5 hex glyph (only when `zoom >= 6`,
 //!   otherwise silently skipped), `--anchor` draws a crosshair in palette
-//!   color 4 at the sprite's anchor pixel.
+//!   color 4 at the sprite's anchor pixel. `onion` and `ghost` accept
+//!   `--grid`/`--anchor` too (mirroring `render`/`strip`), via
+//!   [`OverlayOpts`]. `onion --all` renders a contact sheet — every frame of
+//!   the anim side by side, each with its own onion skin and a frame-number
+//!   caption (see [`onion_all`]).
 
 use std::collections::BTreeMap;
 
@@ -74,6 +78,26 @@ impl Default for RenderOpts {
             zoom: DEFAULT_ZOOM,
             grid: false,
             indices: false,
+            anchor: false,
+        }
+    }
+}
+
+/// Flags shared by `sprite onion` / `sprite ghost` and their RPC mirrors —
+/// both are anim-wide overlays with no per-target `--indices` concept, so
+/// they share this smaller options struct rather than [`RenderOpts`].
+#[derive(Debug, Clone, Copy)]
+pub struct OverlayOpts {
+    pub zoom: u32,
+    pub grid: bool,
+    pub anchor: bool,
+}
+
+impl Default for OverlayOpts {
+    fn default() -> OverlayOpts {
+        OverlayOpts {
+            zoom: DEFAULT_ZOOM,
+            grid: false,
             anchor: false,
         }
     }
@@ -182,50 +206,149 @@ pub fn strip(cart: &Cart, anim: &str, zoom: u32, anchor: bool) -> Result<Image, 
     Ok(canvas.finish(frames.len()))
 }
 
-/// `sprite onion` — frame `pos` at full opacity over its neighbours: the
-/// previous frame tinted red, the next tinted green, both at ~35% and both
-/// skipping color-0 pixels. Neighbour choice wraps for `loop` anims and is
-/// simply absent at the ends otherwise. The solid frame is painted last, so
-/// it always wins where the silhouettes overlap.
-pub fn onion(cart: &Cart, anim: &str, pos: u32, zoom: u32) -> Result<Image, String> {
-    let zoom = check_zoom(zoom)?;
-    let (def, sprite, frames) = anim_frames(cart, anim)?;
-    let pos = check_pos(pos, frames.len(), anim, "--frame")?;
-    let layout = align(&frames, sprite.anchor);
-
-    let mut canvas = Canvas::new(layout.cell_w * zoom, layout.cell_h * zoom, zoom);
-    let last = frames.len() - 1;
+/// The onion-skin neighbours of frame `pos` among `n` frames: the previous
+/// frame (red ghost) and the next (green ghost), wrapping around for `loop`
+/// anims and simply absent at the ends otherwise. Shared by [`onion`] (one
+/// frame centred) and [`onion_all`] (every frame gets this treatment).
+fn onion_neighbours(looped: bool, pos: usize, n: usize) -> (Option<usize>, Option<usize>) {
+    let last = n - 1;
     let prev = if pos > 0 {
         Some(pos - 1)
-    } else if def.looped && frames.len() > 1 {
+    } else if looped && n > 1 {
         Some(last)
     } else {
         None
     };
     let next = if pos < last {
         Some(pos + 1)
-    } else if def.looped && frames.len() > 1 {
+    } else if looped && n > 1 {
         Some(0)
     } else {
         None
     };
+    (prev, next)
+}
 
+/// Paint `prev`/`next` (if present) as red/green ghosts at ~35% opacity,
+/// offset by `origin` (device pixels) on top of `layout`'s per-frame cell
+/// offsets. Does not paint the solid frame itself — callers do that last, so
+/// it always wins where the silhouettes overlap.
+fn paint_onion_ghosts(
+    canvas: &mut Canvas,
+    frames: &[Frame],
+    layout: &Layout,
+    prev: Option<usize>,
+    next: Option<usize>,
+    origin: (u32, u32),
+    zoom: u32,
+) {
     for (which, tint) in [(prev, GHOST_PREV), (next, GHOST_NEXT)] {
         if let Some(i) = which {
             let (ox, oy) = layout.offsets[i];
             tint_frame(
-                &mut canvas,
+                canvas,
                 &frames[i],
-                (ox * zoom, oy * zoom),
+                (origin.0 + ox * zoom, origin.1 + oy * zoom),
                 zoom,
                 tint,
                 GHOST_ALPHA,
             );
         }
     }
+}
+
+/// `sprite onion` — frame `pos` at full opacity over its neighbours: the
+/// previous frame tinted red, the next tinted green, both at ~35% and both
+/// skipping color-0 pixels. Neighbour choice wraps for `loop` anims and is
+/// simply absent at the ends otherwise. The solid frame is painted last, so
+/// it always wins where the silhouettes overlap. `opts.grid`/`opts.anchor`
+/// overlay the same tile-boundary grid and anchor crosshair `render`/`strip`
+/// draw.
+pub fn onion(cart: &Cart, anim: &str, pos: u32, opts: &OverlayOpts) -> Result<Image, String> {
+    let zoom = check_zoom(opts.zoom)?;
+    let (def, sprite, frames) = anim_frames(cart, anim)?;
+    let pos = check_pos(pos, frames.len(), anim, "--frame")?;
+    let layout = align(&frames, sprite.anchor);
+
+    let mut canvas = Canvas::new(layout.cell_w * zoom, layout.cell_h * zoom, zoom);
+    let (prev, next) = onion_neighbours(def.looped, pos, frames.len());
+    paint_onion_ghosts(&mut canvas, &frames, &layout, prev, next, (0, 0), zoom);
     let (ox, oy) = layout.offsets[pos];
     draw_frame(&mut canvas, &frames[pos], (ox * zoom, oy * zoom), zoom);
+
+    let cell = Rect {
+        x: 0,
+        y: 0,
+        w: layout.cell_w * zoom,
+        h: layout.cell_h * zoom,
+    };
+    if opts.grid {
+        draw_grid(&mut canvas, cell, zoom);
+    }
+    if opts.anchor {
+        draw_anchor(&mut canvas, cell, (layout.anchor.0 as i32, layout.anchor.1 as i32), zoom);
+    }
     Ok(canvas.finish(1 + usize::from(prev.is_some()) + usize::from(next.is_some())))
+}
+
+/// `sprite onion --all` — a contact sheet: every frame of `anim` side by
+/// side (same 2px gutter as `strip`), each rendered exactly like a single
+/// `onion` call centred on that frame (its own red/green neighbour ghosts),
+/// and labelled with its frame index in a caption band below. `opts.grid`/
+/// `opts.anchor` overlay every cell, same as `onion`.
+pub fn onion_all(cart: &Cart, anim: &str, opts: &OverlayOpts) -> Result<Image, String> {
+    let zoom = check_zoom(opts.zoom)?;
+    let (def, sprite, frames) = anim_frames(cart, anim)?;
+    let layout = align(&frames, sprite.anchor);
+    let n = frames.len();
+
+    let cell_w = layout.cell_w * zoom;
+    let cell_h = layout.cell_h * zoom;
+    let width = n as u32 * cell_w + (n as u32).saturating_sub(1) * SEPARATOR_PX;
+    let height = cell_h + LABEL_HEIGHT;
+    let mut canvas = Canvas::new(width, height, zoom);
+    canvas.fill(
+        Rect {
+            x: 0,
+            y: cell_h,
+            w: width,
+            h: LABEL_HEIGHT,
+        },
+        SEPARATOR,
+    );
+
+    for i in 0..n {
+        let cell_x = i as u32 * (cell_w + SEPARATOR_PX);
+        if i > 0 {
+            canvas.fill(
+                Rect {
+                    x: cell_x - SEPARATOR_PX,
+                    y: 0,
+                    w: SEPARATOR_PX,
+                    h: height,
+                },
+                SEPARATOR,
+            );
+        }
+        let (prev, next) = onion_neighbours(def.looped, i, n);
+        paint_onion_ghosts(&mut canvas, &frames, &layout, prev, next, (cell_x, 0), zoom);
+        let (ox, oy) = layout.offsets[i];
+        draw_frame(&mut canvas, &frames[i], (cell_x + ox * zoom, oy * zoom), zoom);
+
+        let cell = Rect { x: cell_x, y: 0, w: cell_w, h: cell_h };
+        if opts.grid {
+            draw_grid(&mut canvas, cell, zoom);
+        }
+        if opts.anchor {
+            draw_anchor(&mut canvas, cell, (layout.anchor.0 as i32, layout.anchor.1 as i32), zoom);
+        }
+        draw_label(
+            &mut canvas,
+            Rect { x: cell_x, y: cell_h, w: cell_w, h: LABEL_HEIGHT },
+            &i.to_string(),
+        );
+    }
+    Ok(canvas.finish(n))
 }
 
 /// `sprite diff` — frame B dimmed to ~35% brightness, with every pixel whose
@@ -261,9 +384,11 @@ pub fn diff(cart: &Cart, anim: &str, a: u32, b: u32, zoom: u32) -> Result<Image,
 }
 
 /// `sprite ghost` — every frame overlaid at low alpha, so the areas the
-/// animation actually moves through accumulate brightness.
-pub fn ghost(cart: &Cart, anim: &str, zoom: u32) -> Result<Image, String> {
-    let zoom = check_zoom(zoom)?;
+/// animation actually moves through accumulate brightness. `opts.grid`/
+/// `opts.anchor` overlay the same tile-boundary grid and anchor crosshair
+/// `render`/`strip`/`onion` draw.
+pub fn ghost(cart: &Cart, anim: &str, opts: &OverlayOpts) -> Result<Image, String> {
+    let zoom = check_zoom(opts.zoom)?;
     let (_, sprite, frames) = anim_frames(cart, anim)?;
     let layout = align(&frames, sprite.anchor);
     let mut canvas = Canvas::new(layout.cell_w * zoom, layout.cell_h * zoom, zoom);
@@ -289,6 +414,19 @@ pub fn ghost(cart: &Cart, anim: &str, zoom: u32) -> Result<Image, String> {
                 );
             }
         }
+    }
+
+    let cell = Rect {
+        x: 0,
+        y: 0,
+        w: layout.cell_w * zoom,
+        h: layout.cell_h * zoom,
+    };
+    if opts.grid {
+        draw_grid(&mut canvas, cell, zoom);
+    }
+    if opts.anchor {
+        draw_anchor(&mut canvas, cell, (layout.anchor.0 as i32, layout.anchor.1 as i32), zoom);
     }
     Ok(canvas.finish(frames.len()))
 }
@@ -442,6 +580,7 @@ struct Flags {
     grid: bool,
     indices: bool,
     anchor: bool,
+    all: bool,
     out: Option<String>,
     positional: Vec<String>,
 }
@@ -453,6 +592,7 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
         grid: false,
         indices: false,
         anchor: false,
+        all: false,
         out: None,
         positional: Vec::new(),
     };
@@ -464,6 +604,7 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
             "--grid" => f.grid = true,
             "--indices" => f.indices = true,
             "--anchor" => f.anchor = true,
+            "--all" => f.all = true,
             "-o" | "--out" => {
                 f.out = Some(
                     it.next()
@@ -543,10 +684,20 @@ fn run_view(args: &[String]) -> Result<(), String> {
         }
         "onion" => {
             let anim = one_positional(rest, cmd, "<anim>")?;
-            let frame = flags
-                .frame
-                .ok_or("sprite onion requires --frame N (which frame to centre the skin on)")?;
-            onion(&cart, anim, frame, flags.zoom)?
+            let opts = OverlayOpts { zoom: flags.zoom, grid: flags.grid, anchor: flags.anchor };
+            if flags.all {
+                if flags.frame.is_some() {
+                    return Err(
+                        "sprite onion --all covers every frame; omit --frame".into()
+                    );
+                }
+                onion_all(&cart, anim, &opts)?
+            } else {
+                let frame = flags.frame.ok_or(
+                    "sprite onion requires --frame N (which frame to centre the skin on), or --all for a contact sheet of every frame",
+                )?;
+                onion(&cart, anim, frame, &opts)?
+            }
         }
         "diff" => {
             if rest.len() != 3 {
@@ -562,7 +713,7 @@ fn run_view(args: &[String]) -> Result<(), String> {
         }
         "ghost" => {
             let anim = one_positional(rest, cmd, "<anim>")?;
-            ghost(&cart, anim, flags.zoom)?
+            ghost(&cart, anim, &OverlayOpts { zoom: flags.zoom, grid: flags.grid, anchor: flags.anchor })?
         }
         other => return Err(format!("unknown sprite command {other:?}")),
     };
@@ -992,6 +1143,42 @@ fn draw_indices(canvas: &mut Canvas, frame: &Frame, origin: (u32, u32), zoom: u3
                 }
             }
         }
+    }
+}
+
+/// Scale factor for [`draw_label`]'s glyphs (independent of the image's own
+/// `zoom`, so frame numbers stay legible at any zoom level).
+const LABEL_SCALE: u32 = 2;
+/// Height in device pixels of the caption band `onion --all` reserves below
+/// each cell: a 5-row glyph at [`LABEL_SCALE`] plus a pixel of margin above
+/// and below.
+const LABEL_HEIGHT: u32 = 5 * LABEL_SCALE + 2 * LABEL_SCALE;
+
+/// Draw `label` (read as decimal digits; anything else is skipped) left
+/// aligned near the top of `cell`, reusing the `--indices` 3x5 digit glyphs
+/// scaled up by [`LABEL_SCALE`] so they read at a glance. Used by `onion
+/// --all` to number each frame in its contact sheet.
+fn draw_label(canvas: &mut Canvas, cell: Rect, label: &str) {
+    let mut x = cell.x + LABEL_SCALE;
+    let y = cell.y + LABEL_SCALE;
+    for ch in label.chars() {
+        let Some(d) = ch.to_digit(10) else { continue };
+        for (row, bits) in GLYPHS[d as usize].iter().enumerate() {
+            for bit in 0..3u32 {
+                if bits & (1 << (2 - bit)) != 0 {
+                    canvas.fill(
+                        Rect {
+                            x: x + bit * LABEL_SCALE,
+                            y: y + row as u32 * LABEL_SCALE,
+                            w: LABEL_SCALE,
+                            h: LABEL_SCALE,
+                        },
+                        INK_LIGHT,
+                    );
+                }
+            }
+        }
+        x += 4 * LABEL_SCALE; // glyph width (3) + 1-unit gap, scaled
     }
 }
 
