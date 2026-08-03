@@ -1,0 +1,323 @@
+{
+  "version": 1,
+  "seed": 8675309,
+  "stages": [
+    {
+      "name": "render_title",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "title_artifacts",
+      "op": "capture",
+      "screenshot": "00-title.png",
+      "zoom": 4,
+      "screen_text": "00-title.txt"
+    },
+    {
+      "name": "deploy_frog",
+      "op": "input",
+      "frames": 1,
+      "buttons": "A"
+    },
+    {
+      "name": "release_start_button",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "lick_first_hook",
+      "op": "input",
+      "frames": 14,
+      "buttons": "UA"
+    },
+    {
+      "name": "tongue_latched",
+      "op": "assert",
+      "code": "return dev_status().latched",
+      "equals": true
+    },
+    {
+      "name": "grapple_artifacts",
+      "op": "capture",
+      "screenshot": "01-grapple.png",
+      "zoom": 4,
+      "screen_text": "01-grapple.txt"
+    },
+    {
+      "name": "reel_and_pump",
+      "op": "input",
+      "frames": 46,
+      "buttons": "UA"
+    },
+    {
+      "name": "swing_right",
+      "op": "input",
+      "frames": 20,
+      "buttons": "RA"
+    },
+    {
+      "name": "release_tongue",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "carry_momentum",
+      "op": "input",
+      "frames": 18,
+      "buttons": "R"
+    },
+    {
+      "name": "swing_moved_frog",
+      "op": "assert",
+      "code": "return dev_status().x > 75 and dev_status().tongue == 'idle'",
+      "equals": true
+    },
+    {
+      "name": "warp_to_laser_vat",
+      "op": "eval",
+      "code": "dev_warp(264,320)"
+    },
+    {
+      "name": "collect_laser_eyes",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "laser_unlocked",
+      "op": "assert",
+      "code": "return dev_status().laser and dev_status().mutation == 'LASER EYES'",
+      "equals": true
+    },
+    {
+      "name": "settle_laser_mutation",
+      "op": "input",
+      "frames": 12,
+      "buttons": ""
+    },
+    {
+      "name": "stage_laser_target",
+      "op": "eval",
+      "code": "dev_warp(300,328); test_enemy=dev_spawn_enemy('gnat',365,334)"
+    },
+    {
+      "name": "fire_laser_eyes",
+      "op": "input",
+      "frames": 1,
+      "buttons": "B"
+    },
+    {
+      "name": "laser_target_deleted",
+      "op": "assert",
+      "code": "return dev_enemy_hp(test_enemy) <= 0",
+      "equals": true
+    },
+    {
+      "name": "laser_artifacts",
+      "op": "capture",
+      "screenshot": "02-laser-eyes.png",
+      "zoom": 4,
+      "screen_text": "02-laser-eyes.txt"
+    },
+    {
+      "name": "settle_laser_hitstop",
+      "op": "input",
+      "frames": 4,
+      "buttons": ""
+    },
+    {
+      "name": "warp_to_fire_vat",
+      "op": "eval",
+      "code": "dev_warp(594,456)"
+    },
+    {
+      "name": "collect_fire_breath",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "fire_unlocked",
+      "op": "assert",
+      "code": "return dev_status().fire and dev_status().mutation == 'FIRE BREATH'",
+      "equals": true
+    },
+    {
+      "name": "settle_fire_mutation",
+      "op": "input",
+      "frames": 12,
+      "buttons": ""
+    },
+    {
+      "name": "stage_fire_target",
+      "op": "eval",
+      "code": "dev_warp(604,408); test_enemy=dev_spawn_enemy('beetle',650,408)"
+    },
+    {
+      "name": "breathe_fire",
+      "op": "input",
+      "frames": 24,
+      "buttons": "B"
+    },
+    {
+      "name": "fire_target_deleted",
+      "op": "assert",
+      "code": "return dev_enemy_hp(test_enemy) <= 0",
+      "equals": true
+    },
+    {
+      "name": "settle_fire_hitstop",
+      "op": "input",
+      "frames": 6,
+      "buttons": ""
+    },
+    {
+      "name": "swap_to_laser",
+      "op": "input",
+      "frames": 1,
+      "buttons": "DB"
+    },
+    {
+      "name": "laser_selected",
+      "op": "assert",
+      "code": "return dev_status().mutation == 'LASER EYES'",
+      "equals": true
+    },
+    {
+      "name": "release_swap",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "swap_to_fire",
+      "op": "input",
+      "frames": 1,
+      "buttons": "DB"
+    },
+    {
+      "name": "fire_selected",
+      "op": "assert",
+      "code": "return dev_status().mutation == 'FIRE BREATH'",
+      "equals": true
+    },
+    {
+      "name": "fire_artifacts",
+      "op": "capture",
+      "screenshot": "03-fire-breath.png",
+      "zoom": 4,
+      "screen_text": "03-fire-breath.txt"
+    },
+    {
+      "name": "enter_boss_arena",
+      "op": "eval",
+      "code": "dev_warp(790,392)"
+    },
+    {
+      "name": "settle_boss_checkpoint",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "summon_colonel_buzzkill",
+      "op": "eval",
+      "code": "dev_start_boss()"
+    },
+    {
+      "name": "render_boss_intro",
+      "op": "input",
+      "frames": 4,
+      "buttons": ""
+    },
+    {
+      "name": "boss_active",
+      "op": "assert",
+      "code": "return dev_status().boss_started and dev_status().boss_hp == 16",
+      "equals": true
+    },
+    {
+      "name": "boss_intro_artifacts",
+      "op": "capture",
+      "screenshot": "04-colonel-buzzkill.png",
+      "zoom": 4,
+      "screen_text": "04-colonel-buzzkill.txt"
+    },
+    {
+      "name": "apply_boss_accountability",
+      "op": "eval",
+      "code": "dev_damage_boss(16)"
+    },
+    {
+      "name": "boss_defeated",
+      "op": "assert",
+      "code": "return dev_status().boss_defeated and dev_status().boss_hp == 0",
+      "equals": true
+    },
+    {
+      "name": "boss_explosion_chain",
+      "op": "input",
+      "frames": 42,
+      "buttons": ""
+    },
+    {
+      "name": "boss_death_artifacts",
+      "op": "capture",
+      "screenshot": "05-boss-explosions.png",
+      "zoom": 4,
+      "screen_text": "05-boss-explosions.txt",
+      "wav": "ribbit-recoil-playthrough.wav",
+      "spectrogram": "ribbit-recoil-spectrum.png",
+      "audio_events": "ribbit-recoil-events.json",
+      "audio_stats": "ribbit-recoil-stats.json",
+      "window_frames": 6,
+      "cell": 1
+    },
+    {
+      "name": "deploy_evac_lily",
+      "op": "input",
+      "frames": 180,
+      "buttons": ""
+    },
+    {
+      "name": "exit_open",
+      "op": "assert",
+      "code": "return dev_status().exit_open",
+      "equals": true
+    },
+    {
+      "name": "warp_to_evac",
+      "op": "eval",
+      "code": "dev_warp(918,430)"
+    },
+    {
+      "name": "board_evac_lily",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "level_won",
+      "op": "assert",
+      "code": "return dev_status().scene == 'win'",
+      "equals": true
+    },
+    {
+      "name": "settle_victory_transition",
+      "op": "input",
+      "frames": 12,
+      "buttons": ""
+    },
+    {
+      "name": "victory_artifacts",
+      "op": "capture",
+      "screenshot": "06-victory.png",
+      "zoom": 4,
+      "screen_text": "06-victory.txt"
+    }
+  ]
+}

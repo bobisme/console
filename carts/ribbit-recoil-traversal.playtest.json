@@ -1,0 +1,798 @@
+{
+  "version": 1,
+  "seed": 8675309,
+  "stages": [
+    {
+      "name": "render_title",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "deploy_frog",
+      "op": "input",
+      "frames": 1,
+      "buttons": "A"
+    },
+    {
+      "name": "release_start",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "grapple_hook_one",
+      "op": "input",
+      "frames": 60,
+      "buttons": "UA"
+    },
+    {
+      "name": "swing_hook_one",
+      "op": "input",
+      "frames": 20,
+      "buttons": "RA"
+    },
+    {
+      "name": "release_hook_one",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "carry_to_hook_two",
+      "op": "input",
+      "frames": 18,
+      "buttons": "R"
+    },
+    {
+      "name": "grapple_and_reel_hook_two",
+      "op": "input",
+      "frames": 84,
+      "buttons": "UA"
+    },
+    {
+      "name": "swing_hook_two",
+      "op": "input",
+      "frames": 30,
+      "buttons": "RA"
+    },
+    {
+      "name": "release_hook_two",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "line_up_hook_three",
+      "op": "input",
+      "frames": 32,
+      "buttons": "R"
+    },
+    {
+      "name": "grapple_and_reel_hook_three",
+      "op": "input",
+      "frames": 86,
+      "buttons": "UA"
+    },
+    {
+      "name": "swing_hook_three",
+      "op": "input",
+      "frames": 30,
+      "buttons": "RA"
+    },
+    {
+      "name": "release_hook_three",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "land_with_laser_eyes",
+      "op": "input",
+      "frames": 96,
+      "buttons": "R"
+    },
+    {
+      "name": "checkpoint_one_and_laser",
+      "op": "assert",
+      "code": "local s=dev_status(); return s.checkpoint >= 1 and s.laser and s.x > 390",
+      "equals": true
+    },
+    {
+      "name": "grapple_across_refinery_gap",
+      "op": "input",
+      "frames": 10,
+      "buttons": "URA"
+    },
+    {
+      "name": "swing_across_refinery_gap",
+      "op": "input",
+      "frames": 30,
+      "buttons": "RA"
+    },
+    {
+      "name": "release_refinery_swing",
+      "op": "input",
+      "frames": 1,
+      "buttons": ""
+    },
+    {
+      "name": "cross_mutation_bridge",
+      "op": "input",
+      "frames": 120,
+      "buttons": "R"
+    },
+    {
+      "name": "fire_breath_collected",
+      "op": "assert",
+      "code": "local s=dev_status(); return s.laser and s.fire and s.mutation == 'FIRE BREATH'",
+      "equals": true
+    },
+    {
+      "name": "detonate_gate_egg",
+      "op": "input",
+      "frames": 24,
+      "buttons": "B"
+    },
+    {
+      "name": "let_gate_explosion_clear",
+      "op": "input",
+      "frames": 6,
+      "buttons": ""
+    },
+    {
+      "name": "cross_demolished_gate",
+      "op": "input",
+      "frames": 40,
+      "buttons": "R"
+    },
+    {
+      "name": "checkpoint_two_reached",
+      "op": "assert",
+      "code": "local s=dev_status(); return s.checkpoint == 2 and s.x > 650",
+      "equals": true
+    },
+    {
+      "name": "roast_bridge_beetle",
+      "op": "input",
+      "frames": 24,
+      "buttons": "B"
+    },
+    {
+      "name": "let_beetle_explode",
+      "op": "input",
+      "frames": 6,
+      "buttons": ""
+    },
+    {
+      "name": "enter_buzzkill_arena",
+      "op": "input",
+      "frames": 60,
+      "buttons": "R"
+    },
+    {
+      "name": "boss_started_without_warp",
+      "op": "assert",
+      "code": "local s=dev_status(); return s.boss_started and s.x > 790 and s.x < 810",
+      "equals": true
+    },
+    {
+      "name": "select_laser_eyes",
+      "op": "input",
+      "frames": 1,
+      "buttons": "DB"
+    },
+    {
+      "name": "ready_laser_eyes",
+      "op": "input",
+      "frames": 14,
+      "buttons": ""
+    },
+    {
+      "name": "laser_boss_shot_01",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_01",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_02",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_02",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_03",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_03",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_04",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_04",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_05",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_05",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_06",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_06",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_07",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_07",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_08",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_08",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_09",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_09",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_10",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_10",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_11",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_11",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_12",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_12",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_13",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_13",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_14",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_14",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_15",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_15",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_16",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_16",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_17",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_17",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_18",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_18",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_19",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_19",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_20",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_20",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_21",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_21",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_22",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_22",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_23",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_23",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_24",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_24",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_25",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_25",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_26",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_26",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_27",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_27",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_28",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_28",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_29",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_29",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_30",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_30",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_31",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_31",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_32",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_32",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_33",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_33",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_34",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_34",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_35",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_35",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_36",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_36",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_37",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_37",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_38",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_38",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_39",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_39",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_40",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_40",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_41",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_41",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_42",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_42",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_43",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_43",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_44",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_44",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_45",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_45",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_46",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_46",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_47",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_47",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "laser_boss_shot_48",
+      "op": "input",
+      "frames": 1,
+      "buttons": "RB"
+    },
+    {
+      "name": "laser_boss_recover_48",
+      "op": "input",
+      "frames": 13,
+      "buttons": "R"
+    },
+    {
+      "name": "boss_defeated_by_controller",
+      "op": "assert",
+      "code": "return dev_status().boss_defeated and dev_status().boss_hp == 0",
+      "equals": true
+    },
+    {
+      "name": "finish_explosion_chain",
+      "op": "input",
+      "frames": 180,
+      "buttons": ""
+    },
+    {
+      "name": "evac_open_without_warp",
+      "op": "assert",
+      "code": "return dev_status().exit_open",
+      "equals": true
+    },
+    {
+      "name": "board_evac_lily",
+      "op": "input",
+      "frames": 160,
+      "buttons": "R"
+    },
+    {
+      "name": "title_to_victory_without_warp",
+      "op": "assert",
+      "code": "return dev_status().scene == 'win'",
+      "equals": true
+    }
+  ]
+}

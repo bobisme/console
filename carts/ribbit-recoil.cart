@@ -1,0 +1,1981 @@
+__meta__
+title=RIBBIT RECOIL
+author=OpenAI Codex
+version=1
+preview_palette=48,48,41,36,38,31,14,11,4,2,7,63,59,55,52,45
+
+__lua__
+-- RIBBIT RECOIL
+-- Level 1: THE MOSQUITO COMPLEX
+-- A tongue-grappling mutant-frog action platformer for the 192x320 console.
+-- Determinism contract: numeric iteration only, rnd()/srand(), frame-clock timing.
+
+local SW, SH, HUD_H = 192, 320, 16
+local WORLD_W, WORLD_H = 960, 512
+local PLAYER_W, PLAYER_H = 14, 16
+local GRAVITY, MAX_FALL = 0.25, 5.4
+local MAX_TONGUE, TONGUE_SPEED = 116, 7.2
+
+local STEEL, GIRDER, MUD, ACID, BREAKABLE = 192, 193, 194, 195, 196
+local E_GNAT, E_BEETLE, E_WASP, E_BOSS = 1, 2, 3, 4
+local P_LASER, P_FIRE = 1, 2
+local B_STINGER, B_BOMB = 1, 2
+
+-- Compact authored sprite inks become semantic Apollo64 roles at draw time:
+-- transparent, ink, violet, blood, orange, yellow, frog-light, frog-dark,
+-- teal, blue, cyan, white, pale metal, steel, shadow metal, mutation magenta.
+local INK_MAP = {48,48,41,36,38,31,14,11,4,2,7,63,59,55,52,45}
+
+local LEVELS = {{
+  name="THE MOSQUITO COMPLEX",
+  subtitle="UNLICENSED PEST CONTROL ZONE",
+  start={32,472},
+  platforms={
+    {0,61,28,3,STEEL}, {8,55,10,1,GIRDER}, {18,49,10,1,STEEL},
+    {28,43,11,1,MUD}, {38,58,20,6,STEEL}, {38,49,14,1,GIRDER},
+    {50,52,12,1,MUD}, {60,46,13,1,STEEL}, {68,55,15,1,GIRDER},
+    {58,59,24,1,GIRDER},
+    {82,59,38,5,STEEL}, {90,51,8,1,GIRDER}, {105,49,8,1,MUD},
+    {114,55,6,1,GIRDER}, {28,62,10,2,ACID}, {58,62,24,2,ACID},
+    {44,54,3,4,BREAKABLE}, {79,56,3,3,BREAKABLE}
+  },
+  hooks={
+    {44,380}, {124,330}, {204,278}, {344,352}, {438,350},
+    {513,390}, {520,300}, {600,350}, {700,330}, {790,300}, {900,330}
+  },
+  enemy_defs={
+    {E_GNAT,126,414,42}, {E_BEETLE,310,300,30}, {E_WASP,282,290,46},
+    {E_GNAT,420,290,46}, {E_BEETLE,470,320,36}, {E_WASP,560,250,44},
+    {E_GNAT,620,310,48}, {E_BEETLE,690,448,46}, {E_WASP,742,356,38}
+  },
+  pickups={{P_LASER,272,320}, {P_FIRE,600,449}},
+  bombs={{368,416}, {514,344}, {660,440}, {824,446}},
+  checkpoints={{330,444}, {650,432}},
+  boss={x=870,y=438,range_x=50,range_y=0,hp=16},
+  boss_trigger=760,
+  boss_gate={x=816,y=432,h=56},
+  exit={x=932,y=448,hitbox={x=920,y=426,w=24,h=34}}
+}}
+
+game_scene = "title"
+game_level = 1
+player_x, player_y = 32, 472
+player_hp, player_max_hp = 5, 5
+score, combo, deaths = 0, 0, 0
+mutation = "NONE"
+laser_unlocked, fire_unlocked = false, false
+boss_started, boss_defeated, exit_open = false, false, false
+
+local vx, vy = 0, 0
+local face_left, grounded = false, false
+local invuln, hurt_timer, respawn_timer = 0, 0, 0
+local checkpoint_x, checkpoint_y, checkpoint_index = 32, 472, 0
+local camera_x, camera_y = 0, WORLD_H-(SH-HUD_H)
+local frame_now, paused, show_guide = 0, false, true
+local transition, flash, shake, hitstop = 0, 0, 0, 0
+local banner, banner_timer = "", 0
+local boss_intro, boss_death_timer = 0, 0
+local combo_timer, weapon_cooldown = 0, 0
+local laser_timer, laser_x2, laser_y2 = 0, 0, 0
+local fire_timer, fire_aim_x, fire_aim_y = 0, 1, 0
+local tongue_state, tongue_x, tongue_y = "idle", 0, 0
+local tongue_dx, tongue_dy, tongue_len = 0, 0, 0
+local tongue_hook, rope_len, tongue_t0 = 0, 0, 0
+local level, enemies, hooks, pickups, bombs = nil, {}, {}, {}, {}
+local particles, explosions, bullets, stars = {}, {}, {}, {}
+
+local function frame_count()
+  return flr(t()*60)
+end
+
+local function dist(x0,y0,x1,y1)
+  local dx, dy = x1-x0, y1-y0
+  return math.sqrt(dx*dx+dy*dy)
+end
+
+local function norm(dx,dy)
+  local d = math.sqrt(dx*dx+dy*dy)
+  if d < 0.001 then return 1,0 end
+  return dx/d,dy/d
+end
+
+local function solid(tile)
+  return tile==STEEL or tile==GIRDER or tile==MUD or tile==BREAKABLE
+end
+
+local function hazardous(tile)
+  return tile==ACID
+end
+
+local function solid_box(x,y,w,h)
+  local x0,x1=flr(x/8),flr((x+w-1)/8)
+  local y0,y1=flr(y/8),flr((y+h-1)/8)
+  for cy=y0,y1 do
+    for cx=x0,x1 do
+      local tile=mget(cx,cy)
+      if solid(tile) then return tile,cx,cy end
+    end
+  end
+  return nil,nil,nil
+end
+
+local function player_mouth()
+  return player_x+(face_left and 2 or 12),player_y+6
+end
+
+local function player_center()
+  return player_x+7,player_y+8
+end
+
+local function player_hits(x,y,w,h)
+  return player_x < x+w and player_x+PLAYER_W > x
+     and player_y < y+h and player_y+PLAYER_H > y
+end
+
+local function aim_vector(default_up)
+  local ax=(btn(0) and -1 or 0)+(btn(1) and 1 or 0)
+  local ay=(btn(2) and -1 or 0)+(btn(3) and 1 or 0)
+  if ax==0 and ay==0 then
+    ax=face_left and -1 or 1
+    ay=default_up and -0.32 or 0
+  elseif ax==0 and default_up and ay==0 then
+    ay=-1
+  end
+  return norm(ax,ay)
+end
+
+local function add_particle(x,y,dx,dy,life,color,size,gravity,kind)
+  particles[#particles+1]={x=x,y=y,dx=dx,dy=dy,life=life,max=life,
+    color=color,size=size or 1,gravity=gravity or 0,kind=kind or 0}
+end
+
+local function burst(x,y,color,count,force,kind)
+  for i=1,count do
+    local a=rnd(1)
+    local speed=0.35+rnd(force)
+    add_particle(x,y,cos(a)*speed,sin(a)*speed-0.3,
+      13+flr(rnd(23)),color+flr(rnd(2)),i%4==0 and 2 or 1,0.045,kind)
+  end
+end
+
+local function add_explosion(x,y,power,player_owned)
+  explosions[#explosions+1]={x=x,y=y,life=18,max=18,power=power}
+  burst(x,y,4,12+power*3,1.4+power*0.25,2)
+  burst(x,y,12,7+power,0.9+power*0.18,3)
+  shake=max(shake,5+power*2)
+  flash=max(flash,power>2 and 3 or 1)
+  hitstop=max(hitstop,power>2 and 4 or 2)
+  sfx(21,5)
+  if power>=3 then sfx(22,4) end
+  if player_owned then
+    local radius=24+power*6
+    for cy=max(0,flr((y-radius)/8)),min(63,flr((y+radius)/8)) do
+      for cx=max(0,flr((x-radius)/8)),min(127,flr((x+radius)/8)) do
+        if mget(cx,cy)==BREAKABLE and dist(x,y,cx*8+4,cy*8+4)<radius then
+          mset(cx,cy,0)
+          burst(cx*8+4,cy*8+4,4,5,1.1,2)
+          score=score+25
+        end
+      end
+    end
+    for i=1,#enemies do
+      local e=enemies[i]
+      if e.alive and not (e.kind==E_BOSS and boss_defeated)
+          and dist(x,y,e.x+e.w/2,e.y+e.h/2)<24+power*6 then
+        e.pending_damage=max(e.pending_damage or 0,power)
+      end
+    end
+  end
+end
+
+local function update_particles()
+  for i=#particles,1,-1 do
+    local p=particles[i]
+    p.x,p.y=p.x+p.dx,p.y+p.dy
+    p.dy,p.life=p.dy+p.gravity,p.life-1
+    p.dx=p.dx*0.985
+    if p.life<=0 then table.remove(particles,i) end
+  end
+  for i=#explosions,1,-1 do
+    local e=explosions[i]
+    e.life=e.life-1
+    if e.life<=0 then table.remove(explosions,i) end
+  end
+end
+
+local function set_banner(text,frames)
+  banner,banner_timer=text,frames or 90
+end
+
+local function make_enemy(def)
+  local kind,x,y,range=def[1],def[2],def[3],def[4]
+  local hp,w,h=1,14,14
+  if kind==E_BEETLE then hp,w,h=3,16,14 end
+  if kind==E_WASP then hp,w,h=2,16,14 end
+  return {kind=kind,x=x,y=y,home_x=x,home_y=y,range=range,dir=-1,
+    hp=hp,max_hp=hp,w=w,h=h,alive=true,phase=flr(rnd(120)),
+    hurt=0,last_fire=-99,pending_damage=0}
+end
+
+local function build_level(index)
+  game_level=index
+  level=LEVELS[index]
+  for cy=0,63 do for cx=0,127 do mset(cx,cy,0) end end
+  for i=1,#level.platforms do
+    local p=level.platforms[i]
+    for cy=p[2],p[2]+p[4]-1 do
+      for cx=p[1],p[1]+p[3]-1 do mset(cx,cy,p[5]) end
+    end
+  end
+  enemies={}
+  for i=1,#level.enemy_defs do enemies[#enemies+1]=make_enemy(level.enemy_defs[i]) end
+  local bd=level.boss
+  enemies[#enemies+1]={kind=E_BOSS,x=bd.x,y=bd.y,home_x=bd.x,home_y=bd.y,
+    range=bd.range_x,range_y=bd.range_y,dir=-1,hp=bd.hp,max_hp=bd.hp,
+    w=24,h=24,alive=true,dormant=true,
+    phase=0,hurt=0,last_fire=-99,pending_damage=0}
+  hooks={}
+  for i=1,#level.hooks do hooks[i]={x=level.hooks[i][1],y=level.hooks[i][2],active=true} end
+  pickups={}
+  for i=1,#level.pickups do
+    pickups[i]={kind=level.pickups[i][1],x=level.pickups[i][2],y=level.pickups[i][3],alive=true}
+  end
+  bombs={}
+  for i=1,#level.bombs do bombs[i]={x=level.bombs[i][1],y=level.bombs[i][2],alive=true,hurt=0} end
+end
+
+local function reset_tongue()
+  tongue_state,tongue_hook,tongue_len="idle",0,0
+end
+
+local function reset_player(full)
+  player_x,player_y=checkpoint_x,checkpoint_y
+  vx,vy=0,0
+  grounded,invuln,hurt_timer=false,75,0
+  respawn_timer,transition=0,12
+  reset_tongue()
+  if full then player_hp=player_max_hp end
+end
+
+local function start_game()
+  build_level(1)
+  local st=level.start
+  player_x,player_y=st[1],st[2]
+  checkpoint_x,checkpoint_y,checkpoint_index=st[1],st[2],0
+  player_hp,score,combo,deaths=player_max_hp,0,0,0
+  laser_unlocked,fire_unlocked,mutation=false,false,"NONE"
+  boss_started,boss_defeated,exit_open=false,false,false
+  boss_intro,boss_death_timer=0,0
+  vx,vy,face_left,grounded=0,0,false,false
+  invuln,hurt_timer,respawn_timer=0,0,0
+  camera_x,camera_y=0,WORLD_H-(SH-HUD_H)
+  particles,explosions,bullets={},{},{}
+  transition,flash,shake,hitstop=12,0,0,0
+  banner,banner_timer="",0
+  paused=false
+  reset_tongue()
+  game_scene="play"
+  music(0)
+  master(2,1,0)
+  echo(12,4,3)
+  printh("ribbit recoil level 1 start")
+end
+
+local function score_kill(e)
+  combo=min(8,combo+1)
+  combo_timer=180
+  local base=e.kind==E_GNAT and 100 or e.kind==E_BEETLE and 175 or 250
+  score=score+base*combo
+end
+
+local function kill_enemy(e,source)
+  if not e.alive then return end
+  e.alive=false
+  score_kill(e)
+  burst(e.x+e.w/2,e.y+e.h/2,e.kind==E_BEETLE and 8 or 3,18,1.8,1)
+  if e.kind==E_BEETLE then add_explosion(e.x+8,e.y+7,1,true) else sfx(20) end
+  hitstop=max(hitstop,2)
+  printh("bug deleted by "..source.." combo "..combo)
+end
+
+local function damage_enemy(e,amount,source)
+  if not e.alive or e.dormant or e.hurt>0
+      or (e.kind==E_BOSS and boss_defeated) then return false end
+  e.hp=e.hp-amount
+  e.hurt=e.kind==E_BOSS and 5 or 3
+  shake=max(shake,e.kind==E_BOSS and 4 or 2)
+  burst(e.x+e.w/2,e.y+e.h/2,5,5,0.9,1)
+  sfx(20)
+  if e.hp<=0 then
+    if e.kind==E_BOSS then
+      boss_defeated=true
+      boss_death_timer=150
+      e.hp=0
+      reset_tongue()
+      music(-1)
+      master(5,2,0)
+      echo(18,6,6)
+      sfx(27,5)
+      set_banner("BUZZKILL: DISHONORABLY DISCHARGED",150)
+      score=score+5000
+      printh("boss defeated at frame "..frame_now)
+    else
+      kill_enemy(e,source)
+    end
+  end
+  return true
+end
+
+local function destroy_bomb(b)
+  if not b.alive then return end
+  b.alive=false
+  add_explosion(b.x,b.y,4,true)
+  score=score+250
+end
+
+local function hurt_player(reason,from_x)
+  if invuln>0 or respawn_timer>0 or game_scene~="play" then return end
+  player_hp=player_hp-1
+  invuln,hurt_timer=70,24
+  vx=(player_x<from_x and -2.8 or 2.8)
+  vy=-3.3
+  reset_tongue()
+  flash,shake,hitstop=4,9,5
+  sfx(23)
+  combo,combo_timer=0,0
+  printh("frog hurt by "..reason.." hp "..player_hp)
+  if player_hp<=0 then
+    deaths=deaths+1
+    respawn_timer=72
+    music(-1)
+    sfx(24,5)
+    set_banner("CLINICALLY DE-FROGGED",65)
+  end
+end
+
+local function move_x(amount)
+  local remain,dir=abs(amount),amount<0 and -1 or 1
+  while remain>0 do
+    local step=min(1,remain)*dir
+    if solid_box(player_x+step,player_y,PLAYER_W,PLAYER_H) then
+      vx=0
+      return true
+    end
+    player_x=player_x+step
+    remain=remain-abs(step)
+  end
+  return false
+end
+
+local function move_y(amount)
+  grounded=false
+  local remain,dir=abs(amount),amount<0 and -1 or 1
+  while remain>0 do
+    local step=min(1,remain)*dir
+    local tile,cx,cy=solid_box(player_x,player_y+step,PLAYER_W,PLAYER_H)
+    if tile then
+      if dir>0 then
+        grounded=true
+        player_y=cy*8-PLAYER_H
+      end
+      vy=0
+      return tile,cx,cy
+    end
+    player_y=player_y+step
+    remain=remain-abs(step)
+  end
+  return nil,nil,nil
+end
+
+local function start_tongue()
+  if tongue_state~="idle" or respawn_timer>0 then return end
+  local mx,my=player_mouth()
+  local ax,ay=aim_vector(true)
+  tongue_state,tongue_x,tongue_y="extend",mx,my
+  tongue_dx,tongue_dy=ax*TONGUE_SPEED,ay*TONGUE_SPEED
+  tongue_len,tongue_t0=0,frame_now
+  sfx(16,4)
+end
+
+local function begin_retract()
+  if tongue_state~="idle" then
+    tongue_state,tongue_hook="retract",0
+    sfx(17,4)
+  end
+end
+
+local function tongue_hit_enemy()
+  for i=1,#enemies do
+    local e=enemies[i]
+    if e.alive and not e.dormant and tongue_x>=e.x-2 and tongue_x<=e.x+e.w+2
+        and tongue_y>=e.y-2 and tongue_y<=e.y+e.h+2 then
+      damage_enemy(e,1,"tongue")
+      if e.kind~=E_BOSS and e.alive then
+        e.x=e.x+(player_x-e.x)*0.28
+        e.y=e.y+(player_y-e.y)*0.28
+      end
+      begin_retract()
+      return true
+    end
+  end
+  for i=1,#bombs do
+    local b=bombs[i]
+    if b.alive and dist(tongue_x,tongue_y,b.x,b.y)<9 then
+      destroy_bomb(b)
+      begin_retract()
+      return true
+    end
+  end
+  return false
+end
+
+local function update_tongue()
+  local mx,my=player_mouth()
+  if tongue_state=="idle" then return end
+  if tongue_state=="extend" then
+    tongue_x,tongue_y=tongue_x+tongue_dx,tongue_y+tongue_dy
+    tongue_len=dist(mx,my,tongue_x,tongue_y)
+    if tongue_hit_enemy() then return end
+    for i=1,#hooks do
+      local h=hooks[i]
+      if h.active and dist(tongue_x,tongue_y,h.x,h.y)<12 then
+        tongue_state,tongue_hook="latched",i
+        tongue_x,tongue_y=h.x,h.y
+        rope_len=mid(28,dist(mx,my,h.x,h.y),MAX_TONGUE)
+        sfx(18,4)
+        burst(h.x,h.y,10,8,0.9,1)
+        shake=max(shake,3)
+        return
+      end
+    end
+    if tongue_len>MAX_TONGUE or tongue_x<0 or tongue_x>WORLD_W
+        or tongue_y<0 or tongue_y>WORLD_H
+        or solid(mget(flr(tongue_x/8),flr(tongue_y/8))) then begin_retract() end
+  elseif tongue_state=="latched" then
+    local h=hooks[tongue_hook]
+    if not h or not h.active then begin_retract() return end
+    tongue_x,tongue_y=h.x,h.y
+    if not btn(4) then
+      vx,vy=vx*1.12,vy*1.08-0.65
+      begin_retract()
+      return
+    end
+    if btn(2) then rope_len=max(28,rope_len-1.05) end
+    if btn(3) then rope_len=min(MAX_TONGUE,rope_len+0.75) end
+  elseif tongue_state=="retract" then
+    tongue_len=max(0,tongue_len-12)
+    if tongue_len<=0 or dist(mx,my,tongue_x,tongue_y)<12 then
+      reset_tongue()
+    else
+      local nx,ny=norm(mx-tongue_x,my-tongue_y)
+      tongue_x,tongue_y=tongue_x+nx*12,tongue_y+ny*12
+    end
+  end
+end
+
+local function constrain_rope()
+  if tongue_state~="latched" then return end
+  local h=hooks[tongue_hook]
+  if not h then return end
+  local cx,cy=player_center()
+  local dx,dy=cx-h.x,cy-h.y
+  local d=math.sqrt(dx*dx+dy*dy)
+  if d>rope_len then
+    local nx,ny=dx/d,dy/d
+    local oldx,oldy=player_x,player_y
+    player_x=h.x+nx*rope_len-7
+    player_y=h.y+ny*rope_len-8
+    if solid_box(player_x,player_y,PLAYER_W,PLAYER_H) then
+      player_x,player_y=oldx,oldy
+      rope_len=min(MAX_TONGUE,rope_len+1)
+    else
+      local radial=vx*nx+vy*ny
+      if radial>0 then vx,vy=vx-radial*nx,vy-radial*ny end
+      local pump=(btn(0) and -0.12 or 0)+(btn(1) and 0.12 or 0)
+      vx=vx+pump
+    end
+  end
+end
+
+local function laser_attack()
+  local mx,my=player_mouth()
+  local ax,ay=aim_vector(false)
+  local x,y=mx,my
+  laser_x2,laser_y2=mx,my
+  local hit_stamp=frame_now
+  for step=1,52 do
+    x,y=x+ax*3,y+ay*3
+    if solid(mget(flr(x/8),flr(y/8))) then break end
+    laser_x2,laser_y2=x,y
+    for i=1,#enemies do
+      local e=enemies[i]
+      if e.alive and not e.dormant and e.laser_stamp~=hit_stamp
+          and x>=e.x and x<=e.x+e.w and y>=e.y and y<=e.y+e.h then
+        e.laser_stamp=hit_stamp
+        damage_enemy(e,1,"laser eyes")
+      end
+    end
+    for i=1,#bombs do
+      local b=bombs[i]
+      if b.alive and dist(x,y,b.x,b.y)<8 then destroy_bomb(b) end
+    end
+  end
+  laser_timer,weapon_cooldown=6,12
+  shake=max(shake,3)
+  sfx(19,5)
+  for i=1,7 do
+    local along=rnd(1)
+    add_particle(mx+(laser_x2-mx)*along,my+(laser_y2-my)*along,
+      rnd(0.8)-0.4,rnd(0.8)-0.4,8+flr(rnd(7)),10,1,0,4)
+  end
+end
+
+local function fire_damage()
+  local mx,my=player_mouth()
+  local ax,ay=fire_aim_x,fire_aim_y
+  for i=1,4 do
+    local spread=(rnd(1)-0.5)*0.48
+    local px,py=-ay*spread,ax*spread
+    local speed=2.2+rnd(2.4)
+    add_particle(mx,my,(ax+px)*speed,(ay+py)*speed,14+flr(rnd(12)),
+      i%3==0 and 5 or 4,i%2+1,-0.004,5)
+  end
+  for i=1,#enemies do
+    local e=enemies[i]
+    if e.alive and not e.dormant and frame_now-e.last_fire>=7 then
+      local ex,ey=e.x+e.w/2,e.y+e.h/2
+      local dx,dy=ex-mx,ey-my
+      local d=math.sqrt(dx*dx+dy*dy)
+      if d<58 and d>0 and (dx/d)*ax+(dy/d)*ay>0.62 then
+        e.last_fire=frame_now
+        damage_enemy(e,1,"fire breath")
+      end
+    end
+  end
+  for i=1,#bombs do
+    local b=bombs[i]
+    if b.alive then
+      local dx,dy=b.x-mx,b.y-my
+      local d=math.sqrt(dx*dx+dy*dy)
+      if d<55 and d>0 and (dx/d)*ax+(dy/d)*ay>0.58 then destroy_bomb(b) end
+    end
+  end
+end
+
+local function use_mutation()
+  if weapon_cooldown>0 then return end
+  if mutation=="LASER EYES" then laser_attack()
+  elseif mutation=="FIRE BREATH" then
+    fire_aim_x,fire_aim_y=aim_vector(false)
+    fire_timer,weapon_cooldown=22,8
+    sfx(25,5)
+  else
+    set_banner("B BUTTON: INSUFFICIENTLY MUTATED",65)
+    sfx(17,5)
+    weapon_cooldown=20
+  end
+end
+
+local function cycle_mutation()
+  if not (laser_unlocked and fire_unlocked) then return false end
+  mutation=mutation=="LASER EYES" and "FIRE BREATH" or "LASER EYES"
+  set_banner("MUTATION SELECTED: "..mutation,65)
+  sfx(26,5)
+  weapon_cooldown=14
+  return true
+end
+
+local function collect_pickups()
+  for i=1,#pickups do
+    local p=pickups[i]
+    if p.alive and player_hits(p.x-8,p.y-8,16,16) then
+      p.alive=false
+      if p.kind==P_LASER then
+        laser_unlocked,mutation=true,"LASER EYES"
+        set_banner("MUTATION ACQUIRED: LASER EYES",115)
+      else
+        fire_unlocked,mutation=true,"FIRE BREATH"
+        set_banner("MUTATION ACQUIRED: FIRE BREATH",115)
+      end
+      score=score+750
+      flash,shake,transition=5,7,7
+      master(4,1,0)
+      sfx(26,5)
+      burst(p.x,p.y,10,30,2.5,4)
+      printh("mutation acquired "..mutation)
+    end
+  end
+end
+
+local function update_checkpoints()
+  for i=checkpoint_index+1,#level.checkpoints do
+    local c=level.checkpoints[i]
+    if player_x>=c[1] then
+      checkpoint_index=i
+      checkpoint_x,checkpoint_y=c[1],c[2]
+      player_hp=player_max_hp
+      set_banner("CROAKPOINT "..i.." SANITIZED",70)
+      sfx(26,5)
+      burst(c[1],c[2],6,16,1.3,1)
+      break
+    end
+  end
+end
+
+local function add_bullet(kind,x,y,dx,dy,life)
+  bullets[#bullets+1]={kind=kind,x=x,y=y,dx=dx,dy=dy,life=life}
+end
+
+local function shoot_at_player(e,kind,speed)
+  local px,py=player_center()
+  local nx,ny=norm(px-(e.x+e.w/2),py-(e.y+e.h/2))
+  add_bullet(kind,e.x+e.w/2,e.y+e.h/2,nx*speed,ny*speed,180)
+  sfx(kind==B_BOMB and 29 or 28,4)
+end
+
+local function update_bullets()
+  for i=#bullets,1,-1 do
+    local b=bullets[i]
+    b.x,b.y=b.x+b.dx,b.y+b.dy
+    b.life=b.life-1
+    if b.kind==B_BOMB then b.dy=b.dy+0.055 end
+    local remove=b.life<=0 or b.x<0 or b.x>WORLD_W or b.y<0 or b.y>WORLD_H
+    if not remove and solid(mget(flr(b.x/8),flr(b.y/8))) then
+      if b.kind==B_BOMB then add_explosion(b.x,b.y,2,false) end
+      remove=true
+    end
+    if not remove and player_hits(b.x-2,b.y-2,4,4) then
+      hurt_player(b.kind==B_BOMB and "weaponized larva" or "stinger",b.x)
+      if b.kind==B_BOMB then add_explosion(b.x,b.y,2,false) end
+      remove=true
+    end
+    if remove then table.remove(bullets,i) end
+  end
+end
+
+local function update_enemies()
+  for i=1,#enemies do
+    local e=enemies[i]
+    if e.alive then
+      if e.hurt>0 then e.hurt=e.hurt-1 end
+      if (e.pending_damage or 0)>0 then
+        local d=e.pending_damage
+        e.pending_damage=0
+        damage_enemy(e,d,"explosion")
+      end
+      if e.kind==E_GNAT then
+        e.x=e.home_x+sin((frame_now+e.phase)*0.009)*e.range
+        e.y=e.home_y+sin((frame_now+e.phase)*0.017)*12
+      elseif e.kind==E_BEETLE then
+        e.x=e.x+e.dir*0.48
+        if e.x<e.home_x-e.range or e.x>e.home_x+e.range then e.dir=-e.dir end
+      elseif e.kind==E_WASP then
+        e.x=e.home_x+sin((frame_now+e.phase)*0.006)*e.range
+        e.y=e.home_y+cos((frame_now+e.phase)*0.011)*18
+        if abs(player_x-e.x)<210 and (frame_now+e.phase)%118==0 then shoot_at_player(e,B_STINGER,2.1) end
+      elseif e.kind==E_BOSS and not e.dormant and not boss_defeated then
+        e.x=e.home_x+sin(frame_now*0.0065)*e.range
+        e.y=e.home_y+sin(frame_now*0.011)*e.range_y
+        e.dir=player_x<e.x and -1 or 1
+        if boss_intro<=0 then
+          local phase=e.hp>16 and 118 or e.hp>8 and 86 or 62
+          if frame_now%phase==0 then shoot_at_player(e,B_BOMB,1.7) end
+          if frame_now%phase==flr(phase/2) then
+            shoot_at_player(e,B_STINGER,2.65)
+            if e.hp<=8 then
+              add_bullet(B_STINGER,e.x+12,e.y+12,-2.4,0.6,150)
+              add_bullet(B_STINGER,e.x+12,e.y+12,-2.4,-0.6,150)
+            end
+          end
+        end
+      end
+      if e.alive and not e.dormant and not boss_defeated
+          and player_hits(e.x+2,e.y+2,e.w-4,e.h-4) then
+        hurt_player(e.kind==E_BOSS and "industrial proboscis" or "insect",e.x+e.w/2)
+      end
+    end
+  end
+end
+
+local function start_boss()
+  if boss_started then return end
+  boss_started=true
+  boss_intro=105
+  local e=enemies[#enemies]
+  e.dormant=false
+  music(8)
+  master(3,1,0)
+  echo(9,5,4)
+  set_banner("COLONEL BUZZKILL: MOSQUITO OF OPS",105)
+  sfx(27,5)
+  shake,flash=12,3
+  printh("boss encounter started")
+end
+
+local function update_boss_death()
+  if not boss_defeated then return end
+  local e=enemies[#enemies]
+  if boss_death_timer>0 then
+    boss_death_timer=boss_death_timer-1
+    e.x=e.x+(rnd(2)-1)*2
+    e.y=e.y+(rnd(2)-1)*2
+    if boss_death_timer%10==0 then
+      add_explosion(e.x+rnd(e.w),e.y+rnd(e.h),2+flr(rnd(3)),true)
+    end
+    if boss_death_timer==1 then
+      e.alive=false
+      local gate=level.boss_gate
+      for y=gate.y,gate.y+gate.h,8 do burst(gate.x,y,7,3,0.7,2) end
+      exit_open=true
+      master(2,1,0)
+      echo(14,5,5)
+      music(16)
+      set_banner("EVAC LILY DEPLOYED. HOP RESPONSIBLY.",125)
+    end
+  end
+end
+
+local function check_hazards()
+  local x0,x1=flr(player_x/8),flr((player_x+PLAYER_W-1)/8)
+  local y0,y1=flr(player_y/8),flr((player_y+PLAYER_H-1)/8)
+  for cy=y0,y1 do
+    for cx=x0,x1 do
+      if hazardous(mget(cx,cy)) then hurt_player("union-grade acid",player_x) return end
+    end
+  end
+  if player_y>WORLD_H+20 then hurt_player("gravity",player_x) end
+end
+
+local function finish_level()
+  if game_scene=="win" then return end
+  game_scene="win"
+  music(16)
+  master(4,1,0)
+  echo(18,6,6)
+  transition=10
+  burst(player_x+7,player_y+8,6,60,3.2,4)
+  sfx(30,5)
+  printh("level complete score "..score.." deaths "..deaths)
+end
+
+local function update_play()
+  if btnp(6) then
+    paused=not paused
+    if paused then sfx(-1) else sfx(26,5) end
+  end
+  if paused then return end
+  if boss_intro>0 then boss_intro=boss_intro-1 end
+  if respawn_timer>0 then
+    respawn_timer=respawn_timer-1
+    if respawn_timer==1 then
+      player_hp=player_max_hp
+      reset_player(true)
+      music(boss_started and not boss_defeated and 8 or 0)
+      master(2,1,0)
+      echo(12,4,3)
+    end
+    return
+  end
+
+  if btnp(4) then start_tongue() end
+  if btnp(5) then
+    if not (btn(3) and cycle_mutation()) then use_mutation() end
+  end
+  if fire_timer>0 then
+    fire_timer=fire_timer-1
+    if fire_timer%8==0 then sfx(25,5) end
+    if fire_timer%2==0 then fire_damage() end
+  end
+
+  local accel=grounded and 0.22 or 0.12
+  if btn(0) then vx,face_left=max(-2.0,vx-accel),true end
+  if btn(1) then vx,face_left=min(2.0,vx+accel),false end
+  if not btn(0) and not btn(1) then vx=vx*(grounded and 0.72 or 0.985) end
+  vy=min(MAX_FALL,vy+GRAVITY)
+
+  move_x(vx)
+  local gate=level.boss_gate
+  if boss_started and not exit_open and player_x+PLAYER_W>gate.x then
+    player_x=gate.x-PLAYER_W
+    vx=0
+  end
+  local was_grounded=grounded
+  move_y(vy)
+  constrain_rope()
+  update_tongue()
+  if not was_grounded and grounded then
+    burst(player_x+7,player_y+PLAYER_H,12,5,0.45,0)
+    if vy>3 then shake=max(shake,2) end
+  end
+
+  collect_pickups()
+  update_checkpoints()
+  update_enemies()
+  update_bullets()
+  update_boss_death()
+  check_hazards()
+  if not boss_started and player_x>level.boss_trigger then start_boss() end
+  local exit_hitbox=level.exit.hitbox
+  if exit_open and player_hits(exit_hitbox.x,exit_hitbox.y,exit_hitbox.w,exit_hitbox.h) then
+    finish_level()
+  end
+
+  player_x=mid(0,player_x,WORLD_W-PLAYER_W)
+  local tx=mid(0,player_x-SW*0.42,WORLD_W-SW)
+  local ty=mid(0,player_y-(SH-HUD_H)*0.56,WORLD_H-(SH-HUD_H))
+  camera_x=camera_x+(tx-camera_x)*0.105
+  camera_y=camera_y+(ty-camera_y)*0.105
+end
+
+function _init()
+  srand(8675309)
+  for i=1,80 do
+    stars[i]={x=flr(rnd(WORLD_W)),y=flr(rnd(250)),phase=flr(rnd(90)),c=8+flr(rnd(4))}
+  end
+  printh("ribbit recoil init; frog frames="..anim_len("frog.run"))
+end
+
+function _update()
+  frame_now=frame_count()
+  if transition>0 then transition=transition-1 end
+  if flash>0 then flash=flash-1 end
+  if shake>0 then shake=shake-1 end
+  if invuln>0 then invuln=invuln-1 end
+  if hurt_timer>0 then hurt_timer=hurt_timer-1 end
+  if banner_timer>0 then banner_timer=banner_timer-1 end
+  if combo_timer>0 then
+    combo_timer=combo_timer-1
+    if combo_timer==0 then combo=0 end
+  end
+  if weapon_cooldown>0 then weapon_cooldown=weapon_cooldown-1 end
+  if laser_timer>0 then laser_timer=laser_timer-1 end
+  update_particles()
+
+  if hitstop>0 then hitstop=hitstop-1 return end
+  if game_scene=="title" then
+    if btnp(6) then show_guide=not show_guide end
+    if btnp(4) or btnp(5) then start_game() end
+  elseif game_scene=="play" then
+    update_play()
+  elseif game_scene=="win" then
+    if btnp(4) or btnp(5) then
+      music(-1)
+      echo(0)
+      game_scene="title"
+    end
+  end
+end
+
+local function reset_draw_state()
+  camera()
+  clip()
+  pal()
+  for ink=0,15 do pal(ink,INK_MAP[ink+1]) end
+  palt()
+  fillp()
+  mosaic()
+  rshift()
+end
+
+local function draw_backdrop()
+  cls(49)
+  rectfill(0,HUD_H,SW-1,88,41)
+  fillp(0x5a5a,40)
+  rectfill(0,82,SW-1,184,1)
+  fillp(0x8888,49)
+  rectfill(0,180,SW-1,SH-1,8)
+  fillp()
+  local moon_x=152-flr(camera_x/18)
+  local moon_y=54+flr(camera_y/25)
+  fillp(0xeeee)
+  circfill(moon_x,moon_y,25,31)
+  fillp()
+  circfill(moon_x,moon_y,20,14)
+  circfill(moon_x-7,moon_y-6,5,12)
+  circ(moon_x,moon_y,21,63)
+  for i=1,#stars do
+    local s=stars[i]
+    local sx=(s.x-flr(camera_x*0.12))%(SW+30)-15
+    local sy=s.y-flr(camera_y*0.08)+HUD_H
+    if sy>HUD_H and sy<150 and (frame_now+s.phase)%74<57 then
+      pset(sx,sy,s.c)
+      if i%11==0 and (frame_now+s.phase)%74<4 then
+        pset(sx-1,sy,s.c+1) pset(sx+1,sy,s.c+1)
+      end
+    end
+  end
+  for i=0,8 do
+    local x=(i*39-flr(camera_x*0.28))%(SW+70)-35
+    local h=34+(i*17)%68
+    rectfill(x,SH-h-18,x+18,SH,50)
+    rect(x+2,SH-h-16,x+15,SH,52)
+    rectfill(x+6,SH-h-30,x+11,SH-h-16,52)
+    if i%2==0 then
+      fillp(0xeeee)
+      circfill(x+9,SH-h-35-flr((frame_now+i*8)%31/4),5,55)
+      fillp()
+    end
+  end
+  for i=0,7 do
+    local y=132+i*21+flr(camera_y/14)
+    local x=(i*57-flr(camera_x*0.45))%(SW+80)-40
+    line(x,y,x+52,y-7,i%2==0 and 11 or 13)
+    line(x+11,y+2,x+65,y-4,10)
+  end
+end
+
+local function draw_hook(h,index)
+  local pulse=2+flr((sin(t()*1.4+index/6)+1)*0.5)
+  fillp(0xeeee)
+  circfill(h.x,h.y,7+pulse,8)
+  fillp()
+  circ(h.x,h.y,7,10)
+  circ(h.x,h.y,4,6)
+  pset(h.x,h.y,63)
+  line(h.x-2,h.y+7,h.x-5,h.y+12,7)
+  line(h.x+2,h.y+7,h.x+5,h.y+12,7)
+end
+
+local function draw_pickup(p,index)
+  if not p.alive then return end
+  local bob=sin(t()*0.8+index/3)*3
+  local y=p.y+bob
+  fillp(0xeeee)
+  circfill(p.x,y,13,15)
+  fillp()
+  rectfill(p.x-8,y-8,p.x+8,y+8,41)
+  rect(p.x-9,y-9,p.x+9,y+9,63)
+  rect(p.x-6,y-6,p.x+6,y+6,p.kind==P_LASER and 10 or 4)
+  if p.kind==P_LASER then
+    circfill(p.x-3,y,2,6) circfill(p.x+3,y,2,6)
+    line(p.x-5,y,p.x-9,y,10) line(p.x+5,y,p.x+9,y,10)
+  else
+    line(p.x-3,y+5,p.x+2,y-5,5)
+    line(p.x+2,y-5,p.x+5,y+1,4)
+    line(p.x+5,y+1,p.x,y+6,3)
+  end
+end
+
+local function draw_bomb(b,index)
+  if not b.alive then return end
+  local wob=flr(sin(t()*1.3+index/4)*2)
+  fillp(0x5a5a,34)
+  circfill(b.x,b.y,9,35)
+  fillp()
+  circ(b.x,b.y,9,3)
+  circfill(b.x-3,b.y-1,2,5)
+  circfill(b.x+3,b.y-1,2,5)
+  line(b.x-2,b.y+4,b.x+2,b.y+4,48)
+  line(b.x,b.y-9,b.x+wob,b.y-14,14)
+  pset(b.x+wob,b.y-15,31)
+end
+
+local function draw_enemy(e,index)
+  if not e.alive then return end
+  if e.kind==E_BOSS and e.dormant then return end
+  if e.hurt>0 and e.hurt%2==0 then
+    for ink=1,15 do pal(ink,63) end
+  end
+  if e.kind==E_GNAT then
+    aspr("gnat.fly",e.x+8,e.y+8,-e.phase,e.dir>0,false)
+  elseif e.kind==E_BEETLE then
+    aspr("beetle.walk",e.x+8,e.y+14,-e.phase,e.dir<0,false)
+  elseif e.kind==E_WASP then
+    aspr("wasp.fly",e.x+8,e.y+8,-e.phase,e.x<player_x,false)
+  else
+    fillp(0xeeee)
+    circfill(e.x+12,e.y+12,17+flr((sin(t()*0.7)+1)*2),35)
+    fillp()
+    aspr("buzzkill.rage",e.x+12,e.y+22,0,e.dir>0,false)
+    if boss_defeated then
+      line(e.x-4,e.y-4,e.x+28,e.y+28,3)
+      line(e.x+28,e.y-4,e.x-4,e.y+28,3)
+    end
+  end
+  if e.hurt>0 and e.hurt%2==0 then
+    for ink=0,15 do pal(ink,INK_MAP[ink+1]) end
+  end
+end
+
+local function draw_particles_world()
+  for i=1,#particles do
+    local p=particles[i]
+    if p.kind==5 then
+      line(p.x-p.dx*2,p.y-p.dy*2,p.x,p.y,p.color)
+      if p.size>1 then circfill(p.x,p.y,p.size,p.color) else pset(p.x,p.y,p.color) end
+    elseif p.kind==4 then
+      line(p.x-p.dx,p.y-p.dy,p.x,p.y,p.color)
+    elseif p.kind==3 then
+      fillp(0x8888)
+      circfill(p.x,p.y,p.size+flr((p.max-p.life)/8),p.color)
+      fillp()
+    elseif p.size>1 then circfill(p.x,p.y,p.size,p.color)
+    else pset(p.x,p.y,p.color) end
+  end
+  for i=1,#explosions do
+    local e=explosions[i]
+    local age=e.max-e.life
+    local r=2+age*e.power
+    fillp(age%2==0 and 0x5a5a or 0x8888)
+    circ(e.x,e.y,r,age<6 and 5 or 4)
+    circfill(e.x,e.y,max(1,8-age/2),age<4 and 63 or 5)
+    fillp()
+  end
+end
+
+local function draw_bullets()
+  for i=1,#bullets do
+    local b=bullets[i]
+    if b.kind==B_STINGER then
+      line(b.x-b.dx*3,b.y-b.dy*3,b.x,b.y,5)
+      pset(b.x,b.y,63)
+    else
+      fillp(0xeeee)
+      circfill(b.x,b.y,5,4)
+      fillp()
+      circfill(b.x,b.y,3,35)
+      pset(b.x,b.y,5)
+    end
+  end
+end
+
+local function draw_tongue()
+  if tongue_state=="idle" then return end
+  local mx,my=player_mouth()
+  local tx,ty=tongue_x,tongue_y
+  local dx,dy=tx-mx,ty-my
+  local d=max(1,math.sqrt(dx*dx+dy*dy))
+  local nx,ny=-dy/d,dx/d
+  local segments=max(2,flr(d/7))
+  local lastx,lasty=mx,my
+  for i=1,segments do
+    local f=i/segments
+    local wob=sin(f*3+t()*2.2)*(1-f)*2
+    local x=mx+dx*f+nx*wob
+    local y=my+dy*f+ny*wob
+    line(lastx,lasty,x,y,i%3==0 and 47 or 46)
+    lastx,lasty=x,y
+  end
+  circfill(tx,ty,2,46)
+  pset(tx,ty,63)
+  if tongue_state=="latched" then circ(tx,ty,4,5) end
+end
+
+local function draw_player()
+  local flicker=invuln>0 and invuln%6<3
+  if flicker then
+    for ink=1,15 do pal(ink,ink%2==0 and 63 or 14) end
+  end
+  if tongue_state=="latched" then
+    aspr("frog.swing",player_x+7,player_y+15,tongue_t0,face_left,false)
+  elseif hurt_timer>0 or respawn_timer>0 then
+    aspr("frog.hurt",player_x+7,player_y+15,frame_now-hurt_timer,face_left,false)
+  elseif not grounded then
+    aspr("frog.air",player_x+7,player_y+15,0,face_left,false)
+  elseif abs(vx)>0.22 then
+    aspr("frog.run",player_x+7,player_y+15,0,face_left,false)
+  else
+    aspr("frog.idle",player_x+7,player_y+15,0,face_left,false)
+  end
+  if flicker then for ink=0,15 do pal(ink,INK_MAP[ink+1]) end end
+  if fire_timer>0 then
+    pset(player_x+(face_left and 1 or 13),player_y+5,5)
+  end
+end
+
+local function draw_exit()
+  if not exit_open then return end
+  local x,y=level.exit.x,level.exit.y
+  local pulse=18+flr((sin(t()*0.9)+1)*3)
+  fillp(0xeeee)
+  circfill(x,y,pulse,10)
+  fillp()
+  circfill(x,y,14,11)
+  circ(x,y,14,63)
+  line(x-15,y+13,x+15,y+13,7)
+  line(x-10,y+14,x-17,y+21,6)
+  line(x+10,y+14,x+17,y+21,6)
+  print("EVAC",x-9,y-3,48)
+end
+
+local function draw_boss_gate()
+  if not boss_started or exit_open then return end
+  local gate=level.boss_gate
+  local pulse=frame_now%6<3 and 10 or 7
+  fillp(0xaaaa)
+  rectfill(gate.x-2,gate.y,gate.x+2,gate.y+gate.h,pulse)
+  fillp()
+  line(gate.x,gate.y,gate.x,gate.y+gate.h,63)
+  for y=gate.y+4,gate.y+gate.h-4,8 do
+    pset(gate.x-1+flr(y/8)%3,y,31)
+  end
+end
+
+local function draw_world()
+  local sx=shake>0 and flr(rnd(5))-2 or 0
+  local sy=shake>0 and flr(rnd(5))-2 or 0
+  clip(0,HUD_H,SW,SH-HUD_H)
+  camera(camera_x-sx,camera_y-HUD_H-sy)
+  map()
+  for i=1,#hooks do draw_hook(hooks[i],i) end
+  for i=1,#pickups do draw_pickup(pickups[i],i) end
+  for i=1,#bombs do draw_bomb(bombs[i],i) end
+  for i=1,#level.checkpoints do
+    local c=level.checkpoints[i]
+    line(c[1],c[2]+16,c[1],c[2]-8,i<=checkpoint_index and 6 or 13)
+    rectfill(c[1],c[2]-8,c[1]+19,c[2]+2,i<=checkpoint_index and 11 or 52)
+    print("CP"..i,c[1]+3,c[2]-6,63)
+  end
+  draw_boss_gate()
+  draw_exit()
+  draw_bullets()
+  for i=1,#enemies do draw_enemy(enemies[i],i) end
+  draw_particles_world()
+  draw_tongue()
+  if laser_timer>0 then
+    local mx,my=player_mouth()
+    line(mx,my,laser_x2,laser_y2,63)
+    line(mx,my+1,laser_x2,laser_y2+1,10)
+    for i=0,4 do
+      local f=i/4
+      circfill(mx+(laser_x2-mx)*f,my+(laser_y2-my)*f,1,i%2==0 and 10 or 63)
+    end
+  end
+  draw_player()
+  camera()
+  clip()
+end
+
+local function draw_hud()
+  clip(0,0,SW,HUD_H)
+  cls(48)
+  clip()
+  rect(0,0,SW-1,HUD_H-1,55)
+  line(1,HUD_H-2,SW-2,HUD_H-2,41)
+  print("HP",4,5,63)
+  for i=1,player_max_hp do
+    local x=17+(i-1)*7
+    circfill(x,7,2,i<=player_hp and 6 or 34)
+    pset(x,6,i<=player_hp and 15 or 52)
+  end
+  print(mutation,55,5,mutation=="LASER EYES" and 10 or mutation=="FIRE BREATH" and 4 or 58)
+  print("$"..score,144,5,31)
+  if combo>1 then print("X"..combo,123,5,5) end
+  if boss_started and not exit_open then
+    rect(43,13,148,15,52)
+    local boss=enemies[#enemies]
+    rectfill(44,14,44+flr(103*boss.hp/boss.max_hp),14,boss.hp>8 and 3 or 4)
+  end
+end
+
+local function draw_banner()
+  if banner_timer<=0 then return end
+  local y=banner_timer>90 and 57 or 44
+  fillp(0x5a5a,49)
+  rectfill(12,y,179,y+34,48)
+  fillp()
+  rect(12,y,179,y+34,15)
+  line(15,y+3,176,y+3,4)
+  print(banner,20,y+13,banner_timer%10<7 and 63 or 31)
+end
+
+local function draw_pause()
+  fillp(0x5a5a,41)
+  rectfill(20,78,171,243,48)
+  fillp()
+  rect(20,78,171,243,15)
+  rect(23,81,168,240,8)
+  print("TACTICAL CROAK BREAK",54,94,6)
+  print("A  TONGUE / HOLD TO SWING",34,120,63)
+  print("UP/DOWN  REEL WHILE LATCHED",28,136,63)
+  print("B  MUTATION WEAPON",48,152,10)
+  print("DOWN+B  SWAP MUTATION",40,168,4)
+  print("NO JUMP. THIS IS A FEATURE.",34,194,31)
+  print("MENU  RETURN TO NONSENSE",40,220,14)
+end
+
+local function draw_title()
+  cls(40)
+  fillp(0x5a5a,41)
+  rectfill(0,0,SW-1,SH-1,48)
+  fillp()
+  for i=0,16 do
+    local x=(i*17+flr(t()*12))%(SW+32)-16
+    line(x,0,x-48,SH-1,i%2==0 and 8 or 33)
+  end
+  fillp(0xeeee)
+  circfill(96,83,65+flr((sin(t()*0.5)+1)*2),14)
+  fillp()
+  circfill(96,83,57,8)
+  circ(96,83,58,63)
+  sspr(0,0,16,16,67,48,58,58,false,false)
+  local lick=110+sin(t()*0.65)*16
+  line(100,76,lick,54,46)
+  circfill(lick,54,3,46)
+  for i=0,4 do
+    local a=t()*0.3+i/5
+    aspr("gnat.fly",96+cos(a)*68,83+sin(a)*47,-i*8,i%2==0,false)
+  end
+  fillp(0x8888,24)
+  rectfill(17,121,174,179,48)
+  fillp()
+  rect(17,121,174,179,15)
+  print("R I B B I T",65,132,6)
+  print("R E C O I L",59,148,4)
+  print("TONGUE-BASED REGIME CHANGE",37,166,31)
+  if show_guide then
+    rect(26,197,165,271,52)
+    print("D-PAD  MOVE + AIM",54,208,63)
+    print("A  LICK / GRAPPLE / SWING",39,223,46)
+    print("B  UNETHICAL MUTATIONS",44,238,10)
+    print("DEFEAT ALL MANAGEMENT",45,253,4)
+  end
+  print(frame_now%80<58 and "A/B  DEPLOY FROG" or "   PRESS THE BAD IDEA",53,286,63)
+  print("MENU  TOGGLE BRIEFING",55,304,58)
+end
+
+local function draw_win()
+  cls(49)
+  fillp(0x5a5a,41)
+  rectfill(0,0,SW-1,SH-1,1)
+  fillp()
+  for i=0,17 do
+    local a=i/18
+    line(96,114,96+cos(a)*120,114+sin(a)*120,i%2==0 and 4 or 14)
+  end
+  fillp(0x8888,48)
+  rectfill(17,39,174,279,63)
+  fillp()
+  rect(17,39,174,279,48)
+  rect(21,43,170,275,3)
+  print("THE DAILY CROAK",64,53,48)
+  line(30,64,161,64,48)
+  print("FROG BECOMES",62,78,36)
+  print("TOO POWERFUL",57,92,36)
+  sspr(0,0,16,16,66,108,60,60,false,false)
+  print("MOSQUITO ECONOMY IN TATTERS",34,180,48)
+  print("SCORE  "..score,57,202,41)
+  print("DE-FROGGINGS  "..deaths,48,216,41)
+  print("MAX COMBO  LEGALLY REDACTED",37,230,41)
+  print("LEVEL 2: CANOPY CONVEYOR",43,253,8)
+  print("A/B  COMMIT ANOTHER INCIDENT",34,294,63)
+end
+
+function _draw()
+  reset_draw_state()
+  if game_scene=="title" then draw_title()
+  elseif game_scene=="win" then draw_win()
+  else
+    draw_backdrop()
+    draw_world()
+    draw_hud()
+    draw_banner()
+    if paused then draw_pause() end
+    local acid_y=flr(496-camera_y+HUD_H)
+    for y=max(HUD_H,acid_y),SH-1 do rshift(y,2*sin(t()*1.8+y/17)) end
+    if fire_timer>0 then
+      for y=HUD_H,SH-1,3 do rshift(y,sin(t()*4+y/13)) end
+    end
+  end
+  if transition>0 then
+    mosaic(transition>9 and 8 or transition>6 and 4 or transition>3 and 2 or 1)
+  end
+  if flash>0 then
+    for c=0,63 do pal(c,flash%2==0 and 63 or 31,1) end
+  end
+end
+
+-- Deliberate, deterministic test hooks for console-agent scenarios.
+function dev_status()
+  local alive=0
+  for i=1,#enemies do if enemies[i].alive and enemies[i].kind~=E_BOSS then alive=alive+1 end end
+  local boss=enemies[#enemies]
+  return {scene=game_scene,level=game_level,x=player_x,y=player_y,vx=vx,vy=vy,
+    grounded=grounded,hp=player_hp,score=score,combo=combo,deaths=deaths,
+    tongue=tongue_state,latched=tongue_state=="latched",rope=rope_len,
+    mutation=mutation,laser=laser_unlocked,fire=fire_unlocked,
+    bugs=alive,boss_started=boss_started,boss_hp=boss and boss.hp or 0,
+    boss_defeated=boss_defeated,exit_open=exit_open,checkpoint=checkpoint_index,
+    camera_x=camera_x,camera_y=camera_y,particles=#particles,explosions=#explosions}
+end
+
+function dev_warp(x,y)
+  player_x,player_y,vx,vy=x,y,0,0
+  grounded=false
+  reset_tongue()
+  camera_x=mid(0,x-SW*0.42,WORLD_W-SW)
+  camera_y=mid(0,y-(SH-HUD_H)*0.56,WORLD_H-(SH-HUD_H))
+end
+
+function dev_grant(which)
+  if which=="laser" or which=="all" then laser_unlocked=true mutation="LASER EYES" end
+  if which=="fire" or which=="all" then fire_unlocked=true mutation="FIRE BREATH" end
+  if which=="all" then laser_unlocked=true fire_unlocked=true end
+  weapon_cooldown=0
+end
+
+function dev_start_boss()
+  start_boss()
+  boss_intro=0
+end
+
+function dev_damage_boss(amount)
+  local e=enemies[#enemies]
+  e.hurt=0
+  damage_enemy(e,amount,"headless accountability")
+end
+
+function dev_explode(x,y,power)
+  add_explosion(x,y,power or 4,true)
+end
+
+function dev_spawn_enemy(kind,x,y)
+  local code=kind=="beetle" and E_BEETLE or kind=="wasp" and E_WASP or E_GNAT
+  local e=make_enemy({code,x,y,0})
+  e.home_x,e.home_y,e.range=x,y,0
+  table.insert(enemies,#enemies,e)
+  return #enemies-1
+end
+
+function dev_enemy_hp(index)
+  local e=enemies[index]
+  return e and e.hp or -1
+end
+
+__gfx_meta__
+sprite frog rect=0,0 size=2x2 anchor=7,15
+anim frog.idle frames=0,1,2 fps=4 loop
+anim frog.run frames=0,1,2,3 frames_rect=6,0 fps=11 loop
+anim frog.air frames=0,1 frames_rect=0,2 fps=6 loop
+anim frog.swing frames=0,1 frames_rect=4,2 fps=8 loop
+anim frog.hurt frames=0,1 frames_rect=8,2 fps=12
+
+sprite gnat rect=0,4 size=2x2 anchor=8,8
+anim gnat.fly frames=0,1,2 fps=14 loop
+
+sprite beetle rect=6,4 size=2x2 anchor=8,14
+anim beetle.walk frames=0,1,2 fps=7 loop
+
+sprite wasp rect=12,4 size=2x2 anchor=8,8
+anim wasp.fly frames=0,1 fps=12 loop
+
+sprite buzzkill rect=0,6 size=3x3 anchor=12,22
+anim buzzkill.rage frames=0,1,2 fps=8 loop
+
+__instruments__
+wavetable 0 89acdeef ffeedca9 76532110 00112356
+wavetable 1 8cefeede eedeefec 73101121 11211013
+wavetable 2 78899aab bccddeef 01122334 45566778
+inst croaklead wave=w1 env=0,8,3 vib=13,3,3 echo=3
+inst swampstab wave=w0 env=0,5,2 trem=3,4 echo=2
+inst mutantbass wave=6 fm=1,9,12 env=0,9,3
+inst kick wave=3 sweep=-19,5 env=0,6,0 duck=4,9
+inst snare wave=5 env=0,5,0
+inst hat wave=5 env=0,2,0
+inst bugbass wave=7 env=0,6,2 vib=18,3,0
+inst tongue wave=1 env=0,4,0 sweep=10,5
+inst latch wave=6 fm=3.5,8,10 env=0,8,0 echo=4
+inst laser wave=6 fm=3.5,12,13 env=0,6,0 sweep=18,4 echo=4
+inst flame wave=4 env=0,7,0 sweep=-8,8
+inst splat wave=5 env=0,6,0
+inst boom wave=5 env=0,12,0 duck=4,12 echo=4
+inst boomlow wave=3 env=0,14,0 sweep=-22,10 duck=5,14
+inst hurt wave=4 env=0,10,0 sweep=-16,8
+inst pickup wave=6 fm=3.5,9,6 env=0,24,1 echo=7
+inst stinger wave=0 env=0,4,0 sweep=-8,6
+inst bomblob wave=7 env=0,5,0 sweep=-12,8
+inst bossroar wave=6 fm=1.5,14,3 env=2,30,2 trem=5,2 echo=6
+inst victory wave=w0 env=0,16,2 echo=7
+master drive=2 tone=1 hiss=0
+echo delay=12 feedback=4 level=3
+
+__sfx__
+# music: industrial swamp-funk, four channels; ch4/ch5 remain available for mayhem
+sfx 0 speed=6
+A2 mutantbass 4
+---
+A2 mutantbass 4
+C3 mutantbass 4
+---
+E2 mutantbass 4
+G2 mutantbass 4
+---
+A2 mutantbass 4
+---
+C3 mutantbass 4
+B2 mutantbass 4
+G2 mutantbass 4
+E2 mutantbass 4
+---
+G2 mutantbass 4
+E2 mutantbass 4
+
+sfx 1 speed=6
+A4 croaklead 4
+---
+C5 croaklead 4
+E5 croaklead 4
+---
+D5 croaklead 4
+C5 croaklead 4
+---
+A4 croaklead 4
+---
+E5 croaklead 4
+G5 croaklead 4
+E5 croaklead 4
+D5 croaklead 4
+C5 croaklead 4
+---
+
+sfx 2 speed=6
+A3 swampstab 3
+---
+E4 swampstab 3
+---
+G3 swampstab 3
+---
+E4 swampstab 3
+---
+A3 swampstab 3
+---
+C4 swampstab 3
+---
+G3 swampstab 3
+---
+E4 swampstab 3
+---
+
+sfx 3 speed=6
+C2 kick 5
+---
+F4 hat 2
+---
+D3 snare 4
+---
+F4 hat 2
+---
+C2 kick 5
+---
+F4 hat 2
+C2 kick 4
+D3 snare 4
+---
+F4 hat 2
+F4 hat 2
+
+sfx 4 speed=6
+F2 mutantbass 4
+---
+F2 mutantbass 4
+A2 mutantbass 4
+C3 mutantbass 4
+---
+E2 mutantbass 4
+F2 mutantbass 4
+---
+C3 mutantbass 4
+A2 mutantbass 4
+---
+G2 mutantbass 4
+E2 mutantbass 4
+C3 mutantbass 4
+---
+
+sfx 5 speed=6
+C5 croaklead 4
+---
+F5 croaklead 4
+A5 croaklead 4
+---
+G5 croaklead 4
+E5 croaklead 4
+---
+C5 croaklead 4
+E5 croaklead 4
+G5 croaklead 4
+---
+A5 croaklead 4
+G5 croaklead 4
+E5 croaklead 4
+C5 croaklead 4
+
+sfx 6 speed=6
+F3 swampstab 3
+---
+C4 swampstab 3
+---
+A3 swampstab 3
+---
+C4 swampstab 3
+---
+F3 swampstab 3
+---
+E4 swampstab 3
+---
+C4 swampstab 3
+---
+G3 swampstab 3
+---
+
+sfx 7 speed=3
+C2 kick 5
+---
+F4 hat 2
+---
+D3 snare 4
+F4 hat 2
+---
+F4 hat 2
+C2 kick 5
+---
+F4 hat 2
+C2 kick 4
+D3 snare 4
+---
+F4 hat 2
+F4 hat 2
+C2 kick 5
+---
+F4 hat 2
+---
+D3 snare 4
+F4 hat 2
+C2 kick 4
+F4 hat 2
+---
+C2 kick 5
+F4 hat 2
+---
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+
+# boss variants
+sfx 8 speed=4
+A2 mutantbass 5
+A2 mutantbass 5
+C3 mutantbass 5
+E2 mutantbass 5
+G2 mutantbass 5
+E2 mutantbass 5
+C3 mutantbass 5
+B2 mutantbass 5
+A2 mutantbass 5
+G2 mutantbass 5
+E2 mutantbass 5
+C3 mutantbass 5
+B2 mutantbass 5
+G2 mutantbass 5
+E2 mutantbass 5
+D2 mutantbass 5
+
+sfx 9 speed=4
+A4 croaklead 5 arp3,7
+---
+E5 croaklead 5
+---
+G5 croaklead 5 sl-5
+---
+E5 croaklead 5
+---
+A5 croaklead 5
+---
+G5 croaklead 5
+E5 croaklead 5
+D5 croaklead 5
+C5 croaklead 5
+B4 croaklead 5
+---
+
+sfx 10 speed=4
+A5 bugbass 3
+---
+E6 bugbass 3
+---
+G5 bugbass 3
+---
+E6 bugbass 3
+---
+A5 bugbass 3
+---
+C6 bugbass 3
+---
+G5 bugbass 3
+---
+E6 bugbass 3
+---
+
+sfx 11 speed=2
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+C2 kick 4
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+
+sfx 12 speed=4
+F2 mutantbass 5
+F2 mutantbass 5
+A2 mutantbass 5
+C3 mutantbass 5
+E2 mutantbass 5
+C3 mutantbass 5
+A2 mutantbass 5
+G2 mutantbass 5
+F2 mutantbass 5
+E2 mutantbass 5
+C3 mutantbass 5
+A2 mutantbass 5
+G2 mutantbass 5
+E2 mutantbass 5
+D2 mutantbass 5
+C2 mutantbass 5
+
+sfx 13 speed=4
+C5 croaklead 5 arp3,7
+---
+F5 croaklead 5
+---
+A5 croaklead 5 sl-7
+---
+G5 croaklead 5
+---
+C6 croaklead 5
+---
+A5 croaklead 5
+G5 croaklead 5
+F5 croaklead 5
+E5 croaklead 5
+C5 croaklead 5
+---
+
+sfx 14 speed=4
+F5 bugbass 3
+---
+C6 bugbass 3
+---
+A5 bugbass 3
+---
+C6 bugbass 3
+---
+F5 bugbass 3
+---
+E6 bugbass 3
+---
+C6 bugbass 3
+---
+G5 bugbass 3
+---
+
+sfx 15 speed=2
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+C2 kick 4
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+D3 snare 4
+C2 kick 4
+F4 hat 2
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+C2 kick 4
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+
+# action effects
+sfx 16 speed=1
+C3 tongue 6
+E3 tongue 5
+G3 tongue 4
+
+sfx 17 speed=1
+G3 tongue 4
+E3 tongue 3
+C3 tongue 2
+
+sfx 18 speed=2
+C5 latch 6
+G5 latch 4
+C6 latch 3
+
+sfx 19 speed=1
+C5 laser 5
+G5 laser 4
+C6 laser 3
+
+sfx 20 speed=2
+G3 splat 5
+D3 splat 4
+---
+
+sfx 21 speed=2
+C3 boom 6
+G2 boom 5
+C2 boom 3
+---
+
+sfx 22 speed=3
+C3 boomlow 6
+G2 boomlow 5
+C2 boomlow 4
+---
+
+sfx 23 speed=2
+E4 hurt 6
+C4 hurt 5
+G3 hurt 3
+---
+
+sfx 24 speed=5
+C4 hurt 6
+B3 hurt 5
+G3 hurt 4
+E3 hurt 3
+C3 hurt 2
+
+sfx 25 speed=2
+C4 flame 5
+D4 flame 4
+E4 flame 5
+G4 flame 4
+
+sfx 26 speed=3
+C5 pickup 5
+E5 pickup 5
+G5 pickup 5
+C6 pickup 5
+
+sfx 27 speed=8
+A1 bossroar 6
+E2 bossroar 6
+A2 bossroar 6
+---
+
+sfx 28 speed=1
+C6 stinger 5
+G5 stinger 3
+
+sfx 29 speed=3
+A5 bomblob 5
+E5 bomblob 4
+A4 bomblob 3
+
+sfx 30 speed=5
+C5 victory 6
+E5 victory 6
+G5 victory 6
+C6 victory 6
+E6 victory 6
+G6 victory 6
+C7 victory 6
+
+__music__
+bpm=150 rows_per_beat=4
+pat 0 : 0 1 2 3
+pat 1 loop=0 : 4 5 6 7
+pat 8 : 8 9 10 11
+pat 9 loop=8 : 12 13 14 15
+pat 16 stop : 30 - - -
+__sprites__
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111100001111000000000000000000001111000011110000111100001111000011110000111100001111000011110000111100001111000000000000000000
+001b1111111b11000011110000111100001b1111111b1100001b1111111b1100001b1111111b1100001b1111111b1100001b1111111b11000000000000000000
+0016616666166100001b1111111b1100001661666616610000166166661661000016616666166100001661666616610000166166661661000000000000000000
+00166166661661000016616666166100001661666616610000166166661661000016616666166100001661666616610000166166661661000000000000000000
+00111e6666e11100001661666616610000111e6666e1110000111e6666e1110000111e6666e1110000111e6666e1110000111e6666e111000000000000000000
+001666666666610000111e6666e11100001666666666610000166666666661000016666666666100001666666666610000166666666661000000000000000000
+00116111111611000016666666666100001161111116110000116111111611000011611111161100001161111116110000116111111611000000000000000000
+0017111ff111710000116111111611000017111ff11171000017111ff11171000017111ff11171000017111ff11171000017111ff11171000000000000000000
+00177767767771000017111ff1117100001777677677710000177767767771000017776776777100001777677677710000177767767771000000000000000000
+00017777777710000017776776777100000177777777100000017777777710000001777777771000000177777777100000017777777710000000000000000000
+00017777777710000001777777771000000177777777100000017777777710000001777777771000000177777777100000017777777710000000000000000000
+01111777777111100111777777771110011117777771111011101777777111100001117771110000111017777771111000011177711100000000000000000000
+66666111111777776666617777177777666661111117777766661111111777770166666177777100666611111117777701666661777771000000000000000000
+11111100001111111111111111111111111111000011111111111000001111110111111551111100111110000011111101111115511111000000000000000000
+01110000000011100111000000001110011100000000111011100000000011100001110001110000111000000000111000011100011100000000000000000000
+
+000000000000000000000000000000000000000f0000000000000000f00000000000000000000000000000000000000000000000000000000000000000000000
+001111000011110000111100001111000011110f001111000011110f001111000011110000111100001111000011110000000000000000000000000000000000
+001b1111111b1100001b1111111b1100001b1111111b1100001b1111111b11000036631111366300003663111136630000000000000000000000000000000000
+00166166661661000016616666166100001661666616610000166166661661000013316666133100001331666613310000000000000000000000000000000000
+00166166661661000016616666166100001661666616610000166166661661000013316666133100501331666613310500000000000000000000000000000000
+00111e6666e1110000111e6666e1110000111e6666e1110000111e6666e111005031136666311305503113666631130500000000000000000000000000000000
+00166666666661000016666666666100001666666666610000166666666661005016666666666105501666666666610500000000000000000000000000000000
+00116111111611000011611111161100001161111116110000116111111611000511666ff66611500511666ff666115000000000000000000000000000000000
+0017111ff11171000017111ff11171000017111ff11171000017111ff11171000017111111117100001711111111710000000000000000000000000000000000
+00177767767771000017776776777100001777677677710000177767767771000017777777777100001777777777710000000000000000000000000000000000
+00017777777710000001777777771000000177777777100000017777777710000001777777771000000177777777100000000000000000000000000000000000
+00011777777110000001177777711000000117777771100000011777777110000001777777771000000177777777100000000000000000000000000000000000
+00111777777111000001177777711000000117777771100000011777777110001111177777711111111117777771111100000000000000000000000000000000
+16666111111666610001011111101000001001111110010000010111111010001111111111111111111111111111111100000000000000000000000000000000
+00000000000000000010000000000100001000000000010000100000000001001111100000011111111110000001111100000000000000000000000000000000
+00000000000000006666000000006666666660000006666606666600006666600000000000000000000000000000000000000000000000000000000000000000
+00001000000100000011110000111100000010000001000000000000000000000000000000000000000000000000000000010000000110000001000000001000
+001111000011110001aaa110011aaa10000001000010000000000000000000000000000000000000000000000000000001aa110001a1a1000000100000010000
+01aaa110011aaa101aaaa1a11a1aaaa100000100001000000000000000000000000000000000000000000000000000001aaa1a4444a1aa100000104444010000
+1aaaaa1111aaaaa101aaaa1111aaaa10001111111111110000111111111111000000000000000000001111111111110001aaa144441aa1000001014444110000
+01aaaa1ff1aaaa100011111ff111110001aaaa1ff1aaaa10001b11919911b1000011111111111100001b11919911b100000104144141000001aaa414414aa100
+0011111ff11111000000111ff11100001aaa111ff111aaa10011119aa9111100001b11919911b1000011119aa911110000000444444000001aaaa444444aaa10
+00001b1ff1b1000000001b1ff1b1000001aa1b1ff1b1aa1001111191991111100011119aa91111000111119199111110000014444441000001aa14444441a100
+000011144111000000001114411100000011111441111100012ddd9199ddd2100111119199111110012ddd9199ddd21000001114411100000001111441110000
+000001444410000000000144441000000000014444100000012ddd9199ddd210012ddd9199ddd210012ddd9199ddd21000001555555100000000155555510000
+000001ffff100000000001ffff100000000001ffff100000012ddd9199ddd210012ddd9199ddd210012ddd9199ddd21000001111111100000000111111110000
+0000015555100000000001555510000000000155551000000112999199992110012ddd9199ddd210011299919999211000001111111100000000111111110000
+00000155551000000000015555100000000001555510000001129991999921000112999199992110001299919999210000000155551000000000015555100000
+00000011110000000000001111000000000000111100000001012291992210000112999199992100000122919922100000000115511000000000011551100000
+00000001100000000000000110000000000000011000000010011111111100000101229199221000000011111111010000000011110000000000001111000000
+000000000000000000000000000000000000000000000000c00c00c00c000000c00c1111111100000000c00c00c00c0000000001000000000000000100000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003000000000000000300000000
+00001000000050000000100000001100000050000001100000001000000050000000100000000000000000000000000000000000000000000000000000000000
+0000010001111111000100000011a111011111110111a11000000100011111110001000000000000000000000000000000000000000000000000000000000000
+00001111144414441111100001aaaa1114441444111aaaa100000011144414441110000000000000000000000000000000000000000000000000000000000000
+0011aa11bb44144bb11aa11011aaaa11bb44144bb11aaaa100000011bb44144bb110000000000000000000000000000000000000000000000000000000000000
+01aaaabbbbb414bbbbbaaaa101aaaabbbbb414bbbbbaaaa1000000bbbbb414bbbbb0000000000000000000000000000000000000000000000000000000000000
+11aaa1bbb1b414b1bbb1aaa10011a1bbb1b414b1bbb1a110000011bbb1b414b1bbb1100000000000000000000000000000000000000000000000000000000000
+01aaa14bbb44144bbb41aaa10000114bbb44144bbb4110000011a14bbb44144bbb41a11000000000000000000000000000000000000000000000000000000000
+0011a114b4441444b411a11000000114b4441444b411000001aaa114b4441444b411aaa100000000000000000000000000000000000000000000000000000000
+00001111414414414111100000000111414414414111000011aaa111414414414111aaa100000000000000000000000000000000000000000000000000000000
+000001f1e4114114e1f10000000001f1e4114114e1f1000001aaa1f1e4114114e1f1aaa100000000000000000000000000000000000000000000000000000000
+000011fffee111eefff11000000011fffee111eefff11000001111fffee111eefff1111000000000000000000000000000000000000000000000000000000000
+00001f11111eee11111f100000001f11111eee11111f100000001f11111eee11111f100000000000000000000000000000000000000000000000000000000000
+00001f1111111111111f100000001f1111111111111f100003001f1111111111111f100300000000000000000000000000000000000000000000000000000000
+00001fffddddffffffff100000001fffddddffffffff100003001fffddddffffffff100300000000000000000000000000000000000000000000000000000000
+000011ffd3ddfffffff11000000011ffd3ddfffffff11000300011ffd3ddfffffff1100300000000000000000000000000000000000000000000000000000000
+00000155dd5d55555551000000000155dd5d55555551000030000155dd5d55555551000300000000000000000000000000000000000000000000000000000000
+00000115dddd55555511000000000115dddd55555511000000000115dddd55555511000000000000000000000000000000000000000000000000000000000000
+0000011fffffffffff1100000000011fffffffffff1100000000011fffffffffff11000000000000000000000000000000000000000000000000000000000000
+0000011fffffffffff1100000000011fffffffffff1100000000011fffffffffff11000000000000000000000000000000000000000000000000000000000000
+000010011fffffff11001000000010011fffffff11001000000010011fffffff1100100000000000000000000000000000000000000000000000000000000000
+0001000011fffff1100001000001000011fffff1100001000001000011fffff11000010000000000000000000000000000000000000000000000000000000000
+00010000001111100000010000010000001111100000010000010000001111100000010000000000000000000000000000000000000000000000000000000000
+05555500000000000005555505555500000000000005555505555500000000000005555500000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+eeeeeeeecccccccc66666666aaa000aa444344440000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+ebccccbedbdddddddddddddd888aaa8845d3ddd40000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+eddddddedd0000ee77777777888888884ddd3dd40000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+edccccde00ddee0076777777888888884ddd1dd40000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+edddddde00eedd0077777677868888884dd3d1140000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+eddddddeee0000dd7777777788888a884dd3ddd10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+ebeeeebeddddddbd777e7777888888884d3ddd540000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+eeeeeeeecccccccc7777777788898888444444440000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+
+__map__
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000000000000000c2c2c2c2c2c2c2c2c2c2c20000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0c0c0c0c0c0c0c0c0c0c0c0c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000c0c0c0c0c0c0c0c0c0c000000000000000000000c1c1c1c1c1c1c1c1c1c1c1c1c1c10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c2c2c2c2c2c2c2c2000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c1c1c1c1c1c1c1c1000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c2c2c2c2c2c2c2c2c2c2c2c2000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c4c4c4000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000c1c1c1c1c1c1c1c1c1c10000000000000000000000000000000000000000000000000000c4c4c4000000000000000000000000000000000000000000c1c1c1c1c1c1c1c1c1c1c1c1c1c1c100000000000000000000000000000000000000000000000000000000000000c1c1c1c1c1c10000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c4c4c40000000000000000000000000000000000000000000000000000000000000000c4c4c400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c4c4c40000000000000000000000000000000000000000000000000000000000000000c4c4c400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0000000000000000000000000000000000000000000c4c4c400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c00000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0000000000000000000000000000000000000000000000000c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c00000000000000000
+c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c000000000000000000000c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0000000000000000000000000000000000000000000000000c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c00000000000000000
+c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c3c3c3c3c3c3c3c3c3c3c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c00000000000000000
+c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c3c3c3c3c3c3c3c3c3c3c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c00000000000000000

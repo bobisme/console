@@ -65,7 +65,7 @@ see SPEC.md for exact semantics.
 | `crates/console-web` | emscripten build exposing a small C ABI over the core |
 | `crates/console-pack` | packs a cart + the engine build into one self-contained `game.html` |
 | `web/` | the device-chassis HTML/JS shell and the engine build recipe ([web/BUILD.md](web/BUILD.md)) |
-| `carts/` | example carts: `demo.cart`, `soundtest.cart`, and the full `lantern-leap.cart` platformer |
+| `carts/` | example carts: `demo.cart`, `soundtest.cart`, the `lantern-leap.cart` platformer, and the tongue-grappling mutant action showcase `ribbit-recoil.cart` |
 | `skills/build-cart` | a publishable skill for authoring carts — the thing to hand an agent |
 | `SPEC.md` | the authoritative platform contract |
 
