@@ -3,9 +3,10 @@
 
 use console_core::{
     CHANNEL_COUNT, Cart, Console, DUCK_ATTACK_SAMPLES, Duck, Echo, Env, Error, Fx,
-    MASTER_REF_LEVEL, MAX_DRIVE, MAX_DUCK_DEPTH, MAX_HISS, MAX_TONE, Master, NIBBLE_LEVEL,
-    NOTE_FREQ, PatternEnd, RowMod, SAMPLE_RATE, SAMPLES_PER_FRAME, SfxRow, Sweep, Vib, WAVE_COUNT,
-    WAVE_TABLE_BASE, WAVETABLE_LEN, WAVETABLE_SLOTS, Wavetable, freq_at, input,
+    FM_DECAY_HALF_LIFE, Fm, MASTER_REF_LEVEL, MAX_DRIVE, MAX_DUCK_DEPTH, MAX_HISS, MAX_TONE, Master, NIBBLE_LEVEL,
+    NOTE_FREQ, PatternEnd, RowMod, SAMPLE_RATE, SAMPLES_PER_FRAME, SINE_QUARTER, SfxRow, Sweep,
+    Vib, WAVE_COUNT, WAVE_FM, WAVE_TABLE_BASE, WAVETABLE_LEN, WAVETABLE_SLOTS, Wavetable, freq_at,
+    input,
 };
 
 const DEMO: &str = include_str!("../../../carts/demo.cart");
@@ -202,8 +203,16 @@ fn malformed_sfx_is_a_line_numbered_cart_error() {
         3,
         "bad note",
     );
+    // Wave 6 is FM: a bare digit cannot carry its ratio and index, so the row
+    // has to name an instrument instead. The message says so rather than
+    // pretending the waveform does not exist.
     expect_cart_error(
         "__lua__\n\n__sfx__\nsfx 0 speed=2\nC4 6 7\n",
+        2,
+        "wave 6 is the 2-op FM oscillator",
+    );
+    expect_cart_error(
+        "__lua__\n\n__sfx__\nsfx 0 speed=2\nC4 7 7\n",
         2,
         "wave must be 0-5",
     );
@@ -1116,8 +1125,9 @@ fn malformed_instruments_are_line_numbered_cart_errors() {
         expect_cart_error(&format!("__lua__\nx=1\n\n__instruments__\n{body}"), line, needle);
     }
 
-    inst_err("inst a wave=6\n", 1, "wave must be 0-5");
-    inst_err("inst a\n", 1, "missing `wave=<0-5>`");
+    inst_err("inst a wave=6\n", 1, "but no `fm=<ratio>,<index>[,<decay>]`");
+    inst_err("inst a wave=7\n", 1, "wave must be 0-6");
+    inst_err("inst a\n", 1, "missing `wave=<0-6>`");
     inst_err("inst\n", 1, "expected `inst <name>");
     inst_err("inst A wave=1\n", 1, "must match [a-z0-9_]+");
     inst_err("inst a-b wave=1\n", 1, "must match [a-z0-9_]+");
@@ -1151,7 +1161,7 @@ fn malformed_instruments_are_line_numbered_cart_errors() {
     inst_err("inst a wave=1 sweep=97,4\n", 1, "sweep semitones must be -96-96");
 
     // line numbers count from the section start, blank/comment lines included
-    inst_err("# note\n\ninst a wave=1\ninst b wave=9\n", 4, "wave must be 0-5");
+    inst_err("# note\n\ninst a wave=1\ninst b wave=9\n", 4, "wave must be 0-6");
 }
 
 #[test]
@@ -2318,7 +2328,7 @@ fn a_cart_with_no_duck_instrument_never_leaves_the_legacy_path() {
 // ---------------------------------------------------------------------------
 
 /// Menu entries in `carts/soundtest.cart`.
-const SOUNDTEST_ENTRIES: usize = 16;
+const SOUNDTEST_ENTRIES: usize = 17;
 
 /// Zero-based menu index of "FULL GROOVE".
 const SOUNDTEST_GROOVE: usize = 12;
@@ -2333,8 +2343,11 @@ const SOUNDTEST_AB: usize = 13;
 /// scripts and their hashes stay comparable across releases.
 const SOUNDTEST_ECHO: usize = 14;
 
-/// Zero-based menu index of "WAVETABLE W0-W2" (the last entry), pattern 14.
+/// Zero-based menu index of "WAVETABLE W0-W2", pattern 14.
 const SOUNDTEST_WAVETABLE: usize = 15;
+
+/// Zero-based menu index of "FM  2-OP" (the last entry), pattern 15.
+const SOUNDTEST_FM: usize = 16;
 
 /// Frames the A/B entry spends on each side of the comparison: two bars at
 /// 112 BPM / 4 rows per beat / speed 8 = 2 * 16 * 8.
@@ -2357,13 +2370,13 @@ fn soundtest_script(entry: usize, play_frames: usize) -> Vec<u8> {
 fn the_soundtest_cart_loads_and_describes_itself() {
     let cart = Cart::parse(SOUNDTEST).unwrap();
     assert_eq!(cart.title(), "Sound Test");
-    // 15 instruments, 23 sfx, one self-looping pattern per audition entry (the
+    // 18 instruments, 26 sfx, one self-looping pattern per audition entry (the
     // A/B entry re-uses the groove's pattern 12).
-    assert_eq!(cart.instruments().len(), 15);
-    assert_eq!(cart.audio().sfx_ids().count(), 23);
+    assert_eq!(cart.instruments().len(), 18);
+    assert_eq!(cart.audio().sfx_ids().count(), 26);
     let pats: Vec<u8> = cart.audio().pattern_ids().collect();
-    assert_eq!(pats, (0..=14).collect::<Vec<u8>>());
-    for id in 0..=14u8 {
+    assert_eq!(pats, (0..=15).collect::<Vec<u8>>());
+    for id in 0..=15u8 {
         assert_eq!(
             cart.pattern(id).unwrap().end,
             PatternEnd::Loop(id),
@@ -2461,11 +2474,11 @@ fn the_soundtest_menu_navigates_and_stops() {
     assert_eq!(con.music_pattern(), Some(2));
     assert!(con.audio_frame().iter().any(|&s| s != 0.0));
 
-    // Up wraps to the top of the list, i.e. onto the last entry (WAVETABLE).
+    // Up wraps to the top of the list, i.e. onto the last entry (FM  2-OP).
     for mask in [input::UP, 0, input::UP, 0, input::UP, 0, input::A, 0] {
         con.step(mask).unwrap();
     }
-    assert_eq!(con.music_pattern(), Some(14), "UP past the top wraps around");
+    assert_eq!(con.music_pattern(), Some(15), "UP past the top wraps around");
 
     // ...and B stops.
     con.step(input::B).unwrap();
@@ -3318,7 +3331,7 @@ fn malformed_wavetables_are_line_numbered_cart_errors() {
         "defined: w0",
     );
     wt_err("inst lead wave=w9\n", 1, "wave slot must be 0-7");
-    wt_err("inst lead wave=wx\n", 1, "wave must be 0-5 (builtin) or w0-w7");
+    wt_err("inst lead wave=wx\n", 1, "wave must be 0-6 (builtin) or w0-w7");
     // A slot name is reserved, so `w0` in a sfx row is never ambiguous.
     wt_err("inst w0 wave=1\n", 1, "must not look like a wavetable slot");
 
@@ -3573,12 +3586,487 @@ fn the_soundtest_wavetable_entry_uses_three_dc_free_tables() {
         .filter(|i| i.wave >= WAVE_TABLE_BASE)
         .count();
     assert_eq!(table_voices, 3);
-    // Every other voice is still a builtin, which is why entries 0-14 render
-    // exactly as they did before.
+    // Every other voice is a builtin or the FM oscillator, which is why
+    // entries 0-14 render exactly as they did before.
     assert!(
         cart.instruments()
             .iter()
             .filter(|i| !i.name.starts_with("wt_"))
-            .all(|i| i.wave < WAVE_COUNT)
+            .all(|i| i.wave < WAVE_COUNT || i.wave == WAVE_FM)
     );
+}
+
+// ---------------------------------------------------------------------------
+// PoC v2: the 2-op FM oscillator (wave 6)
+// ---------------------------------------------------------------------------
+
+/// The console's `sine_at`, reimplemented from SPEC so the tests below are a
+/// statement of the *documented* model rather than of whatever the synth
+/// happens to do: a 32-bit phase splits into a 10-bit position into a
+/// 1024-point cycle and a 16-bit fraction, the cycle is [`SINE_QUARTER`]
+/// reflected into four quadrants, and adjacent entries are interpolated
+/// linearly as `a*(1-f) + b*f`.
+fn model_sine(phase: u32) -> f32 {
+    let pos = (phase >> 22) as usize;
+    let f = ((phase >> 6) & 0xffff) as f32 * (1.0 / 65_536.0);
+    let i = pos & 0xff;
+    let (a, b) = match pos >> 8 {
+        0 => (SINE_QUARTER[i], SINE_QUARTER[i + 1]),
+        1 => (SINE_QUARTER[256 - i], SINE_QUARTER[255 - i]),
+        2 => (-SINE_QUARTER[i], -SINE_QUARTER[i + 1]),
+        _ => (-SINE_QUARTER[256 - i], -SINE_QUARTER[255 - i]),
+    };
+    a * (1.0 - f) + b * f
+}
+
+/// A one-row cart holding `note` on a `wave=6` instrument with the given `fm=`
+/// value, at full volume, long enough that the whole test runs inside one row.
+fn fm_cart(fm: &str, note: &str) -> String {
+    format!(
+        "__lua__\nfunction _init() sfx(0, 0) end\n\n\
+         __instruments__\ninst fmv wave=6 fm={fm}\n\n\
+         __sfx__\nsfx 0 speed=200\n{note} fmv 7\n"
+    )
+}
+
+#[test]
+fn fm_instrument_lines_parse_and_round_trip() {
+    let cart = Cart::parse(
+        "__lua__\nx=1\n\n__instruments__\n\
+         inst bass  wave=6 fm=1,9,13\n\
+         inst epian wave=6 fm=3.5,5,7 env=0,40,2\n\
+         inst bell  wave=6 fm=7,11,2 echo=4\n\
+         inst held  wave=6 fm=15,0\n\
+         inst tiny  wave=6 fm=0.5,15,0\n\
+         inst plain wave=2\n",
+    )
+    .unwrap();
+
+    let fm = |n: &str| cart.instrument(n).unwrap().fm.unwrap();
+    assert_eq!(
+        fm("bass"),
+        Fm {
+            ratio_half: 2,
+            index: 9,
+            decay: 13
+        }
+    );
+    // A half-integer ratio is the inharmonic case, and `.5` is how it is spelt.
+    assert_eq!(fm("epian").ratio_half, 7);
+    assert_eq!(fm("epian").ratio(), 3.5);
+    assert_eq!(fm("epian").ratio_text(), "3.5");
+    // `decay` is optional and defaults to "no decay".
+    assert_eq!(fm("held"), Fm { ratio_half: 30, index: 0, decay: 0 });
+    assert_eq!(fm("held").ratio_text(), "15");
+    assert_eq!(fm("tiny").ratio(), 0.5);
+    assert_eq!(fm("tiny").ratio_text(), "0.5");
+    // `wave` really is 6, and the other instrument features still attach.
+    assert!(cart.instruments().iter().all(|i| i.fm.is_none() || i.wave == WAVE_FM));
+    assert_eq!(cart.instrument("epian").unwrap().env.unwrap().decay, 40);
+    assert_eq!(cart.instrument("bell").unwrap().echo, 4);
+    // ...and a non-FM instrument carries no patch at all.
+    assert_eq!(cart.instrument("plain").unwrap().fm, None);
+
+    // Ratios may also be written with an explicit `.0`.
+    let c2 = Cart::parse("__lua__\nx=1\n\n__instruments__\ninst a wave=6 fm=2.0,3\n").unwrap();
+    assert_eq!(c2.instrument("a").unwrap().fm.unwrap().ratio_half, 4);
+}
+
+#[test]
+fn malformed_fm_is_a_line_numbered_cart_error() {
+    fn fm_err(body: &str, line: usize, needle: &str) {
+        expect_cart_error(&format!("__lua__\nx=1\n\n__instruments__\n{body}"), line, needle);
+    }
+
+    // The two halves of the statement are required together.
+    fm_err("inst a wave=6\n", 1, "but no `fm=<ratio>,<index>[,<decay>]`");
+    fm_err("inst a wave=2 fm=1,4\n", 1, "has `fm=` but `wave=2`");
+    fm_err("inst a wave=w0 fm=1,4\n", 1, "has `fm=` but `wave=8`");
+
+    // Shape.
+    fm_err("inst a wave=6 fm=1\n", 1, "fm must be `fm=<ratio>,<index>[,<decay>]`");
+    fm_err("inst a wave=6 fm=1,2,3,4\n", 1, "fm must be");
+
+    // Ratio: 0.5 steps only, inside 0.5..=15.
+    fm_err("inst a wave=6 fm=0,4\n", 1, "fm ratio must be 0.5-15");
+    fm_err("inst a wave=6 fm=15.5,4\n", 1, "fm ratio must be 0.5-15");
+    fm_err("inst a wave=6 fm=16,4\n", 1, "fm ratio must be 0.5-15");
+    fm_err("inst a wave=6 fm=1.25,4\n", 1, "fm ratio must be 0.5-15");
+    fm_err("inst a wave=6 fm=-1,4\n", 1, "fm ratio must be 0.5-15");
+    fm_err("inst a wave=6 fm=x,4\n", 1, "fm ratio must be 0.5-15");
+    fm_err("inst a wave=6 fm=.5,4\n", 1, "fm ratio must be 0.5-15");
+
+    // Index and decay.
+    fm_err("inst a wave=6 fm=1,16\n", 1, "fm index must be 0-15");
+    fm_err("inst a wave=6 fm=1,x\n", 1, "fm index must be a number");
+    fm_err("inst a wave=6 fm=1,4,16\n", 1, "fm decay must be 0-15");
+
+    // Wave 7 is still reserved.
+    fm_err("inst a wave=7 fm=1,4\n", 1, "wave must be 0-6");
+}
+
+#[test]
+fn an_fm_voice_with_index_zero_is_a_pure_sine() {
+    // Index 0 means the modulator contributes exactly nothing, so wave 6
+    // degenerates into the console's only clean sine oscillator. Pinned bit
+    // for bit against the documented table lookup.
+    let mut con = console(&fm_cart("1,0", "C2"));
+    let samples = collect(&mut con, 1);
+
+    let inc = (f64::from(NOTE_FREQ[24]) * 4_294_967_296.0 / 44_100.0 + 0.5) as u32;
+    let mut phase: u32 = 0;
+    for (k, &got) in samples.iter().enumerate() {
+        let amp = ((k + 1) as f32 / 64.0).min(1.0);
+        phase = phase.wrapping_add(inc);
+        let want = (amp * model_sine(phase) * 0.25).clamp(-1.0, 1.0);
+        assert_eq!(
+            got.to_bits(),
+            want.to_bits(),
+            "sample {k}: {got} is not the pure sine {want}"
+        );
+    }
+}
+
+#[test]
+fn a_known_fm_patch_plays_the_exact_expected_samples() {
+    // Two full frames of `fm=3,8` (ratio 3, index 8) on A2, reproduced from
+    // SPEC: one 32-bit phase accumulator per operator, the modulator's
+    // increment `inc * ratio_half / 2` in exact integer arithmetic, a peak
+    // deviation of `index * 2^29` phase units, the 64-sample click guard, then
+    // the 0.25 mix gain. `decay=0`, so the index is constant across both
+    // frames and this is a statement about the oscillator alone.
+    let mut con = console(&fm_cart("3,8", "A2"));
+    let samples = collect(&mut con, 2);
+    assert_eq!(samples.len(), 2 * SAMPLES_PER_FRAME);
+
+    let inc = (f64::from(NOTE_FREQ[33]) * 4_294_967_296.0 / 44_100.0 + 0.5) as u32;
+    let mod_inc = ((u64::from(inc) * 6) >> 1) as u32; // ratio 3 == 6 halves
+    let mut phase: u32 = 0;
+    let mut mod_phase: u32 = 0;
+    for (k, &got) in samples.iter().enumerate() {
+        let amp = ((k + 1) as f32 / 64.0).min(1.0);
+        phase = phase.wrapping_add(inc);
+        mod_phase = mod_phase.wrapping_add(mod_inc);
+        let dev = (model_sine(mod_phase) * 8.0 * 536_870_912.0) as i64 as u32;
+        let want = (amp * model_sine(phase.wrapping_add(dev)) * 0.25).clamp(-1.0, 1.0);
+        assert_eq!(got.to_bits(), want.to_bits(), "sample {k}: {got} vs {want}");
+    }
+    // ...and it is genuinely brighter than the same note with no modulation.
+    let plain = run_audio(&fm_cart("3,0", "A2"), 0, &[0u8; 2]);
+    let crossings = |xs: &[f32]| (1..xs.len()).filter(|&i| (xs[i - 1] < 0.0) != (xs[i] < 0.0)).count();
+    assert!(
+        crossings(&samples) > 3 * crossings(&plain),
+        "index 8 should add sidebands: {} vs {}",
+        crossings(&samples),
+        crossings(&plain)
+    );
+}
+
+/// Largest sample-to-sample difference between a window and the same window
+/// shifted by `lag` samples: a cheap "does the waveform repeat at this period"
+/// probe that needs no FFT.
+fn repeat_error(samples: &[f32], from_frame: usize, lag: usize) -> f32 {
+    let base = from_frame * SAMPLES_PER_FRAME;
+    (0..1200)
+        .map(|i| (samples[base + i] - samples[base + i + lag]).abs())
+        .fold(0.0f32, f32::max)
+}
+
+#[test]
+fn an_integer_ratio_is_periodic_at_the_carrier_period() {
+    // The musical meaning of the ratio, measured rather than asserted: an
+    // integer ratio locks every sideband onto a harmonic of the carrier, so
+    // the waveform repeats once per carrier period and the tone is pitched. A
+    // half-integer ratio puts the sidebands midway between harmonics, so the
+    // waveform only repeats every *two* carrier periods - which is exactly the
+    // inharmonic, bell-like character it is there to buy.
+    //
+    // A2 = 110 Hz exactly, so the carrier period is 400.9 samples; 401 is
+    // within a quarter of a percent and that is what the tolerances allow for.
+    const P: usize = 401;
+    for ratio in ["1", "2", "3", "7"] {
+        let s = run_audio(&fm_cart(&format!("{ratio},6"), "A2"), 0, &[0u8; 40]);
+        assert!(
+            repeat_error(&s, 20, P) < 0.05,
+            "ratio {ratio} is not periodic at the carrier period ({})",
+            repeat_error(&s, 20, P)
+        );
+    }
+    let half = run_audio(&fm_cart("3.5,6", "A2"), 0, &[0u8; 40]);
+    assert!(
+        repeat_error(&half, 20, P) > 0.3,
+        "ratio 3.5 should NOT repeat at one carrier period"
+    );
+    assert!(
+        repeat_error(&half, 20, 2 * P) < 0.05,
+        "ratio 3.5 should repeat at two carrier periods ({})",
+        repeat_error(&half, 20, 2 * P)
+    );
+}
+
+#[test]
+fn index_decay_dims_the_tone_over_the_life_of_a_note() {
+    // The Genesis piano/bass trick: the brightness dies while the note is
+    // still sounding. Sidebands show up as extra zero crossings per frame, so
+    // counting them is enough to see the index fall - no spectrogram needed.
+    let zc = |s: &[f32], f: usize| {
+        let w = &s[f * SAMPLES_PER_FRAME..(f + 1) * SAMPLES_PER_FRAME];
+        (1..w.len()).filter(|&i| (w[i - 1] < 0.0) != (w[i] < 0.0)).count()
+    };
+
+    let decaying = run_audio(&fm_cart("3,13,13", "A2"), 0, &[0u8; 60]);
+    let held = run_audio(&fm_cart("3,13,0", "A2"), 0, &[0u8; 60]);
+
+    // Decay 13 halves the index every 3 frames, so by frame 30 there is
+    // nothing left of it and the voice has collapsed onto its carrier sine.
+    assert!(zc(&decaying, 2) > 20, "the attack should be bright");
+    assert!(
+        zc(&decaying, 30) < zc(&decaying, 2) / 4,
+        "the index did not decay: {} -> {}",
+        zc(&decaying, 2),
+        zc(&decaying, 30)
+    );
+    assert!(zc(&decaying, 30) <= 4, "a spent index should leave a bare sine");
+    // `decay=0` is the control: same patch, brightness held for the whole note.
+    // The envelope steps once per frame *after* the frame is rendered, so the
+    // note's very first frame is bit-identical either way.
+    let head = SAMPLES_PER_FRAME;
+    assert!(
+        decaying[..head]
+            .iter()
+            .zip(&held[..head])
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "the decay must not touch the note's first frame"
+    );
+    assert!(
+        zc(&held, 30) > zc(&decaying, 30) * 3,
+        "decay=0 should hold the index flat"
+    );
+    // The amplitude envelope is untouched by any of it: this patch has no
+    // `env`, so the note is still at full level when its brightness is gone.
+    let rms = |s: &[f32], f: usize| -> f64 {
+        let w = &s[f * SAMPLES_PER_FRAME..(f + 1) * SAMPLES_PER_FRAME];
+        (w.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / w.len() as f64).sqrt()
+    };
+    assert!(
+        rms(&decaying, 30) > 0.5 * rms(&decaying, 2),
+        "index decay must not be a volume envelope"
+    );
+}
+
+#[test]
+fn a_note_on_re_arms_the_index_envelope() {
+    // Every struck note starts bright again - that is what makes a repeated
+    // FM bass line sound played rather than looped.
+    let cart = "__lua__\nfunction _init() sfx(0, 0) end\n\n\
+                __instruments__\ninst fmv wave=6 fm=3,13,13\n\n\
+                __sfx__\nsfx 0 speed=30\nA2 fmv 7\nA2 fmv 7\n";
+    let s = run_audio(cart, 0, &[0u8; 60]);
+    let zc = |f: usize| {
+        let w = &s[f * SAMPLES_PER_FRAME..(f + 1) * SAMPLES_PER_FRAME];
+        (1..w.len()).filter(|&i| (w[i - 1] < 0.0) != (w[i] < 0.0)).count()
+    };
+    // Row 0 starts bright and is dull by frame 25; row 1 starts at frame 30.
+    assert!(zc(2) > 20, "row 0 should start bright");
+    assert!(zc(25) < 6, "row 0 should be dull by the end of the row");
+    assert!(zc(32) > 20, "row 1 did not re-arm the index envelope");
+}
+
+#[test]
+fn an_fm_voice_composes_with_env_vib_sweep_fx_and_echo() {
+    // Same contract as a wavetable: FM is a wave *source*, so everything the
+    // synth already does has to work on it untouched - and vibrato has to bend
+    // *both* operators, or the ratio (and with it the timbre) would drift.
+    let cart = "__lua__\n\
+                function _init() sfx(0, 0) sfx(1, 1) end\n\n\
+                __instruments__\n\
+                echo delay=6 feedback=4 level=6\n\
+                inst plain  wave=6 fm=2,6\n\
+                inst shaped wave=6 fm=2,6 env=6,10,3 vib=40,8,2 echo=6\n\
+                inst diving wave=6 fm=2,6 sweep=-12,20\n\n\
+                __sfx__\n\
+                sfx 0 speed=40\nA4 plain 6\nA4 shaped 6\nA4 diving 6 arp3,7\n\
+                sfx 1 speed=40\n---\n---\n---\n";
+    let mut con = Console::new(cart, 0).unwrap();
+    let samples = collect(&mut con, 120);
+
+    let row = |n: usize| &samples[n * 40 * SAMPLES_PER_FRAME..(n + 1) * 40 * SAMPLES_PER_FRAME];
+    assert!(
+        row(0).iter().zip(row(1)).any(|(a, b)| a.to_bits() != b.to_bits()),
+        "env/vib changed nothing on an FM voice"
+    );
+    let rms = |xs: &[f32]| -> f64 {
+        (xs.iter().map(|&s| f64::from(s) * f64::from(s)).sum::<f64>() / xs.len() as f64).sqrt()
+    };
+    let r1 = row(1);
+    assert!(
+        rms(&r1[..SAMPLES_PER_FRAME]) < rms(&r1[8 * SAMPLES_PER_FRAME..9 * SAMPLES_PER_FRAME]),
+        "the 6-frame attack did not swell"
+    );
+    // Vibrato bends the pitch, and the flat voice does not drift.
+    let flat_a = frame_freq(&samples, 20);
+    let flat_b = frame_freq(&samples, 30);
+    assert!((flat_a - flat_b).abs() < 1.0, "the flat voice drifted: {flat_a} vs {flat_b}");
+    let vib_lo = frame_freq(&samples, 50);
+    let vib_hi = frame_freq(&samples, 54);
+    assert!((vib_lo - vib_hi).abs() > 1.0, "vibrato did not bend the pitch");
+    // Sweep: row 2 dives an octave over 20 frames.
+    let start = frame_freq(&samples, 81);
+    let end = frame_freq(&samples, 99);
+    assert!(end < start * 0.75, "sweep did not dive ({start} -> {end})");
+    // The echo took the `echo=6` send from an FM voice like any other.
+    assert!(!con.echo_is_silent(), "the FM voice never fed the delay line");
+    assert!(samples.iter().all(|s| (-1.0..=1.0).contains(s)));
+}
+
+#[test]
+fn a_pitch_bend_moves_both_operators_together() {
+    // The modulator increment is derived from the carrier's every sample, so
+    // an octave sweep is a *transposition* of the timbre, not a detune: the
+    // waveform at the bottom of the sweep is the same shape at half the rate.
+    // Measured as: the swept voice at A2 repeats at A2's period, and after
+    // sweeping down twelve semitones it repeats at A1's period instead.
+    let cart = "__lua__\nfunction _init() sfx(0, 0) end\n\n\
+                __instruments__\ninst fmv wave=6 fm=3,6 sweep=-12,10\n\n\
+                __sfx__\nsfx 0 speed=200\nA2 fmv 7\n";
+    let s = run_audio(cart, 0, &[0u8; 40]);
+    // A1 = 55 Hz: 44100/55 = 801.8 samples.
+    assert!(
+        repeat_error(&s, 20, 802) < 0.05,
+        "the swept FM voice is not periodic at A1 ({})",
+        repeat_error(&s, 20, 802)
+    );
+    // ...and the ratio held: an integer ratio stays integer, so it also
+    // repeats at every multiple of the (new) carrier period.
+    assert!(repeat_error(&s, 20, 2 * 802) < 0.06);
+}
+
+#[test]
+fn fm_playback_is_reproducible_and_seed_independent() {
+    let cart = fm_cart("3.5,9,6", "C4");
+    let inputs = vec![0u8; 90];
+    let a = run_audio(&cart, 0, &inputs);
+    let b = run_audio(&cart, 0, &inputs);
+    let c = run_audio(&cart, 4_242_424, &inputs);
+    for (i, ((x, y), z)) in a.iter().zip(&b).zip(&c).enumerate() {
+        assert_eq!(x.to_bits(), y.to_bits(), "sample {i} is not reproducible");
+        assert_eq!(x.to_bits(), z.to_bits(), "sample {i} depends on the seed");
+    }
+    assert!(a.iter().any(|&s| s != 0.0));
+}
+
+#[test]
+fn an_fm_voice_reports_wave_6_and_stays_in_range() {
+    let mut con = console(&fm_cart("7,12,3", "C5"));
+    con.step(0).unwrap();
+    assert_eq!(con.audio_channels()[0].wave, WAVE_FM);
+    let samples = collect(&mut con, 60);
+    assert!(samples.iter().all(|s| (-1.0..=1.0).contains(s)));
+    // Six FM voices at full index and full volume still land inside the rails
+    // the mixer promises (the 0.25 gain, then the clamp).
+    let starts: String = (0..CHANNEL_COUNT).map(|ch| format!("sfx(0, {ch}) ")).collect();
+    let stress = format!(
+        "__lua__\nfunction _init() {starts}end\n\n\
+         __instruments__\ninst fmv wave=6 fm=15,15\n\n\
+         __sfx__\nsfx 0 speed=200\nC2 fmv 7\n"
+    );
+    let loud = run_audio(&stress, 0, &[0u8; 30]);
+    assert!(loud.iter().all(|s| (-1.0..=1.0).contains(s)));
+}
+
+#[test]
+fn carts_without_fm_are_untouched() {
+    // The bit-identity guarantee is *measured* by the five golden hashes, none
+    // of which moved when FM landed. What is asserted here is the reason they
+    // could not: no pre-FM cart can produce wave id 6, because the only way to
+    // reach it is an `inst ... wave=6 fm=...` line that did not parse before.
+    let demo = Cart::parse(DEMO).unwrap();
+    for id in demo.audio().sfx_ids() {
+        for row in &demo.sfx(id).unwrap().rows {
+            if let SfxRow::Note { wave, .. } = row {
+                assert_ne!(*wave, WAVE_FM, "a pre-FM row cannot be wave 6");
+            }
+        }
+    }
+    // In the soundtest cart only the three `fm_` voices reach wave 6, so every
+    // entry before the FM one renders exactly as it did.
+    let st = Cart::parse(SOUNDTEST).unwrap();
+    let fm_voices: Vec<&str> = st
+        .instruments()
+        .iter()
+        .filter(|i| i.wave == WAVE_FM)
+        .map(|i| i.name.as_str())
+        .collect();
+    assert_eq!(fm_voices, vec!["fm_bass", "fm_epian", "fm_bell"]);
+    assert!(st.instruments().iter().all(|i| i.fm.is_some() == (i.wave == WAVE_FM)));
+    // A cart with no `fm=` line has no FM instrument at all.
+    assert!(Cart::parse(DEMO).unwrap().instruments().iter().all(|i| i.fm.is_none()));
+}
+
+/// Golden hash of the soundtest cart's "FM  2-OP" entry (menu index 16,
+/// pattern 15): FNV-1a over the little-endian bits of the samples rendered
+/// while navigating there and then playing 150 frames, seed 0.
+///
+/// 150 frames is a bar and a bit: the fast-decaying bass under the electric
+/// piano, with the first bell still ringing over both. It pins the sine table,
+/// the linear interpolation between its entries, the `index * 2^29` deviation
+/// scale, the halves ratio arithmetic and the per-frame index-decay ladder all
+/// at once - change any one of them and this moves.
+const SOUNDTEST_FM_GOLDEN: u64 = 0xff45_3c58_9449_e0ae;
+
+#[test]
+fn soundtest_fm_matches_the_golden_hash() {
+    let hash = hash_samples(&run_audio(SOUNDTEST, 0, &soundtest_script(SOUNDTEST_FM, 150)));
+    assert_eq!(
+        hash, SOUNDTEST_FM_GOLDEN,
+        "soundtest FM audio changed; new hash is {hash:#018x}"
+    );
+}
+
+#[test]
+fn the_soundtest_fm_entry_auditions_three_classic_patches() {
+    let cart = Cart::parse(SOUNDTEST).unwrap();
+    // Bass: ratio 1 (the fattest FM there is), a big index and the fastest
+    // half of the decay ladder - bright for a fifth of a second, then a sine.
+    let bass = cart.instrument("fm_bass").unwrap().fm.unwrap();
+    assert_eq!(bass, Fm { ratio_half: 2, index: 10, decay: 13 });
+    // Electric piano: a HALF-integer ratio, which is the whole point of
+    // allowing halves - the sidebands land between the harmonics.
+    let ep = cart.instrument("fm_epian").unwrap().fm.unwrap();
+    assert_eq!(ep.ratio(), 3.5);
+    assert_ne!(ep.ratio_half % 2, 0, "the e-piano needs an inharmonic ratio");
+    // Bell: a wide ratio, a big index and a slow decay, so it rings.
+    let bell = cart.instrument("fm_bell").unwrap().fm.unwrap();
+    assert_eq!((bell.ratio(), bell.index), (7.0, 11));
+    assert!(bell.decay < ep.decay && ep.decay < bass.decay, "slow bell, fast bass");
+    assert!(u32::from(FM_DECAY_HALF_LIFE[usize::from(bell.decay)]) > 60);
+    // All three carry an ordinary amplitude envelope too: index decay and `env`
+    // are separate gestures.
+    for name in ["fm_bass", "fm_epian", "fm_bell"] {
+        assert!(cart.instrument(name).unwrap().env.is_some(), "{name} has no env");
+    }
+}
+
+#[test]
+fn the_soundtest_fm_entry_never_falls_silent_between_notes() {
+    // The bell channel's rows are eight times as long as the other two
+    // channels' (speed=64 against speed=auto=8) precisely so that one strike
+    // rings through its whole chord. A rest on this console is silence, not a
+    // release, so if someone "tidies" that channel into 32 rows with rests the
+    // arrangement drops into a hole twice a bar - and this window stops being
+    // continuous.
+    let s = soundtest_played(SOUNDTEST_FM, 140);
+    let rms = |f: usize| -> f64 {
+        let x = &s[f * SAMPLES_PER_FRAME..(f + 1) * SAMPLES_PER_FRAME];
+        (x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / x.len() as f64).sqrt()
+    };
+    for f in 2..136 {
+        assert!(rms(f) > 0.01, "frame {f} of the FM entry went silent");
+    }
+    // Loud, and comfortably inside the rails: three FM voices at index 6-11
+    // are dense, so this is worth pinning.
+    let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    assert!(peak > 0.2, "the FM entry is too quiet to judge (peak {peak})");
+    assert!(peak < 1.0, "the FM entry reached the clamp (peak {peak})");
+    assert!(s.iter().all(|v| (-1.0..=1.0).contains(v)));
 }

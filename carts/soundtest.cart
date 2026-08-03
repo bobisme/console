@@ -44,6 +44,8 @@ local entries = {
     d1 = "FOUR NOTES IN 32 ROWS. ECHO",   d2 = "(24,5,6) FILLS EVERY GAP." },
   { n = "WAVETABLE W0-W2", p = 14,
     d1 = "HOLLOW + BUZZ LEAD OVER AN",    d2 = "ORGAN PAD. 32 NIBBLES EACH." },
+  { n = "FM  2-OP", p = 15,
+    d1 = "BASS 1,10,13 / EPIANO 3.5,6,7", d2 = "/ BELL 7,11,2. INDEX DECAY!" },
 }
 
 -- The A/B entry plays the groove and flips the master bus underneath it.
@@ -131,7 +133,8 @@ end
 
 -- A level meter driven by nothing fancier than the entry index: one bar per
 -- entry, the first `sel` of them lit, the lit tip blinking while something is
--- playing. 16 bars at an 8px pitch keep the last one inside the 144px screen.
+-- playing. 17 bars at an 8px pitch keep the last one inside the 144px screen
+-- (bar 17 ends at x=140), and the tallest is 18px, so the block is 18 deep.
 local function meter(y)
   for i = 1, #entries do
     local x = 6 + (i - 1) * 8
@@ -155,9 +158,11 @@ function _draw()
   print("A PLAY  B STOP", 4, 10, 13)
 
   -- menu
-  -- 16 entries at 8px a row run from y=20 to y=140 (the highlight band ends at
-  -- 146), which is why the meter starts at 148 rather than 144.
-  local top = 20
+  -- 17 entries at 8px a row run from y=18 to y=146 (the highlight band ends at
+  -- 152), which is why the meter starts at 155 rather than 148. Entries are
+  -- APPEND-ONLY: the audio goldens navigate here by counting DOWN presses, so
+  -- inserting one in the middle would move every entry after it.
+  local top = 18
   for i = 1, #entries do
     local y = top + (i - 1) * 8
     local c = 13
@@ -174,14 +179,14 @@ function _draw()
   end
 
   -- meter
-  meter(148)
+  meter(155)
 
   -- description of the highlighted entry
   local e = entries[sel]
-  rectfill(2, 176, 141, 205, 15)
-  print(e.n, 5, 179, 10)
-  print(e.d1, 5, 188, 12)
-  print(e.d2, 5, 195, 12)
+  rectfill(2, 181, 141, 210, 15)
+  print(e.n, 5, 184, 10)
+  print(e.d1, 5, 193, 12)
+  print(e.d2, 5, 200, 12)
 
   -- status
   if playing ~= 0 then
@@ -197,16 +202,16 @@ function _draw()
   -- A/B banner: the label has to flip on the same frame the bus does, so it
   -- reads straight off `driven` rather than recomputing the clock.
   if playing == AB then
-    rectfill(2, 168, 141, 174, 15)
+    rectfill(2, 173, 141, 179, 15)
     if driven then
-      print("DRIVEN  MASTER(4,2)", 5, 168, 8)
+      print("DRIVEN  MASTER(4,2)", 5, 173, 8)
     else
-      print("DRY     MASTER(0)", 5, 168, 11)
+      print("DRY     MASTER(0)", 5, 173, 11)
     end
   elseif playing == ECHO then
-    rectfill(2, 168, 141, 174, 15)
+    rectfill(2, 173, 141, 179, 15)
     print("ECHO(" .. ECHO_DELAY .. "," .. ECHO_FEEDBACK .. "," .. ECHO_LEVEL
-          .. ")  SEND 7/8", 5, 168, 11)
+          .. ")  SEND 7/8", 5, 173, 11)
   end
 end
 
@@ -279,6 +284,27 @@ wavetable 2 78899aab bccddeef 01122334 45566778
 inst wt_hollow wave=w0 env=0,10,4
 inst wt_organ  wave=w1
 inst wt_buzz   wave=w2 env=0,9,3 vib=22,10,3
+
+# ---- 2-op FM: wave 6 plus fm=<ratio>,<index>[,<decay>] --------------------
+# One modulator on one carrier, both sine. The ratio picks the harmonic family,
+# the index picks how far up it the energy reaches, and the *index decay* is
+# what makes the three patches below sound struck rather than blown: the tone
+# starts bright and dulls while the note is still sounding, which is a separate
+# gesture from `env` (that one is only about level).
+#
+# fm_bass  1,10,13  ratio 1 is the fattest FM there is - the modulator doubles
+#                   the fundamental instead of adding a new pitch - and decay
+#                   13 (index halves every 3 frames) leaves nothing but a fat
+#                   sine after a fifth of a second. The Genesis bass.
+# fm_epian 3.5,6,7  a HALF-integer ratio, so the sidebands land between the
+#                   harmonics: slightly inharmonic, tine-like, and the medium
+#                   decay is the felt hammer letting go. The DX7 in one line.
+# fm_bell  7,11,2   a wide ratio and a big index put energy up around the 7th
+#                   partial, and decay 2 (a 90-frame half-life) keeps it
+#                   ringing for the whole note. Struck metal.
+inst fm_bass  wave=6 fm=1,10,13   env=0,10,4
+inst fm_epian wave=6 fm=3.5,6,7   env=0,24,2
+inst fm_bell  wave=6 fm=7,11,2    env=0,56,1
 
 __sfx__
 # ---- 0-5: the same 16-row phrase on each of the six waveforms -------------
@@ -779,6 +805,92 @@ E3 wt_organ 4
 E3 wt_organ 4
 E3 wt_organ 4
 
+# ---- 23-25: the 2-op FM audition -----------------------------------------
+# Am - F - C - G, eight rows a chord, one FM patch per channel: bass on ch0,
+# electric piano on ch1, and a bell on ch2 whose rows are eight times as long
+# (speed=64, four rows to the other two channels' thirty-two) so that one
+# strike rings right through its chord. That bell is also what keeps the
+# arrangement off the floor between the eighth-note bass and the comping piano.
+# Every FM voice here also carries an ordinary `env`, and ch1 uses the fx
+# column - FM is a wave source, so all of that composes exactly as usual.
+sfx 23 speed=auto
+A2 fm_bass 6
+---
+A2 fm_bass 4
+---
+A2 fm_bass 6
+---
+E3 fm_bass 4
+---
+F2 fm_bass 6
+---
+F2 fm_bass 4
+---
+F2 fm_bass 6
+---
+C3 fm_bass 4
+---
+C3 fm_bass 6
+---
+C3 fm_bass 4
+---
+C3 fm_bass 6
+---
+G3 fm_bass 4
+---
+G2 fm_bass 6
+---
+G2 fm_bass 4
+---
+G2 fm_bass 6
+---
+D3 fm_bass 4
+---
+
+sfx 24 speed=auto
+A4 fm_epian 6
+C5 fm_epian 5
+E5 fm_epian 6
+---
+C5 fm_epian 5
+A4 fm_epian 5
+B4 fm_epian 5
+---
+A4 fm_epian 6
+C5 fm_epian 5
+F5 fm_epian 6
+---
+C5 fm_epian 5
+A4 fm_epian 5
+G4 fm_epian 5
+---
+G4 fm_epian 6
+C5 fm_epian 5
+E5 fm_epian 6
+---
+G5 fm_epian 5 sl-2
+E5 fm_epian 5
+C5 fm_epian 5
+---
+G4 fm_epian 6
+B4 fm_epian 5
+D5 fm_epian 6
+---
+B4 fm_epian 5 arp3,7
+G4 fm_epian 5
+D5 fm_epian 5
+---
+
+sfx 25 speed=64
+# One strike a chord, and the ROW is what holds it: 4 rows x 64 frames is the
+# same 256-frame bar as 32 rows x 8, but a rest would cut the bell off dead
+# (rests are silence on this console, not release), so the ring has to be the
+# row's own length shaped by `env`.
+E6 fm_bell 5
+C6 fm_bell 4
+G6 fm_bell 5
+D6 fm_bell 4
+
 __music__
 bpm=112 rows_per_beat=4
 pat 0  loop=0  : 0 - - -
@@ -796,3 +908,4 @@ pat 11 loop=11 : 14 15 - -
 pat 12 loop=12 : 16 17 18 19
 pat 13 loop=13 : 20 - - -
 pat 14 loop=14 : 21 22 - -
+pat 15 loop=15 : 23 24 25 -

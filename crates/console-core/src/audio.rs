@@ -34,6 +34,16 @@
 //! and mixer feature applies to it unchanged — and a cart that declares none
 //! cannot produce a waveform id above 5, so its samples are untouched.
 //!
+//! Beside *that* sits the 2-op FM oscillator ([`WAVE_FM`], `wave=6` plus
+//! `fm=<ratio>,<index>[,<decay>]` on an instrument): one modulator phase-
+//! modulating one carrier, both reading a `const` quarter-wave sine table
+//! ([`SINE_QUARTER`]) with linear interpolation. No `sin` at runtime — the
+//! table is generated at authoring time and pasted in like [`NOTE_FREQ`] — and
+//! both operators run on `u32` phase accumulators, so the whole thing is as
+//! bit-exact as a square wave. The modulator increment is derived from the
+//! carrier's every sample, which is what makes vibrato, sweeps and slides bend
+//! the pair together instead of detuning it.
+//!
 //! Beside it sits the optional [`Echo`] bus (`echo` line in `__instruments__`,
 //! the per-instrument `echo=<0-8>` send, or the Lua `echo()` setter): one mono
 //! delay line, fed post-duck from the voices that ask for it, with feedback and
@@ -102,6 +112,16 @@ pub const MAX_VIB_RATE: u8 = 16;
 /// Waveform id of the LFSR noise generator.
 const WAVE_NOISE: u8 = 5;
 
+/// Waveform id of the **2-op FM oscillator** (`wave=6`): one modulator phase-
+/// modulating one carrier, both reading [`SINE_QUARTER`].
+///
+/// It sits outside [`WAVE_COUNT`] on purpose. 0..=5 are *self-contained*
+/// waveforms — a bare digit in a sfx row says everything there is to say about
+/// them — whereas FM is meaningless without a ratio and an index, so it is
+/// reachable only through an instrument that carries an [`Fm`]. Id 7 stays
+/// reserved (periodic noise is the obvious next tenant).
+pub const WAVE_FM: u8 = 6;
+
 /// Samples in one wavetable: 32 nibbles describing one single cycle.
 ///
 /// 32 is the classic wavetable-chip size (Game Boy wave RAM, Konami VRC6/N163)
@@ -115,10 +135,11 @@ pub const WAVETABLE_SLOTS: usize = 8;
 /// First internal waveform id that addresses a wavetable: the cart syntax
 /// `w<slot>` parses to `WAVE_TABLE_BASE + slot`, so slots occupy ids 8..=15.
 ///
-/// The builtin waves are 0..=5 and **6/7 are deliberately left free** for the
-/// oscillators still to come (2-op FM, periodic noise). Nothing an existing
-/// cart can write produces a `wave` byte above 5, which is why adding this
-/// cannot move a single sample of a cart with no `wavetable` line.
+/// The builtin waves are 0..=5, id 6 is the 2-op FM oscillator ([`WAVE_FM`])
+/// and **id 7 is deliberately left free** for the oscillator still to come
+/// (periodic noise). Nothing a pre-wavetable cart can write produces a `wave`
+/// byte above 5, which is why adding this cannot move a single sample of a cart
+/// with no `wavetable` line.
 pub const WAVE_TABLE_BASE: u8 = 8;
 
 /// Right shift that turns a phase accumulator into a wavetable index:
@@ -307,6 +328,197 @@ fn div_round(n: i32, d: i32) -> i32 {
     } else {
         -((-2 * n + d) / (2 * d))
     }
+}
+
+// ---------------------------------------------------------------------------
+// 2-op FM: the sine table, the index ladder and the index-decay envelope
+// ---------------------------------------------------------------------------
+
+/// One quarter of a sine cycle, 257 samples: `SINE_QUARTER[k] = sin(2*pi*k/1024)`
+/// for `k` in `0..=256`, so index 0 is exactly `0.0` and index 256 exactly
+/// `1.0`.
+///
+/// Generated once and pasted in (never computed at runtime — SPEC's
+/// no-transcendentals rule) with:
+///
+/// ```text
+/// python3 -c "
+/// import math, struct
+/// f32 = lambda x: struct.unpack('<f', struct.pack('<f', x))[0]
+/// for k in range(257):
+///     print(f32(math.sin(2.0 * math.pi * k / 1024.0)))"
+/// ```
+///
+/// Each literal is the shortest decimal that round-trips to the same `f32`,
+/// exactly as [`NOTE_FREQ`] is written.
+///
+/// *Why a quarter and not a full cycle*: the other three quadrants are exact
+/// reflections of this one, and deriving them by negation and mirroring makes
+/// the symmetries **bit-exact by construction** rather than merely true to
+/// eight digits. [`sine_at`] therefore has exact zero crossings at phase 0 and
+/// 2^31, exact peaks of ±1.0 at 2^30 and 3·2^30, and satisfies
+/// `sine_at(-p) == -sine_at(p)` and `sine_at(p + 2^31) == -sine_at(p)` for
+/// every `p` — properties `the_sine_table_is_*` in the unit tests pin. It is
+/// also a quarter of the memory: 1 KiB rather than 4.
+///
+/// *Why 1024 points*: with the linear interpolation [`sine_at`] does, the
+/// worst-case error of a 1024-point table is `(pi/1024)^2 / 8` ≈ 1.2e-6, i.e.
+/// about −118 dBFS — two bits below the noise floor of the 16-bit WAV the
+/// harness writes, and far smaller than the 1/15 quantisation a wavetable
+/// voice lives with. Doubling it would buy nothing audible.
+#[allow(clippy::excessive_precision)]
+pub const SINE_QUARTER: [f32; 257] = [
+    0.0, 0.0061358847, 0.012271538, 0.01840673, 0.024541229, 0.030674804, 0.036807224, 0.04293826,
+    0.049067676, 0.055195246, 0.061320737, 0.06744392, 0.07356457, 0.07968244, 0.08579731, 0.091908954,
+    0.09801714, 0.10412163, 0.110222206, 0.11631863, 0.12241068, 0.1284981, 0.1345807, 0.14065824,
+    0.14673047, 0.15279719, 0.15885815, 0.16491312, 0.17096189, 0.17700422, 0.18303989, 0.18906866,
+    0.19509032, 0.20110464, 0.20711137, 0.21311031, 0.21910124, 0.22508392, 0.2310581, 0.2370236,
+    0.24298018, 0.24892761, 0.25486565, 0.2607941, 0.26671275, 0.27262136, 0.2785197, 0.28440753,
+    0.29028466, 0.2961509, 0.30200595, 0.30784965, 0.31368175, 0.31950203, 0.3253103, 0.3311063,
+    0.33688986, 0.34266073, 0.34841868, 0.35416353, 0.35989505, 0.36561298, 0.3713172, 0.37700742,
+    0.38268343, 0.38834503, 0.39399204, 0.3996242, 0.4052413, 0.41084316, 0.41642955, 0.42200026,
+    0.42755508, 0.43309382, 0.43861625, 0.44412214, 0.44961134, 0.45508358, 0.46053872, 0.4659765,
+    0.47139674, 0.47679922, 0.48218378, 0.48755017, 0.4928982, 0.49822766, 0.50353837, 0.50883013,
+    0.51410276, 0.519356, 0.52458966, 0.52980363, 0.53499764, 0.54017144, 0.545325, 0.55045795,
+    0.55557024, 0.56066155, 0.5657318, 0.57078075, 0.57580817, 0.58081394, 0.58579785, 0.5907597,
+    0.5956993, 0.60061646, 0.60551107, 0.6103828, 0.6152316, 0.6200572, 0.6248595, 0.62963825,
+    0.6343933, 0.63912445, 0.64383155, 0.6485144, 0.65317285, 0.6578067, 0.6624158, 0.66699994,
+    0.671559, 0.6760927, 0.680601, 0.6850837, 0.68954057, 0.69397146, 0.69837624, 0.70275474,
+    0.70710677, 0.7114322, 0.71573085, 0.72000253, 0.7242471, 0.72846437, 0.7326543, 0.7368166,
+    0.7409511, 0.74505776, 0.7491364, 0.7531868, 0.7572088, 0.7612024, 0.76516724, 0.76910335,
+    0.77301043, 0.7768885, 0.7807372, 0.78455657, 0.7883464, 0.79210657, 0.7958369, 0.79953724,
+    0.8032075, 0.8068476, 0.81045717, 0.8140363, 0.8175848, 0.8211025, 0.8245893, 0.82804507,
+    0.8314696, 0.8348629, 0.8382247, 0.841555, 0.8448536, 0.84812033, 0.8513552, 0.854558,
+    0.8577286, 0.86086696, 0.86397284, 0.86704624, 0.87008697, 0.873095, 0.8760701, 0.8790122,
+    0.8819213, 0.8847971, 0.88763964, 0.89044875, 0.8932243, 0.89596623, 0.8986745, 0.9013488,
+    0.9039893, 0.9065957, 0.909168, 0.91170603, 0.9142098, 0.9166791, 0.9191139, 0.92151403,
+    0.9238795, 0.9262102, 0.9285061, 0.93076694, 0.9329928, 0.9351835, 0.937339, 0.9394592,
+    0.94154406, 0.94359344, 0.9456073, 0.9475856, 0.94952816, 0.951435, 0.953306, 0.9551412,
+    0.95694035, 0.95870346, 0.9604305, 0.9621214, 0.96377605, 0.96539444, 0.96697646, 0.9685221,
+    0.97003126, 0.9715039, 0.97293997, 0.97433937, 0.9757021, 0.97702813, 0.9783174, 0.9795698,
+    0.98078525, 0.9819639, 0.9831055, 0.9842101, 0.98527765, 0.9863081, 0.9873014, 0.9882576,
+    0.9891765, 0.9900582, 0.99090266, 0.99170977, 0.99247956, 0.9932119, 0.993907, 0.9945646,
+    0.9951847, 0.9957674, 0.9963126, 0.9968203, 0.99729043, 0.99772304, 0.9981181, 0.99847555,
+    0.99879545, 0.99907774, 0.99932235, 0.9995294, 0.9996988, 0.9998306, 0.9999247, 0.99998116,
+    1.0,
+];
+
+/// Peak phase deviation, in 32-bit phase units, contributed by **one unit of
+/// modulation index**: `2^29`, i.e. an eighth of a cycle.
+///
+/// So `index` 0..=15 buys a peak deviation of `index/8` cycles, which is a
+/// modulation index of `beta = 2*pi*index/8 = 0.785*index` radians in the
+/// textbook `sin(wc*t + beta*sin(wm*t))` sense. The ladder in musical terms:
+///
+/// | index | beta | character |
+/// |-------|------|-----------|
+/// | 0     | 0    | a pure sine — the console's only clean one |
+/// | 1-3   | 0.8-2.4 | one or two sidebands; warm, hollow, rhodes-ish |
+/// | 4-6   | 3.1-4.7 | the Genesis bass/brass region |
+/// | 7-10  | 5.5-7.9 | bright, glassy, obviously FM |
+/// | 11-15 | 8.6-11.8 | clangorous; bells and metal |
+///
+/// `2^29` is an exact power of two, so the whole scale is exact in `f32`.
+const FM_INDEX_PHASE: f32 = 536_870_912.0;
+
+/// Index-decay half-life in **frames** per `decay` setting, `0` meaning "no
+/// decay at all" (the index is held for the life of the note).
+///
+/// Roughly geometric from two seconds down to a single frame, so the ladder
+/// spans "a pad that slowly loses its edge" to "a plucked transient that is
+/// gone before the amplitude envelope has finished its attack".
+pub const FM_DECAY_HALF_LIFE: [u8; 16] = [
+    0, 120, 90, 64, 48, 36, 27, 20, 15, 11, 8, 6, 4, 3, 2, 1,
+];
+
+/// Per-frame index multiplier: `FM_DECAY_MUL[d] = 0.5^(1 / FM_DECAY_HALF_LIFE[d])`,
+/// and exactly `1.0` at `d == 0`.
+///
+/// Generated once and pasted in (no `powf` at runtime) with:
+///
+/// ```text
+/// python3 -c "
+/// import struct
+/// f32 = lambda x: struct.unpack('<f', struct.pack('<f', x))[0]
+/// for h in [120, 90, 64, 48, 36, 27, 20, 15, 11, 8, 6, 4, 3, 2, 1]:
+///     print(f32(0.5 ** (1.0 / h)))"
+/// ```
+///
+/// The envelope is applied once per **frame** (in [`Channel::tick_fm`]), never
+/// per sample: it is a musical gesture at the same 60 Hz grid `env`, `vib` and
+/// `sweep` already live on, and one multiply per frame per voice cannot drift.
+#[allow(clippy::excessive_precision)]
+const FM_DECAY_MUL: [f32; 16] = [
+    1.0, 0.9942404, 0.9923279, 0.989228,
+    0.9856632, 0.9809301, 0.9746546, 0.9659363,
+    0.9548416, 0.9389309, 0.91700405, 0.8908987,
+    0.8408964, 0.7937005, 0.70710677, 0.5,
+];
+
+/// Index below which the decay envelope snaps to exactly zero.
+///
+/// A geometric decay never reaches 0, and an index of 1/1024 is a peak phase
+/// deviation of 1/8192 of a cycle — utterly inaudible, but enough to keep the
+/// carrier from being the *exact* sine that `index=0` promises. Snapping is a
+/// plain comparison, so it stays deterministic; the same reasoning as
+/// [`DENORM_FLOOR`], for musical rather than numerical reasons.
+const FM_INDEX_FLOOR: f32 = 1.0 / 1024.0;
+
+/// Sine of a 32-bit phase (one turn = 2^32), by table lookup with linear
+/// interpolation.
+///
+/// The phase splits into a 10-bit table position and a 16-bit fraction; the low
+/// 6 bits are discarded. Position 0..=1023 is mapped onto [`SINE_QUARTER`] by
+/// quadrant:
+///
+/// ```text
+/// q0 (0..255)     sin(x)          =  Q[i]      -> Q[i+1]
+/// q1 (256..511)   sin(pi/2 + x)   =  Q[256-i]  -> Q[255-i]
+/// q2 (512..767)   sin(pi + x)     = -Q[i]      -> -Q[i+1]
+/// q3 (768..1023)  sin(3pi/2 + x)  = -Q[256-i]  -> -Q[255-i]
+/// ```
+///
+/// Everything is `*`, `+`, `-` and an array index on `const` values, so it is
+/// bit-identical on every target — and because the interpolation is written as
+/// `a*(1-f) + b*f` with the *same* operand order in every quadrant, negating
+/// the phase negates the result to the last bit (IEEE multiplication and
+/// addition are exact under sign flips and commutative).
+fn sine_at(phase: u32) -> f32 {
+    let pos = (phase >> 22) as usize; // 0..=1023
+    // Bits 6..22 of the phase: 16 fractional bits between adjacent entries.
+    // The integer is at most 65535, so the cast is exact, and 2^-16 is an exact
+    // power of two.
+    let f = ((phase >> 6) & 0xffff) as f32 * (1.0 / 65_536.0);
+    let i = pos & 0xff;
+    let (a, b) = match pos >> 8 {
+        0 => (SINE_QUARTER[i], SINE_QUARTER[i + 1]),
+        1 => (SINE_QUARTER[256 - i], SINE_QUARTER[255 - i]),
+        2 => (-SINE_QUARTER[i], -SINE_QUARTER[i + 1]),
+        _ => (-SINE_QUARTER[256 - i], -SINE_QUARTER[255 - i]),
+    };
+    a * (1.0 - f) + b * f
+}
+
+/// The modulator's phase increment: the carrier's, scaled by the ratio.
+///
+/// `ratio_half` counts **halves** (see [`Fm::ratio_half`]), so this is
+/// `inc * ratio_half / 2` in exact 64-bit integer arithmetic, truncated back
+/// into the 32-bit accumulator. The truncation is modular, which is the right
+/// answer: a modulator asked to run past the sample rate aliases down, exactly
+/// as any digital phase accumulator does, and stays deterministic doing it.
+fn fm_mod_increment(inc: u32, ratio_half: u8) -> u32 {
+    ((u64::from(inc) * u64::from(ratio_half)) >> 1) as u32
+}
+
+/// The carrier's phase offset this sample: `index * sin(mod_phase)`, in phase
+/// units.
+///
+/// `index` is the *live* index (the note's starting index after however much of
+/// the decay envelope has run), so the peak magnitude is at most
+/// `15 * 2^29 < 2^63` and the `f32 -> i64` cast cannot saturate. The
+/// `i64 -> u32` truncation is the modular wrap the phase accumulator wants.
+fn fm_deviation(mod_phase: u32, index: f32) -> u32 {
+    (sine_at(mod_phase) * index * FM_INDEX_PHASE) as i64 as u32
 }
 
 // ---------------------------------------------------------------------------
@@ -652,6 +864,20 @@ pub const MAX_ECHO_LEVEL: u8 = 8;
 /// Highest per-instrument `echo=` send setting.
 pub const MAX_ECHO_SEND: u8 = 8;
 
+/// Lowest `fm=` ratio, in halves: `0.5`.
+pub const MIN_FM_RATIO_HALF: u8 = 1;
+
+/// Highest `fm=` ratio, in halves: `15.0`. The YM2612's MUL field stops at 15
+/// too, and above it the modulator is well past anything a note can support
+/// without aliasing into a different tone entirely.
+pub const MAX_FM_RATIO_HALF: u8 = 30;
+
+/// Highest `fm=` modulation index.
+pub const MAX_FM_INDEX: u8 = 15;
+
+/// Highest `fm=` index-decay setting.
+pub const MAX_FM_DECAY: u8 = 15;
+
 /// Samples in the delay line: [`MAX_ECHO_DELAY`] frames, i.e. one second.
 ///
 /// The buffer is a fixed-size, zero-initialised array allocated once by
@@ -906,6 +1132,72 @@ pub struct Duck {
     pub release: u8,
 }
 
+/// `fm=<ratio>,<index>[,<decay>]`: the parameters of the 2-op FM oscillator
+/// ([`WAVE_FM`]). Required on a `wave=6` instrument, rejected on any other.
+///
+/// The model is the classic pair — one **modulator** phase-modulating one
+/// **carrier**, both sine:
+///
+/// ```text
+/// out(t) = sin(2*pi*fc*t + beta * sin(2*pi*ratio*fc*t))
+/// ```
+///
+/// with `fc` the row's note (so the carrier is always at pitch), the modulator
+/// locked to it by `ratio`, and `beta` the modulation index. One pair is a
+/// small fraction of a YM2612's four operators and still covers most of what
+/// people remember about that chip: the ratio picks the *harmonic family*
+/// (integer = harmonic and pitched, half-integer = inharmonic and bell-like)
+/// and the index picks how far up the series the energy reaches.
+///
+/// At runtime there is no `sin`: both operators read [`SINE_QUARTER`] through
+/// [`sine_at`], and the modulator's output is added to the carrier's phase
+/// accumulator as an integer (see [`fm_deviation`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fm {
+    /// Modulator:carrier frequency ratio, counted in **halves**: 1..=30, i.e.
+    /// 0.5 .. 15.0 in steps of 0.5.
+    ///
+    /// Halves rather than a free rational for two reasons. The real chips work
+    /// this way — the YM2612's MUL field is 0.5 then the integers 1..15, and
+    /// the DX7's coarse ratio is the integers plus a 0.5 — so the ladder is the
+    /// idiom musicians already have in their fingers. And a half-integer ratio
+    /// is exactly the inharmonic case worth having: ratio 3.5 places sidebands
+    /// midway between harmonics, which is what makes a bell a bell. The
+    /// arithmetic stays exact (`inc * ratio_half / 2` in `u64`), so there is no
+    /// rounding to specify.
+    pub ratio_half: u8,
+    /// Modulation depth at note-on, 0..=[`MAX_FM_INDEX`]. See
+    /// [`FM_INDEX_PHASE`] for what each step is worth. `0` is a pure sine.
+    pub index: u8,
+    /// Index-decay rate, 0..=[`MAX_FM_DECAY`]. `0` holds the index flat; higher
+    /// settings halve it faster (see [`FM_DECAY_HALF_LIFE`]).
+    ///
+    /// This is the whole reason FM sounds alive rather than like an organ: a
+    /// real plucked or struck tone is bright at the attack and dull by the
+    /// time it decays, and on an FM voice that is the *index* falling, not the
+    /// volume. It is a separate envelope from `env` on purpose — a Genesis
+    /// electric piano holds its level while its brightness dies, and a bell
+    /// does the opposite.
+    pub decay: u8,
+}
+
+impl Fm {
+    /// The modulator ratio as a number, e.g. `3.5`. Exact: `ratio_half / 2`.
+    pub fn ratio(&self) -> f32 {
+        f32::from(self.ratio_half) * 0.5
+    }
+
+    /// The ratio spelled the way a cart line spells it (`"1"`, `"3.5"`), so
+    /// tooling can print an instrument back.
+    pub fn ratio_text(&self) -> String {
+        if self.ratio_half % 2 == 0 {
+            format!("{}", self.ratio_half / 2)
+        } else {
+            format!("{}.5", self.ratio_half / 2)
+        }
+    }
+}
+
 /// One `wavetable <slot 0-7> <32 hex nibbles>` entry: a custom single-cycle
 /// waveform, 32 samples of 4 bits each.
 ///
@@ -963,7 +1255,7 @@ impl WaveSet {
     }
 }
 
-/// One `inst <name> wave=<0-5|w0-w7> [env=...] [vib=...] [sweep=...]
+/// One `inst <name> wave=<0-6|w0-w7> [fm=...] [env=...] [vib=...] [sweep=...]
 /// [duck=...] [echo=<0-8>]` entry.
 ///
 /// A bare wave digit on a sfx row means the *implicit flat instrument*: that
@@ -974,9 +1266,14 @@ pub struct Instrument {
     /// `[a-z0-9_]+`, unique, never all-digits (those name the bare waveforms)
     /// and never `w<digits>` (that spelling names a wavetable slot).
     pub name: String,
-    /// Waveform: a builtin 0..=5, or [`WAVE_TABLE_BASE`]` + slot` (8..=15) when
-    /// the instrument said `wave=w<slot>`.
+    /// Waveform: a builtin 0..=5, [`WAVE_FM`] (6) for the 2-op FM oscillator,
+    /// or [`WAVE_TABLE_BASE`]` + slot` (8..=15) when the instrument said
+    /// `wave=w<slot>`.
     pub wave: u8,
+    /// `fm=<ratio>,<index>[,<decay>]`. `Some` exactly when `wave == WAVE_FM`:
+    /// the parser rejects an FM instrument without parameters and parameters
+    /// on a non-FM instrument, so the two can never disagree.
+    pub fm: Option<Fm>,
     pub env: Option<Env>,
     pub vib: Option<Vib>,
     pub sweep: Option<Sweep>,
@@ -994,9 +1291,13 @@ impl Instrument {
     /// True when the instrument needs per-frame modulation. A flat instrument
     /// (`inst x wave=2`) takes exactly the same code path as a bare digit.
     ///
-    /// `duck` and `echo` are deliberately not part of this: both are *mixer*
-    /// properties, so an instrument that only ducks or only sends to the echo
-    /// still renders through the PoC v1 statements.
+    /// `duck`, `echo` and `fm` are deliberately not part of this. The first two
+    /// are *mixer* properties and the third is a property of the **wave
+    /// source**, exactly like a wavetable slot: the FM pair runs inside the
+    /// oscillator, off the channel's own phase accumulators, and needs no
+    /// per-frame pitch or volume recomputation. So an instrument that only
+    /// ducks, only sends to the echo, or only names an FM patch still renders
+    /// through the PoC v1 statements.
     pub fn is_flat(&self) -> bool {
         self.env.is_none() && self.vib.is_none() && self.sweep.is_none()
     }
@@ -1369,7 +1670,8 @@ fn valid_name(s: &str) -> bool {
 }
 
 /// A row's 2nd token is a waveform when it is all digits; anything else is an
-/// instrument name. `C4 6 7` therefore still reports "wave must be 0-5".
+/// instrument name. `C4 9 7` therefore still reports "wave must be 0-5" rather
+/// than "unknown instrument".
 fn is_wave_digit(token: &str) -> bool {
     !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit())
 }
@@ -1384,13 +1686,16 @@ fn is_wave_slot_token(token: &str) -> bool {
     }
 }
 
-/// A wave *source* token: a builtin digit `0`-`5`, or `w0`-`w7` for a
-/// wavetable slot. Returns the internal waveform id, which is
-/// [`WAVE_TABLE_BASE`]` + slot` for the wavetable form.
+/// A wave *source* token on an `inst` line: a builtin digit `0`-`5`, `6` for
+/// the 2-op FM oscillator, or `w0`-`w7` for a wavetable slot. Returns the
+/// internal waveform id, which is [`WAVE_TABLE_BASE`]` + slot` for the
+/// wavetable form.
 ///
 /// Definedness is *not* checked here — the two callers differ on when they can
 /// know (an `inst` line may precede the `wavetable` line it references), so
-/// each validates against the slot table itself.
+/// each validates against the slot table itself. Likewise `wave=6` is accepted
+/// here and paired with its `fm=` parameters by [`parse_inst_line`], which is
+/// the only place that can see the whole line.
 fn parse_wave_source(section: &str, line: usize, what: &str, token: &str) -> Result<u8, Error> {
     if is_wave_slot_token(token) {
         let slot = parse_u8_in(
@@ -1403,17 +1708,76 @@ fn parse_wave_source(section: &str, line: usize, what: &str, token: &str) -> Res
         return Ok(WAVE_TABLE_BASE + slot);
     }
     if is_wave_digit(token) {
-        return parse_u8_in(section, line, what, token, WAVE_COUNT - 1);
+        return parse_u8_in(section, line, what, token, WAVE_FM);
     }
     Err(cart_err(
         section,
         line,
         format!(
-            "{what} must be 0-{} (builtin) or w0-w{} (a wavetable), found {token:?}",
-            WAVE_COUNT - 1,
+            "{what} must be 0-{WAVE_FM} (builtin) or w0-w{} (a wavetable), found {token:?}",
             WAVETABLE_SLOTS - 1
         ),
     ))
+}
+
+/// `fm=<ratio>,<index>[,<decay>]` — the 2-op FM parameters.
+fn parse_fm_value(line: usize, value: &str) -> Result<Fm, Error> {
+    const SEC: &str = "__instruments__";
+    let parts: Vec<&str> = value.split(',').collect();
+    if parts.len() < 2 || parts.len() > 3 {
+        return Err(cart_err(
+            SEC,
+            line,
+            format!("fm must be `fm=<ratio>,<index>[,<decay>]`, found {value:?}"),
+        ));
+    }
+    let ratio_half = parse_fm_ratio(line, parts[0])?;
+    let index = parse_u8_in(SEC, line, "fm index", parts[1], MAX_FM_INDEX)?;
+    let decay = match parts.get(2) {
+        Some(t) => parse_u8_in(SEC, line, "fm decay", t, MAX_FM_DECAY)?,
+        None => 0,
+    };
+    Ok(Fm {
+        ratio_half,
+        index,
+        decay,
+    })
+}
+
+/// The `<ratio>` field of `fm=`: `0.5` to `15` in steps of `0.5`, written the
+/// way a musician writes it (`1`, `2`, `3.5`, `7`, `1.0` if they insist).
+/// Returns the ratio in halves — see [`Fm::ratio_half`].
+fn parse_fm_ratio(line: usize, text: &str) -> Result<u8, Error> {
+    const SEC: &str = "__instruments__";
+    let bad = || {
+        cart_err(
+            SEC,
+            line,
+            format!(
+                "fm ratio must be {}-{} in steps of 0.5 \
+                 (e.g. `0.5`, `1`, `2`, `3.5`, `7`), found {text:?}",
+                f32::from(MIN_FM_RATIO_HALF) * 0.5,
+                MAX_FM_RATIO_HALF / 2
+            ),
+        )
+    };
+    let (whole, half) = match text.split_once('.') {
+        Some((w, "5")) => (w, 1u32),
+        Some((w, "0")) => (w, 0u32),
+        Some(_) => return Err(bad()),
+        None => (text, 0u32),
+    };
+    if whole.is_empty() || !whole.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(bad());
+    }
+    let Ok(units) = whole.parse::<u32>() else {
+        return Err(bad());
+    };
+    let halves = 2 * units + half;
+    if !(u32::from(MIN_FM_RATIO_HALF)..=u32::from(MAX_FM_RATIO_HALF)).contains(&halves) {
+        return Err(bad());
+    }
+    Ok(halves as u8)
 }
 
 /// "…, which the cart does not define" — the one error every undefined
@@ -1510,7 +1874,7 @@ fn parse_instruments_section(text: &str) -> Result<InstTable, Error> {
                 SEC,
                 line,
                 format!(
-                    "expected `inst <name> wave=<0-5|w0-w7> ...`, \
+                    "expected `inst <name> wave=<0-6|w0-w7> ...`, \
                      `wavetable <slot 0-{}> <{WAVETABLE_LEN} hex nibbles>`, \
                      `master drive=<0-{MAX_DRIVE}> ...` or \
                      `echo delay=<1-{MAX_ECHO_DELAY}> ...`, found {:?}",
@@ -1729,8 +2093,8 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
         return Err(cart_err(
             SEC,
             line,
-            "expected `inst <name> wave=<0-5|w0-w7> [env=<a>,<d>,<s>] \
-             [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>] \
+            "expected `inst <name> wave=<0-6|w0-w7> [fm=<ratio>,<index>,<decay>] \
+             [env=<a>,<d>,<s>] [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>] \
              [duck=<depth>,<release>] [echo=<0-8>]`",
         ));
     }
@@ -1762,6 +2126,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
     }
 
     let mut wave: Option<u8> = None;
+    let mut fm: Option<Fm> = None;
     let mut env: Option<Env> = None;
     let mut vib: Option<Vib> = None;
     let mut sweep: Option<Sweep> = None;
@@ -1775,12 +2140,13 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
                 line,
                 format!(
                     "unexpected {tok:?} in inst line \
-                     (want `wave=`, `env=`, `vib=`, `sweep=`, `duck=` or `echo=`)"
+                     (want `wave=`, `fm=`, `env=`, `vib=`, `sweep=`, `duck=` or `echo=`)"
                 ),
             ));
         };
         match key.to_ascii_lowercase().as_str() {
             "wave" => wave = Some(parse_wave_source(SEC, line, "wave", value)?),
+            "fm" => fm = Some(parse_fm_value(line, value)?),
             "env" => {
                 let parts: Vec<&str> = value.split(',').collect();
                 if parts.len() != 3 {
@@ -1846,7 +2212,7 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
                     line,
                     format!(
                         "unknown inst key {other:?} \
-                         (want `wave`, `env`, `vib`, `sweep`, `duck` or `echo`)"
+                         (want `wave`, `fm`, `env`, `vib`, `sweep`, `duck` or `echo`)"
                     ),
                 ));
             }
@@ -1857,12 +2223,37 @@ fn parse_inst_line(line: usize, tokens: &[&str]) -> Result<Instrument, Error> {
         return Err(cart_err(
             SEC,
             line,
-            format!("instrument {name} is missing `wave=<0-5>` (or `wave=w<slot>`)"),
+            format!("instrument {name} is missing `wave=<0-6>` (or `wave=w<slot>`)"),
         ));
     };
+    // `wave=6` and `fm=` are two halves of one statement: neither is meaningful
+    // alone, so neither is accepted alone. House style is a parse error rather
+    // than a silent default — an FM patch nobody chose is a timbre nobody wants.
+    if wave == WAVE_FM && fm.is_none() {
+        return Err(cart_err(
+            SEC,
+            line,
+            format!(
+                "instrument {name} has `wave={WAVE_FM}` (2-op FM) but no \
+                 `fm=<ratio>,<index>[,<decay>]`: FM has no useful default timbre, \
+                 so the parameters are required (try `fm=1,6,12` for a bass)"
+            ),
+        ));
+    }
+    if wave != WAVE_FM && fm.is_some() {
+        return Err(cart_err(
+            SEC,
+            line,
+            format!(
+                "instrument {name} has `fm=` but `wave={wave}`: FM parameters only \
+                 mean anything on `wave={WAVE_FM}`"
+            ),
+        ));
+    }
     Ok(Instrument {
         name: name.to_string(),
         wave,
+        fm,
         env,
         vib,
         sweep,
@@ -2030,6 +2421,21 @@ fn parse_sfx_section(
         // instrument name. Both bare forms mean "the implicit flat instrument
         // on that waveform": no envelope, no vibrato, no echo send.
         let (wave, inst_index, inst) = if is_wave_digit(tokens[1]) {
+            // A bare digit is the *self-contained* form, so it stops at 5:
+            // wave 6 is FM and a digit carries no ratio or index. Saying so is
+            // worth a bespoke message, because "wave must be 0-5" would read
+            // like FM does not exist.
+            if tokens[1].parse::<u64>().ok() == Some(u64::from(WAVE_FM)) {
+                return Err(cart_err(
+                    SEC,
+                    line,
+                    format!(
+                        "wave {WAVE_FM} is the 2-op FM oscillator, which a bare digit cannot \
+                         describe: declare `inst <name> wave={WAVE_FM} \
+                         fm=<ratio>,<index>[,<decay>]` in __instruments__ and name it here"
+                    ),
+                ));
+            }
             (
                 parse_u8_in(SEC, line, "wave", tokens[1], WAVE_COUNT - 1)?,
                 None,
@@ -2515,6 +2921,23 @@ struct Channel {
     /// feeding the echo the way the note itself did. Cleared by
     /// [`Channel::stop`]: a released channel sends nothing.
     echo_send: u8,
+    /// The FM patch of the row currently playing, if it named a `wave=6`
+    /// instrument. `None` for every other voice, and then nothing in the FM
+    /// path costs anything.
+    ///
+    /// Installed at note-on the way `echo_send` is, i.e. **immediately**,
+    /// without waiting for the click guard's pending voice swap. The only
+    /// window where that is visible is the ≤64-sample ramp-to-silence when a
+    /// channel changes pitch, during which the outgoing tail briefly uses the
+    /// incoming patch's ratio — inaudible under a fade to zero, and cheaper
+    /// than a second pending slot.
+    fm: Option<Fm>,
+    /// The modulator's own phase accumulator. Continuous, exactly like the
+    /// carrier's: notes are legato and nothing resets phase.
+    mod_phase: u32,
+    /// The **live** modulation index: [`Fm::index`] at note-on, then multiplied
+    /// by [`FM_DECAY_MUL`] once per frame.
+    fm_index: f32,
 }
 
 impl Channel {
@@ -2530,6 +2953,32 @@ impl Channel {
             owner: Owner::Free,
             md: None,
             echo_send: 0,
+            fm: None,
+            mod_phase: 0,
+            fm_index: 0.0,
+        }
+    }
+
+    /// Install (or clear) the FM patch a note-on asked for and re-arm the index
+    /// envelope. A `None` patch is every non-FM voice.
+    fn set_fm(&mut self, fm: Option<Fm>) {
+        self.fm = fm;
+        self.fm_index = fm.map_or(0.0, |f| f32::from(f.index));
+    }
+
+    /// Advance the index-decay envelope by one frame.
+    ///
+    /// Once per frame per channel, unconditionally, so the envelope is a
+    /// function of elapsed time rather than of what the sequencer happened to
+    /// do — and a no-op (one `Option` test) for every voice that is not FM.
+    fn tick_fm(&mut self) {
+        let Some(fm) = self.fm else { return };
+        if fm.decay == 0 || self.fm_index == 0.0 {
+            return;
+        }
+        self.fm_index *= FM_DECAY_MUL[usize::from(fm.decay.min(MAX_FM_DECAY))];
+        if self.fm_index < FM_INDEX_FLOOR {
+            self.fm_index = 0.0;
         }
     }
 
@@ -2584,6 +3033,8 @@ impl Channel {
         self.owner = Owner::Free;
         self.md = None;
         self.echo_send = 0;
+        self.fm = None;
+        self.fm_index = 0.0;
     }
 
     fn next_sample(&mut self, lfsr: &mut u16, waves: &WaveSet) -> f32 {
@@ -2622,7 +3073,22 @@ impl Channel {
         if self.wave == WAVE_NOISE && self.phase < prev {
             *lfsr = lfsr_next(*lfsr);
         }
-        self.amp * wave_value(self.wave, self.phase, *lfsr, waves)
+        // 2-op FM: run the modulator off the *same* increment, scaled by the
+        // ratio, and hand the carrier a displaced phase. Because the modulator
+        // is derived from `inc` every sample rather than cached, vibrato,
+        // slides, arpeggios and sweeps bend both operators together and the
+        // ratio holds through all of them for free.
+        let carrier_phase = match self.fm {
+            Some(fm) if self.wave == WAVE_FM => {
+                self.mod_phase = self
+                    .mod_phase
+                    .wrapping_add(fm_mod_increment(self.inc, fm.ratio_half));
+                self.phase
+                    .wrapping_add(fm_deviation(self.mod_phase, self.fm_index))
+            }
+            _ => self.phase,
+        };
+        self.amp * wave_value(self.wave, carrier_phase, *lfsr, waves)
     }
 }
 
@@ -2641,9 +3107,11 @@ fn phase_unit(phase: u32) -> f32 {
 
 /// One oscillator sample.
 ///
-/// Waves 0..=5 are the builtin shapes, unchanged since PoC v1. Anything at or
-/// above [`WAVE_TABLE_BASE`] is a wavetable slot: the top 5 bits of the phase
-/// accumulator index the 32 precomputed amplitudes **with no interpolation**.
+/// Waves 0..=5 are the builtin shapes, unchanged since PoC v1. [`WAVE_FM`] is
+/// the FM carrier, a plain sine of the (already modulated) phase it is handed.
+/// Anything at or above [`WAVE_TABLE_BASE`] is a wavetable slot: the top 5 bits
+/// of the phase accumulator index the 32 precomputed amplitudes **with no
+/// interpolation**.
 ///
 /// *Why no interpolation*: the step edges are the sound. A 32-point table read
 /// as a staircase is what a Game Boy, a VRC6 or an N163 does, and the aliasing
@@ -2699,9 +3167,14 @@ fn wave_value(wave: u8, phase: u32, lfsr: u16, waves: &WaveSet) -> f32 {
                 -1.0
             }
         }
+        // 2-op FM carrier. The caller ([`Channel::next_sample`]) has already
+        // folded the modulator into `phase`, so all that is left here is the
+        // carrier's own sine - which is exactly why `index=0` is a pure sine
+        // and why every FM voice is one table lookup wide at this level.
+        WAVE_FM => sine_at(phase),
         // wavetable slot: `phase >> 27` is 0..=31, so the index is total.
-        // (Ids 6 and 7 are unreachable - no cart syntax produces them - and
-        // wrap harmlessly onto slots 6 and 7 rather than panicking.)
+        // (Id 7 is unreachable - no cart syntax produces it - and wraps
+        // harmlessly onto slot 7 rather than panicking.)
         w => {
             let slot = usize::from(w.wrapping_sub(WAVE_TABLE_BASE)) % WAVETABLE_SLOTS;
             waves.0[slot][(phase >> WAVETABLE_SHIFT) as usize]
@@ -3074,6 +3547,10 @@ impl Audio {
             ..
         } = self;
         for (ch, c) in channels.iter_mut().enumerate() {
+            // The FM index-decay envelope runs on every channel, cursor or not:
+            // it belongs to the note that is sounding, not to the sequencer. A
+            // note-on later in this same loop re-arms it (see `apply_row`).
+            c.tick_fm();
             let Some(mut cur) = c.cursor else { continue };
             cur.frames_left -= 1;
             if cur.frames_left > 0 {
@@ -3307,6 +3784,10 @@ fn apply_row(
             // The echo send follows the row's instrument, so a bare wave digit
             // (or an instrument without `echo=`) puts the channel back to dry.
             c.echo_send = named.map_or(0, |i| i.echo);
+            // Same rule for the FM patch, and this is also the note-on that
+            // re-arms the index-decay envelope: the brightness gesture restarts
+            // on every struck note, which is the whole point of it.
+            c.set_fm(named.and_then(|i| i.fm));
             let inst = named.filter(|i| !i.is_flat());
             if inst.is_none() && m.fx.is_none() {
                 // PoC v1 path, bit-for-bit: no per-frame work at all.
@@ -3388,6 +3869,112 @@ mod tests {
             *n = (i / 2) as u8;
         }
         WaveSet::new(&[Some(Wavetable { nibbles }); WAVETABLE_SLOTS])
+    }
+
+    // ---- the FM sine table -------------------------------------------------
+
+    #[test]
+    fn the_sine_table_is_a_monotone_quarter_with_exact_endpoints() {
+        assert_eq!(SINE_QUARTER.len(), 257);
+        assert_eq!(SINE_QUARTER[0], 0.0);
+        assert_eq!(SINE_QUARTER[256], 1.0);
+        // Strictly increasing across the quarter: no duplicated or transposed
+        // literal can hide in 257 pasted numbers.
+        assert!(SINE_QUARTER.windows(2).all(|w| w[0] < w[1]));
+        // ...and it really is a sine, to the accuracy the table can hold.
+        for (k, &v) in SINE_QUARTER.iter().enumerate() {
+            let want = (std::f64::consts::TAU * k as f64 / 1024.0).sin();
+            assert!(
+                (f64::from(v) - want).abs() < 1e-7,
+                "SINE_QUARTER[{k}] = {v}, want {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn sine_at_hits_its_zeros_and_peaks_exactly() {
+        assert_eq!(sine_at(0), 0.0);
+        assert_eq!(sine_at(0x4000_0000), 1.0);
+        assert_eq!(sine_at(0x8000_0000), 0.0);
+        assert_eq!(sine_at(0xc000_0000), -1.0);
+        // Nothing ever leaves the unit interval, interpolation included.
+        for step in 0..4096u32 {
+            let v = sine_at(step.wrapping_mul(0x0010_0000).wrapping_add(12_345));
+            assert!((-1.0..=1.0).contains(&v), "sine_at produced {v}");
+        }
+    }
+
+    #[test]
+    fn sine_at_is_odd_and_half_cycle_antisymmetric() {
+        // Both symmetries are *bit* exact, which is the reason the table is a
+        // quarter wave derived by reflection rather than a full cycle of
+        // independently rounded literals.
+        for step in 0..2048u32 {
+            let p = step.wrapping_mul(0x0020_0000).wrapping_add(64 * 777);
+            assert_eq!(
+                sine_at(p.wrapping_neg()).to_bits(),
+                (-sine_at(p)).to_bits(),
+                "sine_at(-p) != -sine_at(p) at {p:#010x}"
+            );
+            assert_eq!(
+                sine_at(p.wrapping_add(0x8000_0000)).to_bits(),
+                (-sine_at(p)).to_bits(),
+                "half-cycle antisymmetry broke at {p:#010x}"
+            );
+        }
+    }
+
+    #[test]
+    fn sine_at_crosses_zero_exactly_twice_per_cycle() {
+        let mut crossings = 0;
+        let mut prev = sine_at(0);
+        for step in 1..=4096u32 {
+            let v = sine_at(step.wrapping_mul(0x0010_0000));
+            if (prev < 0.0) != (v < 0.0) {
+                crossings += 1;
+            }
+            prev = v;
+        }
+        assert_eq!(crossings, 2, "one cycle of a sine has two sign changes");
+    }
+
+    #[test]
+    fn the_fm_ratio_scales_the_modulator_increment_exactly() {
+        // Halves, in exact integer arithmetic, with no rounding to argue about.
+        assert_eq!(fm_mod_increment(1000, 2), 1000);
+        assert_eq!(fm_mod_increment(1000, 1), 500);
+        assert_eq!(fm_mod_increment(1000, 7), 3500);
+        assert_eq!(fm_mod_increment(1000, 30), 15_000);
+        // A modulator pushed past the accumulator wraps rather than saturating:
+        // that is aliasing, which is what a digital oscillator does.
+        assert_eq!(fm_mod_increment(0x8000_0000, 4), 0);
+    }
+
+    #[test]
+    fn a_zero_index_deviates_the_carrier_by_nothing() {
+        for step in 0..256u32 {
+            assert_eq!(fm_deviation(step.wrapping_mul(0x0100_0000), 0.0), 0);
+        }
+    }
+
+    #[test]
+    fn the_index_decay_ladder_halves_on_schedule() {
+        assert_eq!(FM_DECAY_MUL[0], 1.0);
+        assert_eq!(FM_DECAY_HALF_LIFE[0], 0);
+        // Faster settings decay faster, monotonically.
+        assert!(FM_DECAY_MUL[1..].windows(2).all(|w| w[0] > w[1]));
+        assert!(FM_DECAY_HALF_LIFE[1..].windows(2).all(|w| w[0] > w[1]));
+        for d in 1..16usize {
+            let hl = u32::from(FM_DECAY_HALF_LIFE[d]);
+            let mut x = 1.0f32;
+            for _ in 0..hl {
+                x *= FM_DECAY_MUL[d];
+            }
+            assert!(
+                (x - 0.5).abs() < 1e-4,
+                "decay {d}: {hl} frames took the index to {x}, not 1/2"
+            );
+        }
     }
 
     #[test]

@@ -356,7 +356,8 @@ Principles: **deterministic** (const note table + linear ops + LFSR only — no
   scale (see the master bus) and acts as a free limiter.
 - Waveforms: 0 = pulse 12.5%, 1 = pulse 25%, 2 = square 50%, 3 = triangle,
   4 = saw, 5 = noise (16-bit LFSR, NES-style taps, clocked from the channel
-  frequency). Ids 8–15 are the cart's own wavetables (PoC v2, below).
+  frequency). Id 6 is the 2-op FM oscillator and ids 8–15 are the cart's own
+  wavetables (both PoC v2, below); id 7 stays reserved.
 - Notes `C0`–`B7` (A4 = 440). Frequencies come from a `const` table of 96 f32
   literals baked into the source (generated once, committed) — never computed
   at runtime.
@@ -569,10 +570,10 @@ cents factor, LFOs are integer-phase triangles.
 ### `__instruments__` section (phase 1)
 
 ```
-inst <name> wave=<0-5|w0-w7> [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>] [echo=<0-8>]
+inst <name> wave=<0-6|w0-w7> [fm=<ratio>,<index>[,<decay>]] [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate>,<delay>] [sweep=<semis>,<frames>] [echo=<0-8>]
 ```
 
-- `name` `[a-z0-9_]+`, unique, must not shadow the bare wave digits 0–5 nor the
+- `name` `[a-z0-9_]+`, unique, must not shadow the bare wave digits 0–6 nor the
   `w<digits>` spelling that names a wavetable slot.
 - `env`: attack frames (vol ramps 0→row vol), decay frames (then decays
   toward sustain), sustain level 0–7 held until the row/note changes.
@@ -583,7 +584,9 @@ inst <name> wave=<0-5|w0-w7> [env=<attack>,<decay>,<sustain>] [vib=<cents>,<rate
   (drum sweeps: `sweep=-12,6` = kick).
 - Sfx rows may name an instrument in place of the wave digit
   (`A4 lead 5`); a bare digit means "flat instrument with that wave"
-  (today's behavior, still valid — old carts unchanged).
+  (today's behavior, still valid — old carts unchanged). Bare digits stop at
+  **5**: waveform 6 is FM and a digit cannot carry its parameters, so a row
+  that says `6` is a parse error naming the `fm=` syntax.
 - Percussion is just instruments: `inst kick wave=3 sweep=-14,5 env=0,6,0`,
   triggered by an ordinary note row giving the sweep's start pitch.
 
@@ -601,7 +604,7 @@ in the strongest sense: no cart written before this can produce a waveform id
 above 5, so a cart with no `wavetable` line renders bit-identical samples.
 
 - **Slots and ids.** `w0`–`w7`. Internally a wavetable is just another waveform
-  id, `8 + slot` (ids 6 and 7 stay reserved for future builtin oscillators), so
+  id, `8 + slot` (id 6 is the 2-op FM oscillator and id 7 stays reserved), so
   `ChannelInfo::wave` and `audio_state` report 8–15 for a wavetable voice.
 - **Nibbles.** Exactly 32 hex digits, most significant sample first. They may be
   written as one run or split into whitespace-separated groups
@@ -639,6 +642,88 @@ above 5, so a cart with no `wavetable` line renders bit-identical samples.
   checked once the section has parsed.
 - Memory is 8 × 32 f32 resolved once at load; nothing at runtime rewrites a
   table, and no Lua setter exposes them (a cart's timbres are cart data).
+
+### 2-op FM (phase 1.9)
+
+```
+inst <name> wave=6 fm=<ratio>,<index>[,<decay>] ...   # in __instruments__
+A2 fmbass 5                                            # …and any sfx row plays it
+                                                       #   (NOTE INST VOL, as ever)
+```
+
+One **modulator** phase-modulating one **carrier**, both sine — the smallest
+useful slice of a YM2612, and the one that gets you Genesis bass, electric
+pianos, brass and bells. The model is the textbook pair:
+
+```
+out(t) = sin(2π·fc·t + β·sin(2π·ratio·fc·t))
+```
+
+`fc` is the row's note (the carrier is always at pitch), `ratio` locks the
+modulator to it, `β` is the modulation index. `wave=6` and `fm=` are two halves
+of one statement: neither is legal alone.
+
+- **The sine table.** A `const` array of **257 f32 literals**, one quarter of a
+  cycle at 1024 points per cycle (`SINE_QUARTER[k] = sin(2πk/1024)`), generated
+  at authoring time and pasted into `audio.rs` exactly the way `NOTE_FREQ` is —
+  there is no `sin` at runtime. The other three quadrants are derived by
+  mirroring and negation, which makes the symmetries **bit-exact**: the
+  oscillator's zeros land on exactly 0.0, its peaks on exactly ±1.0,
+  `sine(−p) = −sine(p)` and `sine(p + ½ turn) = −sine(p)` to the last bit.
+  Adjacent entries are **linearly interpolated** over a 16-bit fraction of the
+  32-bit phase (`a·(1−f) + b·f`, rational arithmetic on const values, so every
+  target agrees). Worst-case interpolation error is `(π/1024)²/8 ≈ 1.2e-6`,
+  about −118 dBFS: inaudible, and two bits below the 16-bit WAV the harness
+  writes.
+- **`ratio`: 0.5 to 15 in steps of 0.5**, written the way a musician writes it
+  (`0.5`, `1`, `2`, `3.5`, `7`; `2.0` is accepted too). Stored as an integer
+  count of *halves*, so the modulator increment is
+  `carrier_inc · ratio_half / 2` in exact 64-bit integer arithmetic — no
+  rounding to specify. The ladder is the chips' own (the YM2612's MUL field is
+  0.5 then 1–15), and the half-integers are the point of allowing halves at
+  all: an **integer** ratio puts every sideband on a harmonic (pitched, and the
+  waveform repeats once per carrier period), a **half-integer** ratio puts them
+  midway between harmonics (inharmonic, bell-like, and the waveform only
+  repeats every *two* carrier periods). A modulator pushed past the sample rate
+  wraps the phase accumulator, i.e. it aliases — deterministic, and the same
+  thing any digital oscillator does.
+- **`index`: 0–15**, the depth at note-on. One step is a peak phase deviation
+  of **1/8 cycle** (`2^29` phase units, an exact power of two), i.e.
+  `β = 2π·index/8 ≈ 0.785·index` radians. `0` is a pure sine — waveform 6 with
+  `index=0` is the console's only clean sine oscillator. 1–3 is warm and
+  hollow, 4–6 is the Genesis bass/brass region, 7–10 is glassy, 11–15 is
+  clangorous.
+- **`decay`: 0–15** (optional, default 0), the **index envelope**: the index is
+  multiplied once per *frame* by a const `0.5^(1/half-life)` factor, with
+  half-lives running 120 frames at `decay=1` down to 1 frame at `decay=15`.
+  `decay=0` holds the index flat for the life of the note. The index decays
+  **toward zero** and snaps to exactly 0 below 1/1024 of a step (a geometric
+  decay never arrives, and an index that small is a deviation of 1/8192 of a
+  cycle).
+
+  This is the gesture that makes FM sound alive: a struck tone is bright at the
+  attack and dull by the time it decays, and on an FM voice that is the *index*
+  falling, not the level. It is a **separate envelope from `env`** on purpose —
+  an electric piano holds its level while its brightness dies, a bell does the
+  opposite.
+- **Composes with everything.** FM is a wave *source*, exactly like a
+  wavetable, so `env`, `vib`, `sweep`, `duck`, `echo=` and the whole fx column
+  (`arp`/`sl`/`vib`/`fade`) apply unchanged. The modulator's increment is
+  derived from the carrier's **every sample** rather than cached, so a vibrato,
+  slide, arpeggio or sweep bends *both* operators together and the ratio (and
+  with it the timbre) holds through the bend — a swept FM voice is a
+  transposition, never a detune.
+- **Phase.** Both accumulators are the usual 32-bit fixed-point ones and both
+  are continuous across notes, like every other waveform on this console: a
+  note-on re-arms the index envelope but resets no phase.
+- **Errors at parse time, never a silent fallback** (house style): `wave=6`
+  without `fm=`, `fm=` on any other wave, a ratio off the 0.5 grid or outside
+  0.5–15, an index or decay above 15, and a **bare `6` in a sfx row's wave
+  column** (a digit carries no parameters, so the row has to name an
+  instrument). Waveform id 7 remains reserved and is still rejected.
+- **Off by default in the strongest sense**: no cart written before this can
+  produce waveform id 6, because the only route to it is an `inst … wave=6
+  fm=…` line that did not parse. Every existing audio golden is untouched.
 
 ### Master bus & sidechain ducking (phase 1.5)
 
@@ -748,9 +833,11 @@ numeric speeds keep working everywhere.
 A listening-session cart: d-pad browses a menu of audition entries — each
 waveform, vibrato off/on comparison, arpeggio chord, slides, a drum kit
 pattern, the two-pulse echo trick, one full 4-channel groove, a clean/driven
-A/B of the master bus, a sparse melody through the echo bus, and a wavetable
+A/B of the master bus, a sparse melody through the echo bus, a wavetable
 audition (a hollow lead and a gritty one over a held organ pad, three
-32-nibble tables) — A plays the selection, B stops. This is the vehicle for tuning instrument defaults
+32-nibble tables) and a 2-op FM audition (an Am–F–C–G phrase with an FM bass,
+an electric piano and a bell, one classic patch per channel) — A plays the
+selection, B stops. This is the vehicle for tuning instrument defaults
 by ear; agents render entries to WAV via the harness for the same purpose.
 
 `master` and `echo` are both cart-global, so the two entries that demonstrate

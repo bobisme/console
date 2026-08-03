@@ -60,7 +60,7 @@ __sprites__       128 lines x 128 hex chars; 1 char = 1 pixel; sprite n at (n%16
 __map__           up to 64 lines x up to 128 cells; 2 hex chars = 1 tile id (00-ff); tile 00 = empty
 __gfx_meta__      sprite <name> rect=tx,ty size=WxH [anchor=px,py]
                   anim <sprite>.<label> frames=i0,i1,... fps=N [loop]
-__instruments__   inst <name> wave=<0-5|w0-w7> [env=a,d,s] [vib=cents,rate,delay] [sweep=semis,frames] [duck=depth,release] [echo=0-8]
+__instruments__   inst <name> wave=<0-6|w0-w7> [fm=ratio,index[,decay]] [env=a,d,s] [vib=cents,rate,delay] [sweep=semis,frames] [duck=depth,release] [echo=0-8]
                   wavetable <slot 0-7> <32 hex nibbles>   # custom single-cycle wave
                   master drive=0-8 [tone=0-8] [hiss=0-4]
                   echo delay=1-60 feedback=0-8 level=0-8
@@ -311,6 +311,9 @@ Facts that bite:
   back to the loop start; `stop` makes one-shot jingles. Multiple songs =
   id gaps (`music(0)` title, `music(8)` gameplay).
 - Drums punch through via sidechain: give the kick `duck=3,8`.
+- **FM without an index decay sounds like an organ.** `fm=<ratio>,<index>` on
+  its own is a static timbre; the third number is what makes it a played note.
+  Reach for `decay` 12-15 on basses and plucks, 6-9 on keys, 1-3 on bells.
 - `master drive=1-3` is glue; 5+ is a distortion choice. `tone` darkens,
   `hiss` adds tape floor.
 - **Echo** is one cart-global delay line plus a per-instrument send:
@@ -368,6 +371,61 @@ report a wavetable voice's wave as `8 + slot` (so `w0` shows as 8).
 Undefined slot, bad hex or a nibble count other than 32 is a parse error —
 carts never silently fall back to another waveform. Entry 16 of
 `carts/soundtest.cart` auditions three tables.
+
+### 2-op FM: wave 6
+
+`inst <name> wave=6 fm=<ratio>,<index>[,<decay>]` gives you one modulator
+phase-modulating one carrier, both sine. It is the Genesis/YM2612 sound in one
+line, and it is the only wave that *needs* an instrument: a bare `6` in a sfx
+row is a parse error, because a digit cannot carry a ratio.
+
+- **`ratio`** 0.5–15 in steps of 0.5 (`0.5 1 2 3.5 7 …`) — the modulator's
+  pitch as a multiple of the note. **Integer = pitched** (every sideband lands
+  on a harmonic); **half-integer = inharmonic**, which is what makes bells,
+  tines and metal. Ratio 1 is the fattest bass there is; 7 and up is glassy.
+- **`index`** 0–15 — how much modulation, i.e. how far up the harmonic series
+  the energy reaches. `0` is a pure sine (the console has no other one). 1–3
+  warm, 4–6 the bass/brass region, 7–10 glassy, 11–15 clangorous.
+- **`decay`** 0–15, optional — the **index envelope**, halving the index every
+  120 frames (`1`) down to every frame (`15`); `0` holds it flat. *This is the
+  trick.* Real struck tones are bright at the attack and dull as they fade, and
+  on FM that is the index falling, not the volume. Without a decay an FM patch
+  sounds like an organ; with one it sounds played.
+
+`decay` is completely separate from `env`, which is still just level — an
+electric piano holds its level while its brightness dies, a bell does the
+opposite. Everything else composes normally too (`vib`, `sweep`, `sl`, `arp`,
+`duck`, `echo=`), and vibrato/sweeps bend **both** operators, so the timbre
+transposes instead of detuning.
+
+#### Recipes — paste these in and go
+
+```
+# FM BASS: ratio 1 doubles the fundamental, a big index makes it growl, and
+# decay 13 (index halves every 3 frames) kills the growl in a fifth of a
+# second. Play it low: A1-C3.
+inst fm_bass  wave=6 fm=1,10,13   env=0,10,4
+
+# ELECTRIC PIANO: a half-integer ratio puts the sidebands between the
+# harmonics - that slightly-out tine ring. Medium index, medium decay = the
+# hammer letting go. Play it mid: G3-C6.
+inst fm_epian wave=6 fm=3.5,6,7   env=0,24,2
+
+# BELL: wide ratio + big index puts energy up around the 7th partial, and a
+# slow index decay (half-life 90 frames) keeps it ringing. Give it LONG rows -
+# a rest cuts it off dead - and play it high: C5-B6.
+inst fm_bell  wave=6 fm=7,11,2    env=0,56,1
+
+# BRASS STAB: integer ratio, moderate index, fast-ish decay, and let `env`
+# do the swell. Add vib for a section.
+inst fm_brass wave=6 fm=2,7,9     env=4,12,4 vib=18,7,6
+
+# WOOD BLOCK / TOM: FM percussion is a sweep plus a dying index.
+inst fm_tom   wave=6 fm=3.5,12,15 env=0,6,0 sweep=-10,4
+```
+
+Entry 17 of `carts/soundtest.cart` plays the first three over an Am-F-C-G
+phrase. `audio_state`/`audio_events` report an FM voice's wave as `6`.
 
 ## Packaging
 
