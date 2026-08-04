@@ -19,6 +19,8 @@ The checked-in specimen is a native 24x24 idle frog:
 This is a pipeline specimen and pose-language starting point, not the final
 frog atlas. The authored-frog bone remains responsible for stronger anatomy,
 compression, directional poses, mutation silhouettes, and animation timing.
+Those assets must follow the shared palette, cluster, lighting, material, and
+allocation contract in [`ART-BIBLE.md`](ART-BIBLE.md).
 
 ## Reproduce and inspect
 

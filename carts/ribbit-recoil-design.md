@@ -66,7 +66,9 @@ records a reproducible `paintop` spike, exact-pixel rules, and the boundary betw
 deterministic graph composition and dense frame-by-frame sprite authoring. The
 checked-in 24x24 frog is a pipeline specimen; the production atlas and runtime migration
 still need distinct compressed, airborne, swinging, mutation, hurt, and victory
-silhouettes.
+silhouettes. [`ART-BIBLE.md`](ribbit-recoil-art/ART-BIBLE.md) fixes the shared Apollo64
+ramps, moonlight direction, cluster grammar, material kit, native dimensions, and
+128x128 atlas allocation used by every art-production bone.
 
 Colonel Buzzkill's phase transitions reset and shield the next attack cycle, clear the
 previous pattern, and require its new fan/bomb formation to fire before the next weak
