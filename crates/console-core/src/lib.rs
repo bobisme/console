@@ -52,7 +52,8 @@ pub use crate::error::Error;
 pub use crate::gfx::{
     COLOR_ALPHABET, COLOR_COUNT, COLOR_MASK, DrawState, FB_LEN, FILLP_SIZE, Framebuffer,
     IDENTITY_PAL, MAP_H, MAP_LEN, MAP_W, MAX_MOSAIC, PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN,
-    SHEET_W, SPRITE_SIZE, ShiftTable, SpriteSheet, TileMap, color_char, parse_color_char,
+    SHEET_W, SPRITE_SIZE, ShiftTable, SpriteSheet, TextAlign, TextDraw, TextLayout, TileMap,
+    color_char, parse_color_char, text_size,
 };
 pub use crate::gfx_meta::{AnimDef, FrameSpec, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
@@ -182,6 +183,7 @@ impl Console {
         }
         {
             let mut s = self.state.borrow_mut();
+            s.text_draws.clear();
             s.prev_input = s.input;
             s.input = input & input::MASK;
         }
@@ -309,6 +311,13 @@ impl Console {
     /// Drain buffered `printh` output.
     pub fn take_logs(&mut self) -> Vec<String> {
         std::mem::take(&mut self.state.borrow_mut().logs)
+    }
+
+    /// Drain `print` calls captured since the current frame began. The core
+    /// also clears this buffer automatically at the start of every step, so
+    /// hosts that do not inspect text never accumulate an unbounded log.
+    pub fn take_text_draws(&mut self) -> Vec<TextDraw> {
+        std::mem::take(&mut self.state.borrow_mut().text_draws)
     }
 
     /// The error that halted the console, if any.

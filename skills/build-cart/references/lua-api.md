@@ -55,11 +55,30 @@ low six bits (`0..63`). Optional booleans use Lua truthiness.
 | `rectfill(x0,y0,x1,y1,[c=0])` | Inclusive filled rectangle. |
 | `circ(x,y,[r=4],[c=0])` | Midpoint circle outline. |
 | `circfill(x,y,[r=4],[c=0])` | Filled circle. |
-| `print(value,[x=0],[y=0],[c=12])` | Draw text using the built-in 4×6 ASCII font. Values are coerced predictably; lowercase may render uppercase. |
+| `text_size(value)` | Return logical `(width,height)` using the built-in fixed font. |
+| `print(value,[x=0],[y=0],[c=12],[align="left"])` | Draw text; align each line `left`, `center`, or `right` on x. Values are coerced predictably; lowercase may render uppercase. |
 
 `camera`, `clip`, the draw palette, and `fillp` affect shape primitives.
 `print` ignores `fillp`. `cls` writes its literal color instead of applying the
 draw palette.
+
+### Text measurement and alignment
+
+The font draws 3×5 ink in fixed 4×6 cells. `text_size` includes the trailing
+spacing cell edge so blocks compose predictably: each byte adds 4px, each
+newline adds a 6px line, and the widest line determines width.
+
+```lua
+local w,h=text_size("AB\nC") -- 8,12
+print("TITLE",96,20,14,"center")
+print("SCORE "..score,188,4,63,"right")
+```
+
+`y` is always the top. `left` makes x the line start, `center` centers every
+line independently on x, and `right` makes every line end at x. Coordinates
+are world-space and camera is applied afterward. Omit alignment for the
+original left-aligned behavior. Prefer anchors over `#text*4` arithmetic;
+`text_size` remains useful for panels, wrapping, and collision with UI.
 
 ## Sprites and declared animations
 

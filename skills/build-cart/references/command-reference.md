@@ -55,6 +55,7 @@ console-agent run <cart>
   [--spectrogram out.png]
   [--audio-events]
   [--audio-stats]
+  [--text-events]
 ```
 
 `SPEC` is comma-separated `COUNT:BUTTONS`, for example
@@ -76,6 +77,7 @@ are idle. An empty spec plus `--frames N` is an idle run.
 | `--spectrogram FILE` | Write the retained audio as a PNG, default cell 4. |
 | `--audio-events` | Print one JSON sequencer event per line. |
 | `--audio-stats` | Print JSON mix windows using 6 frames/window. |
+| `--text-events` | Print one JSON text-draw event per line, including resolved bounds. |
 
 `printh` lines go to stderr as `[log] ...`. A halted cart or failed eval exits
 1 after reporting the error.
@@ -111,6 +113,7 @@ Version 1 schema:
       "screenshot":"jump.png",
       "zoom":2,
       "screen_text":"jump.txt",
+      "text_events":"jump-text.json",
       "wav":"jump.wav",
       "spectrogram":"jump-spectrum.png",
       "audio_events":"jump-events.json",
@@ -365,10 +368,12 @@ One line is one request. Important error codes: `-32700` parse error,
 | `audio_state` | `{}` | Current music pattern and per-channel sequencer state. |
 | `audio_events` | `{from_frame?}` | Sequencer events at/after the bound. |
 | `audio_stats` | `{window_frames?=6}` | RMS/peak/clipped counts over mix windows. |
+| `text_events` | `{from_frame?}` | `print` calls at/after the bound with anchors, bounds, alignment, visibility, and clipping. |
 | `spectrogram` | `{path,from_frame?,to_frame?,cell?=4}` | Write PNG; return windows/dimensions. |
 
 Saved states are reset-plus-replay, so they reproduce pixels, map mutations,
-audio samples, and events rather than serializing opaque VM memory.
+audio samples, sequencer events, and text events rather than serializing opaque
+VM memory.
 
 ## Sprite RPC methods
 

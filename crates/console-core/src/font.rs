@@ -21,6 +21,26 @@ const GLYPH_BITS_H: i32 = 5;
 pub const FIRST_CHAR: u32 = 32;
 pub const LAST_CHAR: u32 = 126;
 
+/// Logical layout size for `text`, in font cells. Every byte advances one
+/// 4px cell (matching the renderer, including unsupported UTF-8 bytes), and
+/// every newline starts another 6px line. The trailing spacing column/row is
+/// part of the result so adjacent text blocks compose on the same grid.
+pub fn text_size(text: &str) -> (i32, i32) {
+    let mut width = 0i32;
+    let mut line_width = 0i32;
+    let mut height = GLYPH_H;
+    for byte in text.bytes() {
+        if byte == b'\n' {
+            width = width.max(line_width);
+            line_width = 0;
+            height = height.saturating_add(GLYPH_H);
+        } else {
+            line_width = line_width.saturating_add(GLYPH_W);
+        }
+    }
+    (width.max(line_width), height)
+}
+
 #[rustfmt::skip]
 const GLYPHS: [u16; 95] = [
     0b000_000_000_000_000, // 32 ' '

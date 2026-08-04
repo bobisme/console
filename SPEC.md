@@ -98,7 +98,8 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `map([cel_x=0], [cel_y=0], [sx=0], [sy=0], [cel_w=128], [cel_h=64])` | draw a cel_w×cel_h block of map cells from cell (cel_x, cel_y) to (sx, sy); **tile 0 is skipped**. `map()` draws the whole map at 0,0 |
 | `mget(cx, cy)` | tile id at map cell (cx, cy); off the map reads 0 |
 | `mset(cx, cy, [v=0])` | write a tile id (0–255, masked); off the map is a no-op |
-| `print(s, x, y, [c=12])` | draw text with built-in 4×6 font (ASCII 32–126; lowercase may render as uppercase) |
+| `text_size(s)` | return logical `(width, height)` for the built-in 4×6 font; widest line × line count |
+| `print(s, x, y, [c=12], [align="left"])` | draw text with built-in 4×6 font; `align` is `left`, `center`, or `right` and anchors each line at x (ASCII 32–126; lowercase may render as uppercase) |
 | `camera([x=0], [y=0])` | draw offset subtracted from all later draw coords; no args resets |
 | `clip([x, y, w, h])` | clip rectangle in **screen** space; no args resets to full screen |
 | `pal([c0], [c1], [p=0])` | p=0 draw-palette remap (rewrites pixels), p=1 display-palette remap (scanout only); no args resets both maps **and** `palt` |
@@ -114,6 +115,24 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `printh(s)` | log line to host (harness `logs`, browser console). Never draws. |
 
 All draw coordinates are floats, truncated toward negative infinity (`flr`) before use.
+
+### Text layout
+
+The built-in font draws 3×5 ink inside a fixed 4×6 cell. `text_size(value)`
+uses the same value coercion and byte iteration as `print`: each character
+advances 4 pixels, each newline advances 6 pixels, width is the widest line,
+and the final spacing column/row is included. Thus `text_size("")` is `(0,6)`
+and `text_size("AB\nC")` is `(8,12)`.
+
+`print(value,x,y,c,align)` treats y as the top edge. With `left`, x is each
+line's left edge; with `center`, every line is centered independently on x;
+with `right`, every line ends at x. Alignment is applied after camera
+subtraction. Omitting `align` is exactly the legacy left-aligned behavior.
+Canonical full-screen centering is therefore:
+
+```lua
+print("TITLE", 96, 20, 14, "center")
+```
 
 ### Draw state
 
@@ -374,7 +393,7 @@ as regression tests: `(cart, input log) → expected framebuffer hash`.
 ## Agent harness (`console-agent`)
 
 Oneshot: `console-agent run <cart> [--frames N] [--input SPEC] [--screenshot out.png]
-[--screenshot-zoom N] [--screen-text] [--eval CODE] [--seed N]`
+[--screenshot-zoom N] [--screen-text] [--text-events] [--eval CODE] [--seed N]`
 where SPEC is comma-separated `COUNT:BUTTONS`, e.g. `30:,10:R,5:RA,60:` (empty
 buttons = no input).
 
@@ -382,7 +401,7 @@ Serve: `console-agent serve` — JSON-RPC 2.0, one request per line on stdin,
 one response per line on stdout. Methods:
 
 - `load_cart {path}` or `{text}` — load + `_init`
-- `reset {seed?}` — reload cart state, reseed, clear input log
+- `reset {seed?}` — reload cart state, reseed, and clear input/audio/text logs
 - `step {frames=1, input=""}` — advance; input as letter string or int mask
 - `screenshot {path, zoom=1}` — write PNG (RGBA), nearest-neighbor
   integer-upscaled by `zoom`
@@ -391,6 +410,9 @@ one response per line on stdout. Methods:
 - `eval {code}` — run Lua, return result serialized to JSON (tables best-effort, depth-limited)
 - `get_global {name}` — shorthand for eval returning that global
 - `logs {}` — drain `printh` output
+- `text_events {from_frame?}` — every `print` call with frame, text, alignment,
+  world/screen anchor, screen-space logical bounds, color, visibility, and
+  clipping state
 - `save_state {name}` / `load_state {name}` — replay-based
 - `info {}` — frame count, cart meta, seed, input log length
 
@@ -418,7 +440,8 @@ are:
 - `{"op":"assert","code":"return ...","equals":<json>}` — exact JSON
   comparison of the evaluated value;
 - `{"op":"capture",...}` — write one or more `screenshot`, `screen_text`,
-  `wav`, `spectrogram`, `audio_events`, or `audio_stats` artifacts.
+  `wav`, `spectrogram`, `audio_events`, `audio_stats`, or `text_events`
+  artifacts.
 
 Every stage may have a unique `name`. A scenario declares `version: 1` and an
 optional seed; `--seed` overrides it. Captures require `--artifacts`, use
@@ -432,6 +455,7 @@ current framebuffer. `zoom` is an integer from 1 through 16 (default 1) used by
 `spectrogram` visualizes that same range; `cell` is an integer from 1 through 8
 (default 4), and a spectrogram range may span at most 3600 frames.
 `audio_events` emits events at or after `from_frame` (default 0).
+`text_events` emits text draws at or after `from_frame` (default 0).
 `audio_stats` groups audio into `window_frames`, an integer from 1 through
 36000 (default 6). A scenario may step at most 36000 input frames in total.
 Each input stage requires `frames >= 1`; `buttons` is a string containing only

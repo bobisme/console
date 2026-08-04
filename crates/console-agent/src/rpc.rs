@@ -160,6 +160,7 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "audio_state" => m_audio_state(session),
         "audio_events" => m_audio_events(session, params),
         "audio_stats" => m_audio_stats(session, params),
+        "text_events" => m_text_events(session, params),
         "spectrogram" => m_spectrogram(session, params),
         "sprite_render" => m_sprite_render(session, params),
         "sprite_strip" => m_sprite_strip(session, params),
@@ -351,6 +352,13 @@ fn m_audio_stats(session: &Session, params: &Value) -> Result<Value, RpcErr> {
     let windows = session.audio_stats(window_frames)?;
     serde_json::to_value(windows)
         .map_err(|e| RpcErr::new(-32000, format!("failed to serialize audio stats: {e}")))
+}
+
+fn m_text_events(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let from_frame = u64_param(params, "from_frame");
+    let events = session.text_events(from_frame)?;
+    serde_json::to_value(events)
+        .map_err(|e| RpcErr::new(-32000, format!("failed to serialize text events: {e}")))
 }
 
 fn m_spectrogram(session: &Session, params: &Value) -> Result<Value, RpcErr> {

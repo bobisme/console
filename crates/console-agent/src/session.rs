@@ -10,8 +10,9 @@ use std::collections::BTreeMap;
 
 use console_core::{
     CHANNEL_COUNT, COLOR_COUNT, COLOR_MASK, ChannelInfo, Console, Error, FB_LEN, PALETTE,
-    SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W, color_char, input,
+    SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W, TextDraw, color_char, input,
 };
+use serde::Serialize;
 
 use crate::audio::{self, AudioEvent, AudioState, Spectrogram, StatsWindow};
 
@@ -28,6 +29,46 @@ pub struct StepOutcome {
     pub frame_count: u64,
     pub halted: bool,
     pub message: Option<String>,
+}
+
+/// One Lua `print` call placed on a particular completed frame. Positions and
+/// bounds are screen-space after camera subtraction; the original world-space
+/// anchor is retained separately.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TextEvent {
+    pub frame: u64,
+    pub text: String,
+    pub align: String,
+    pub anchor_x: i32,
+    pub anchor_y: i32,
+    pub screen_anchor_x: i32,
+    pub screen_anchor_y: i32,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub color: u8,
+    pub visible: bool,
+    pub clipped: bool,
+}
+
+fn record_text_draws(events: &mut Vec<TextEvent>, frame: u64, draws: Vec<TextDraw>) {
+    events.extend(draws.into_iter().map(|draw| TextEvent {
+        frame,
+        text: draw.text,
+        align: draw.align.as_str().to_string(),
+        anchor_x: draw.anchor_x,
+        anchor_y: draw.anchor_y,
+        screen_anchor_x: draw.layout.anchor_x,
+        screen_anchor_y: draw.layout.anchor_y,
+        x: draw.layout.x,
+        y: draw.layout.y,
+        width: draw.layout.width,
+        height: draw.layout.height,
+        color: draw.color,
+        visible: draw.layout.visible,
+        clipped: draw.layout.clipped,
+    }));
 }
 
 /// Errors from session operations that aren't Lua/cart errors (those are
@@ -97,6 +138,8 @@ pub struct Session {
     /// The channel snapshot the *next* stepped frame diffs against.
     prev_channels: [ChannelInfo; CHANNEL_COUNT],
     prev_pattern: Option<u8>,
+    /// Every text draw since load/reset, including frame-zero `_init` calls.
+    text_events: Vec<TextEvent>,
 }
 
 impl Default for Session {
@@ -111,6 +154,7 @@ impl Default for Session {
             audio_events: Vec::new(),
             prev_channels: idle_channels(),
             prev_pattern: None,
+            text_events: Vec::new(),
         }
     }
 }
@@ -132,13 +176,16 @@ impl Session {
     /// previous cart, since a save state's replay only makes sense against
     /// the cart it was recorded on.
     pub fn load_cart(&mut self, text: &str, seed: u64) -> Result<(), SessionError> {
-        let console = Console::new(text, seed)?;
+        let mut console = Console::new(text, seed)?;
+        let init_draws = console.take_text_draws();
         self.cart_text = Some(text.to_string());
         self.seed = seed;
         self.console = Some(console);
         self.input_log.clear();
         self.saved_states.clear();
         self.clear_audio_log();
+        self.text_events.clear();
+        record_text_draws(&mut self.text_events, 0, init_draws);
         Ok(())
     }
 
@@ -149,11 +196,14 @@ impl Session {
     pub fn reset(&mut self, seed: Option<u64>) -> Result<(), SessionError> {
         let text = self.cart_text.clone().ok_or(SessionError::NoCart)?;
         let seed = seed.unwrap_or(self.seed);
-        let console = Console::new(&text, seed)?;
+        let mut console = Console::new(&text, seed)?;
+        let init_draws = console.take_text_draws();
         self.seed = seed;
         self.console = Some(console);
         self.input_log.clear();
         self.clear_audio_log();
+        self.text_events.clear();
+        record_text_draws(&mut self.text_events, 0, init_draws);
         Ok(())
     }
 
@@ -184,7 +234,18 @@ impl Session {
         let mut halt_message = None;
         for _ in 0..frames {
             self.input_log.push(mask);
-            match console.step(mask) {
+            let result = console.step(mask);
+            let event_frame = if result.is_ok() {
+                console.frame_count()
+            } else {
+                console.frame_count().saturating_add(1)
+            };
+            record_text_draws(
+                &mut self.text_events,
+                event_frame,
+                console.take_text_draws(),
+            );
+            match result {
                 Ok(()) => {
                     self.audio_log.extend_from_slice(console.audio_frame());
                     let frame = console.frame_count();
@@ -253,7 +314,11 @@ impl Session {
 
     pub fn eval(&mut self, code: &str) -> Result<console_core::mlua::Value, SessionError> {
         let console = self.console_mut()?;
-        Ok(console.eval(code)?)
+        let result = console.eval(code);
+        let frame = console.frame_count();
+        let draws = console.take_text_draws();
+        record_text_draws(&mut self.text_events, frame, draws);
+        Ok(result?)
     }
 
     pub fn get_global(&self, name: &str) -> Result<console_core::mlua::Value, SessionError> {
@@ -296,12 +361,21 @@ impl Session {
         let mut console = Console::new(&text, saved.seed)?;
         let mut audio_log = Vec::new();
         let mut audio_events = Vec::new();
+        let mut text_events = Vec::new();
+        record_text_draws(&mut text_events, 0, console.take_text_draws());
         let mut prev_channels = idle_channels();
         let mut prev_pattern = None;
         let mut halt_message = None;
         let mut replayed = 0u64;
         for &mask in &saved.input_log {
-            match console.step(mask) {
+            let result = console.step(mask);
+            let event_frame = if result.is_ok() {
+                console.frame_count()
+            } else {
+                console.frame_count().saturating_add(1)
+            };
+            record_text_draws(&mut text_events, event_frame, console.take_text_draws());
+            match result {
                 Ok(()) => {
                     replayed += 1;
                     audio_log.extend_from_slice(console.audio_frame());
@@ -334,6 +408,7 @@ impl Session {
         self.audio_events = audio_events;
         self.prev_channels = prev_channels;
         self.prev_pattern = prev_pattern;
+        self.text_events = text_events;
 
         Ok(StepOutcome {
             frame_count: replayed,
@@ -422,6 +497,17 @@ impl Session {
             .audio_events
             .iter()
             .filter(|e| from_frame.is_none_or(|f| e.frame >= f))
+            .cloned()
+            .collect())
+    }
+
+    /// Text draws, optionally filtered to events at or after `from_frame`.
+    pub fn text_events(&self, from_frame: Option<u64>) -> Result<Vec<TextEvent>, SessionError> {
+        self.console()?;
+        Ok(self
+            .text_events
+            .iter()
+            .filter(|event| from_frame.is_none_or(|frame| event.frame >= frame))
             .cloned()
             .collect())
     }

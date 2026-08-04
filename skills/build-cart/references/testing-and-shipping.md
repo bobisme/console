@@ -47,7 +47,8 @@ console-agent run game.cart \
   --eval 'return dev_status()' \
   --wav /tmp/game.wav \
   --audio-events \
-  --audio-stats
+  --audio-stats \
+  --text-events
 ```
 
 Keep input segments at meaningful boundaries: start, hold direction, press an
@@ -57,6 +58,13 @@ so a long held `A` segment triggers it once.
 Use `--screen-text` for exact pixel assertions or deterministic hashes, not as
 a replacement for looking at the image. It emits raw draw-space colors after
 `mosaic`/`rshift` but before display-palette remapping.
+
+Use `--text-events` while building menus and HUDs. Every JSON line names the
+source text, frame, `left|center|right` alignment, world and camera-adjusted
+anchor, screen-space `x,y,width,height`, color, and whether the logical ink
+envelope was visible or clipped. This turns a vague screenshot offset into an
+exact layout diagnosis. Prefer `print(text,96,y,c,"center")` for full-screen
+headings and `print(text,right,y,c,"right")` for numeric HUD columns.
 
 ## Incremental JSON-RPC loop
 
@@ -71,7 +79,8 @@ Send one JSON object per line:
 {"jsonrpc":"2.0","id":5,"method":"step","params":{"frames":20,"input":"R"}}
 {"jsonrpc":"2.0","id":6,"method":"eval","params":{"code":"return dev_status()"}}
 {"jsonrpc":"2.0","id":7,"method":"screenshot","params":{"path":"/tmp/jump.png","zoom":2}}
-{"jsonrpc":"2.0","id":8,"method":"load_state","params":{"name":"before_jump"}}
+{"jsonrpc":"2.0","id":8,"method":"text_events","params":{"from_frame":30}}
+{"jsonrpc":"2.0","id":9,"method":"load_state","params":{"name":"before_jump"}}
 ```
 
 Use named replay states for alternative input branches. A state restores by
@@ -130,6 +139,7 @@ Promote valuable smoke scripts into strict versioned JSON:
       "screenshot":"jump-apex.png",
       "zoom":2,
       "screen_text":"jump-apex.txt",
+      "text_events":"jump-text.json",
       "audio_events":"jump-events.json",
       "audio_stats":"jump-stats.json"
     }
@@ -226,6 +236,7 @@ console-agent music render game.cart --loops 2 -o /tmp/music.wav
 Running checks:
 
 - `audio_events`: correct trigger frame, pattern, row, and SFX stealing;
+- `text_events`: intended alignment, camera-adjusted bounds, and no clipping;
 - `audio_state`: channel ownership/current note;
 - `audio_stats`: RMS/peak/clipped windows;
 - spectrogram: pitch contour, transients, harmonics;

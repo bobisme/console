@@ -3,7 +3,9 @@
 use std::rc::Rc;
 
 use crate::audio::{Audio, AudioBank};
-use crate::gfx::{DrawState, FB_LEN, Framebuffer, MAP_LEN, SHEET_LEN, SpriteSheet, TileMap};
+use crate::gfx::{
+    DrawState, FB_LEN, Framebuffer, MAP_LEN, SHEET_LEN, SpriteSheet, TextDraw, TileMap,
+};
 use crate::gfx_meta::GfxMeta;
 use crate::rng::Pcg32;
 
@@ -37,6 +39,9 @@ pub struct State {
     pub audio: Audio,
     /// `printh` output, drained by the host.
     pub logs: Vec<String>,
+    /// Calls to `print` since the current frame began. Core clears this at the
+    /// next step so web hosts stay bounded; agent hosts drain it into a log.
+    pub text_draws: Vec<TextDraw>,
 }
 
 impl State {
@@ -59,6 +64,7 @@ impl State {
             rng: Pcg32::new(seed),
             audio: Audio::new(bank),
             logs: Vec::new(),
+            text_draws: Vec::new(),
         }
     }
 }

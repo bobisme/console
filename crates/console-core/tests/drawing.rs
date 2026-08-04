@@ -252,3 +252,80 @@ fn print_handles_newlines_and_full_ascii() {
     // The second line of the \n string starts 6px lower.
     assert!(count(&con, 5) > 0);
 }
+
+#[test]
+fn text_size_reports_the_fixed_cell_layout() {
+    let con = draw_once(
+        "w1,h1=text_size('ABC')
+         w2,h2=text_size('AB\\nC')
+         w0,h0=text_size('')",
+    );
+    assert_eq!(con.get_global("w1").unwrap().as_i64(), Some(12));
+    assert_eq!(con.get_global("h1").unwrap().as_i64(), Some(6));
+    assert_eq!(con.get_global("w2").unwrap().as_i64(), Some(8));
+    assert_eq!(con.get_global("h2").unwrap().as_i64(), Some(12));
+    assert_eq!(con.get_global("w0").unwrap().as_i64(), Some(0));
+    assert_eq!(con.get_global("h0").unwrap().as_i64(), Some(6));
+}
+
+#[test]
+fn print_alignment_anchors_each_line_without_changing_legacy_output() {
+    let legacy = draw_once("print('HI', 12, 10, 7)");
+    let explicit_left = draw_once("print('HI', 12, 10, 7, 'left')");
+    assert_eq!(legacy.framebuffer(), explicit_left.framebuffer());
+
+    let centered = draw_once("print('HI', 96, 10, 7, 'center')");
+    let centered_manual = draw_once("print('HI', 92, 10, 7)");
+    assert_eq!(centered.framebuffer(), centered_manual.framebuffer());
+
+    let right = draw_once("print('HI', 20, 10, 7, 'right')");
+    assert_eq!(right.framebuffer(), legacy.framebuffer());
+
+    let multiline = draw_once("print('A\\nABC', 96, 10, 7, 'center')");
+    let multiline_manual = draw_once("print('A', 94, 10, 7) print('ABC', 90, 16, 7)");
+    assert_eq!(multiline.framebuffer(), multiline_manual.framebuffer());
+}
+
+#[test]
+fn invalid_print_alignment_is_an_actionable_error() {
+    let error = Console::new(
+        "__lua__\nfunction _init() print('NO', 0, 0, 7, 'middle') end\n",
+        0,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("print align must be left, center, or right"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn text_draw_diagnostics_report_layout_and_stay_frame_bounded() {
+    let mut con = draw_once("print('HI', 0, 4, 9, 'center')");
+    let events = con.take_text_draws();
+    assert_eq!(events.len(), 1);
+    let event = &events[0];
+    assert_eq!(event.text, "HI");
+    assert_eq!((event.anchor_x, event.anchor_y), (0, 4));
+    assert_eq!(event.align, console_core::TextAlign::Center);
+    assert_eq!(event.color, 9);
+    assert_eq!((event.layout.anchor_x, event.layout.anchor_y), (0, 4));
+    assert_eq!((event.layout.x, event.layout.y), (-4, 4));
+    assert_eq!((event.layout.width, event.layout.height), (8, 6));
+    assert!(event.layout.visible);
+    assert!(event.layout.clipped);
+    assert!(
+        con.take_text_draws().is_empty(),
+        "drain should be destructive"
+    );
+
+    con.step(0).unwrap();
+    con.step(0).unwrap();
+    assert_eq!(
+        con.take_text_draws().len(),
+        1,
+        "an uninspected host retains only the latest frame"
+    );
+}

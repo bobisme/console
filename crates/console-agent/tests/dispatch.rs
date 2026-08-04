@@ -136,6 +136,53 @@ fn full_session_flow_against_demo_cart() {
 }
 
 #[test]
+fn text_events_report_anchors_bounds_camera_and_frame_filters() {
+    let cart = "__lua__\n\
+function _init() print('INIT', 96, 2, 7, 'center') end\n\
+function _draw() camera(4, 0) print('HI', 96, 10, 9, 'center') end\n";
+    let mut session = Session::new();
+
+    let loaded = handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":1,"method":"load_cart","params":{"text":cart}}),
+    );
+    assert!(loaded.get("error").is_none(), "load failed: {loaded}");
+
+    let init = handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":2,"method":"text_events","params":{}}),
+    );
+    let init_events = init["result"].as_array().unwrap();
+    assert_eq!(init_events.len(), 1);
+    assert_eq!(init_events[0]["frame"], 0);
+    assert_eq!(init_events[0]["text"], "INIT");
+    assert_eq!(init_events[0]["align"], "center");
+    assert_eq!(init_events[0]["x"], 88);
+    assert_eq!(init_events[0]["width"], 16);
+
+    handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":3,"method":"step","params":{"frames":1}}),
+    );
+    let frame_one = handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":4,"method":"text_events","params":{"from_frame":1}}),
+    );
+    let events = frame_one["result"].as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["frame"], 1);
+    assert_eq!(events[0]["anchor_x"], 96);
+    assert_eq!(events[0]["screen_anchor_x"], 92);
+    assert_eq!(events[0]["x"], 88);
+    assert_eq!(events[0]["y"], 10);
+    assert_eq!(events[0]["width"], 8);
+    assert_eq!(events[0]["height"], 6);
+    assert_eq!(events[0]["color"], 9);
+    assert_eq!(events[0]["visible"], true);
+    assert_eq!(events[0]["clipped"], false);
+}
+
+#[test]
 fn input_string_and_int_mask_are_equivalent() {
     let cart = demo_cart_text();
     let mut by_string = Session::new();
@@ -181,6 +228,7 @@ fn save_state_and_load_state_reproduce_continuous_framebuffer() {
         json!({"jsonrpc": "2.0", "id": 2, "method": "step", "params": {"frames": 90, "input": "R"}}),
     );
     let continuous_fb = continuous.console().unwrap().framebuffer().to_vec();
+    let continuous_text_events = continuous.text_events(None).unwrap();
 
     // Step 60, save, step 30 more (to be undone), load, replay identically.
     let mut split = Session::new();
@@ -219,6 +267,11 @@ fn save_state_and_load_state_reproduce_continuous_framebuffer() {
     assert_eq!(
         continuous_fb, split_fb,
         "replayed framebuffer must match the continuous run"
+    );
+    assert_eq!(
+        continuous_text_events,
+        split.text_events(None).unwrap(),
+        "replayed text diagnostics must match the continuous run"
     );
 }
 

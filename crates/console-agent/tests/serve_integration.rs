@@ -146,6 +146,46 @@ fn oneshot_run_screenshot_zoom_scales_png_dimensions() {
 }
 
 #[test]
+fn oneshot_text_events_are_json_lines_with_resolved_layout() {
+    let cart_path = std::env::temp_dir().join(format!(
+        "console-agent-text-events-{}.cart",
+        std::process::id()
+    ));
+    std::fs::write(
+        &cart_path,
+        "__lua__\nfunction _draw() print('TITLE', 96, 20, 6, 'center') end\n",
+    )
+    .expect("write text-event cart");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_console-agent"))
+        .arg("run")
+        .arg(&cart_path)
+        .arg("--frames")
+        .arg("1")
+        .arg("--text-events")
+        .output()
+        .expect("run text-event diagnostic");
+    let _ = std::fs::remove_file(&cart_path);
+
+    assert!(
+        output.status.success(),
+        "text-event run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lines: Vec<serde_json::Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["frame"], 1);
+    assert_eq!(lines[0]["text"], "TITLE");
+    assert_eq!(lines[0]["align"], "center");
+    assert_eq!(lines[0]["x"], 86);
+    assert_eq!(lines[0]["width"], 20);
+}
+
+#[test]
 fn serve_screenshot_zoom_param_scales_output() {
     let out_path = std::env::temp_dir().join(format!(
         "console-agent-serve-zoom-{}.png",

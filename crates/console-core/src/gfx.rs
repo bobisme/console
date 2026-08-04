@@ -40,6 +40,68 @@ pub type SpriteSheet = [u8; SHEET_LEN];
 /// cell — [`map`] skips it entirely rather than drawing sprite 0.
 pub type TileMap = [u8; MAP_LEN];
 
+/// Horizontal anchor used by [`print_aligned`]. Existing four-argument Lua
+/// `print` calls use [`TextAlign::Left`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
+}
+
+impl TextAlign {
+    pub fn parse(value: &str) -> Option<TextAlign> {
+        match value {
+            "left" => Some(TextAlign::Left),
+            "center" => Some(TextAlign::Center),
+            "right" => Some(TextAlign::Right),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TextAlign::Left => "left",
+            TextAlign::Center => "center",
+            TextAlign::Right => "right",
+        }
+    }
+
+    fn start_x(self, anchor_x: i32, width: i32) -> i32 {
+        match self {
+            TextAlign::Left => anchor_x,
+            TextAlign::Center => anchor_x.saturating_sub(width / 2),
+            TextAlign::Right => anchor_x.saturating_sub(width),
+        }
+    }
+}
+
+/// Screen-space placement and visibility of one text draw. Width/height are
+/// logical 4x6 cell bounds; the final spacing column/row contains no ink.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextLayout {
+    pub anchor_x: i32,
+    pub anchor_y: i32,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub visible: bool,
+    pub clipped: bool,
+}
+
+/// One `print` call captured for host diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextDraw {
+    pub text: String,
+    /// World-space anchor passed by Lua, before camera subtraction.
+    pub anchor_x: i32,
+    pub anchor_y: i32,
+    pub color: u8,
+    pub align: TextAlign,
+    pub layout: TextLayout,
+}
+
 /// Number of fixed display colours. Palette indices occupy the low six bits
 /// of each framebuffer and sprite-sheet byte.
 pub const COLOR_COUNT: usize = 64;
@@ -1007,30 +1069,72 @@ pub fn map(
     }
 }
 
-/// Draw `text` with the built-in 4x6 font. `\n` starts a new line at `x`.
-///
-/// Text is never dithered: `fillp` applies to the shape primitives only.
-pub fn print(fb: &mut Framebuffer, ds: &DrawState, text: &str, x: i32, y: i32, c: u8) {
+/// Logical 4x6-cell size of `text`. A newline starts another line; the widest
+/// line determines the width.
+pub fn text_size(text: &str) -> (i32, i32) {
+    font::text_size(text)
+}
+
+/// Draw `text` with the built-in 4x6 font and return its screen-space layout.
+/// `x` is a left, center, or right anchor for **each line**; `y` is always the
+/// top edge. Text is never dithered: `fillp` applies to shapes only.
+pub fn print_aligned(
+    fb: &mut Framebuffer,
+    ds: &DrawState,
+    text: &str,
+    x: i32,
+    y: i32,
+    c: u8,
+    align: TextAlign,
+) -> TextLayout {
     let c = Fill::solid(ds.remap(c));
-    let (x, y) = (ds.sx(x), ds.sy(y));
-    let mut cx = x;
-    let mut cy = y;
-    for ch in text.bytes() {
-        if ch == b'\n' {
-            cx = x;
-            cy += font::GLYPH_H;
-            continue;
-        }
-        if let Some(bits) = font::glyph(ch) {
-            for row in 0..font::GLYPH_H - 1 {
-                for colx in 0..font::GLYPH_W - 1 {
-                    if font::pixel(bits, colx, row) {
-                        put(fb, ds, cx + colx, cy + row, &c);
+    let (anchor_x, anchor_y) = (ds.sx(x), ds.sy(y));
+    let (width, height) = text_size(text);
+    let layout_x = align.start_x(anchor_x, width);
+    let mut cy = anchor_y;
+    for line in text.split('\n') {
+        let line_width = line
+            .bytes()
+            .fold(0i32, |w, _| w.saturating_add(font::GLYPH_W));
+        let mut cx = align.start_x(anchor_x, line_width);
+        for ch in line.bytes() {
+            if let Some(bits) = font::glyph(ch) {
+                for row in 0..font::GLYPH_H - 1 {
+                    for colx in 0..font::GLYPH_W - 1 {
+                        if font::pixel(bits, colx, row) {
+                            put(fb, ds, cx + colx, cy + row, &c);
+                        }
                     }
                 }
             }
+            cx = cx.saturating_add(font::GLYPH_W);
         }
-        cx += font::GLYPH_W;
+        cy = cy.saturating_add(font::GLYPH_H);
+    }
+
+    let ink_width = width.saturating_sub(1);
+    let ink_height = height.saturating_sub(1);
+    let (clip_x0, clip_y0, clip_x1, clip_y1) = ds.clip();
+    let has_ink_area = ink_width > 0 && ink_height > 0;
+    let right = layout_x.saturating_add(ink_width.saturating_sub(1));
+    let bottom = anchor_y.saturating_add(ink_height.saturating_sub(1));
+    let visible = has_ink_area
+        && layout_x <= clip_x1
+        && right >= clip_x0
+        && anchor_y <= clip_y1
+        && bottom >= clip_y0;
+    let clipped = has_ink_area
+        && (layout_x < clip_x0 || right > clip_x1 || anchor_y < clip_y0 || bottom > clip_y1);
+
+    TextLayout {
+        anchor_x,
+        anchor_y,
+        x: layout_x,
+        y: anchor_y,
+        width,
+        height,
+        visible,
+        clipped,
     }
 }
 

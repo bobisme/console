@@ -507,23 +507,55 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         })?,
     )?;
 
+    g.set(
+        "text_size",
+        lua.create_function(move |lua, value: Value| {
+            let text = to_text(lua, value);
+            Ok(gfx::text_size(&text))
+        })?,
+    )?;
+
     let st = state.clone();
     g.set(
         "print",
         lua.create_function(
-            move |lua, (s, x, y, c): (Value, Option<f64>, Option<f64>, Option<f64>)| {
+            move |lua,
+                  (s, x, y, c, align): (
+                Value,
+                Option<f64>,
+                Option<f64>,
+                Option<f64>,
+                Option<String>,
+            )| {
                 // Coerce before borrowing: __tostring could re-enter Lua.
                 let text = to_text(lua, s);
+                let align = match align.as_deref() {
+                    None => gfx::TextAlign::Left,
+                    Some(value) => gfx::TextAlign::parse(value).ok_or_else(|| {
+                        mlua::Error::RuntimeError(format!(
+                            "print align must be left, center, or right; got {value:?}"
+                        ))
+                    })?,
+                };
+                let x = fl(x.unwrap_or(0.0));
+                let y = fl(y.unwrap_or(0.0));
+                let color = col(c.unwrap_or(12.0));
                 let mut s = st.borrow_mut();
-                let State { fb, draw, .. } = &mut *s;
-                gfx::print(
+                let State {
                     fb,
                     draw,
-                    &text,
-                    fl(x.unwrap_or(0.0)),
-                    fl(y.unwrap_or(0.0)),
-                    col(c.unwrap_or(12.0)),
-                );
+                    text_draws,
+                    ..
+                } = &mut *s;
+                let layout = gfx::print_aligned(fb, draw, &text, x, y, color, align);
+                text_draws.push(gfx::TextDraw {
+                    text,
+                    anchor_x: x,
+                    anchor_y: y,
+                    color,
+                    align,
+                    layout,
+                });
                 Ok(())
             },
         )?,

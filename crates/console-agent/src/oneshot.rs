@@ -19,6 +19,7 @@ pub struct RunArgs {
     pub spectrogram: Option<String>,
     pub audio_events: bool,
     pub audio_stats: bool,
+    pub text_events: bool,
 }
 
 /// Parse the arguments following `run` (i.e. `args[2..]` of `argv`).
@@ -35,6 +36,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
     let mut spectrogram: Option<String> = None;
     let mut audio_events = false;
     let mut audio_stats = false;
+    let mut text_events = false;
 
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -85,6 +87,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             }
             "--audio-events" => audio_events = true,
             "--audio-stats" => audio_stats = true,
+            "--text-events" => text_events = true,
             other if other.starts_with("--") => return Err(format!("unknown flag {other:?}")),
             other => {
                 if cart_path.is_some() {
@@ -108,6 +111,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
         spectrogram,
         audio_events,
         audio_stats,
+        text_events,
     })
 }
 
@@ -174,9 +178,8 @@ pub fn run(args: &RunArgs) -> i32 {
         }
     }
 
-    // --screenshot / --screen-text / --wav / --spectrogram / --audio-events
-    // / --audio-stats all reflect the final frame (after --eval, in case the
-    // evaluated code itself drew or played something).
+    // Artifacts and event logs reflect the final frame after --eval, in case
+    // the evaluated code itself drew or played something.
     if let Some(path) = &args.screenshot {
         match session.screenshot_png_zoomed(args.screenshot_zoom) {
             Ok(bytes) => {
@@ -272,6 +275,26 @@ pub fn run(args: &RunArgs) -> i32 {
         }
     }
 
+    if args.text_events {
+        match session.text_events(None) {
+            Ok(events) => {
+                for event in events {
+                    match serde_json::to_string(&event) {
+                        Ok(line) => println!("{line}"),
+                        Err(e) => {
+                            eprintln!("error: {e}");
+                            return 1;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        }
+    }
+
     if let Some(v) = eval_result {
         println!("{v}");
     }
@@ -315,6 +338,7 @@ mod tests {
             "spec.png".into(),
             "--audio-events".into(),
             "--audio-stats".into(),
+            "--text-events".into(),
         ])
         .unwrap();
 
@@ -333,6 +357,7 @@ mod tests {
                 spectrogram: Some("spec.png".into()),
                 audio_events: true,
                 audio_stats: true,
+                text_events: true,
             }
         );
     }

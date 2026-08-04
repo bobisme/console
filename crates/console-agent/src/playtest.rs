@@ -115,6 +115,8 @@ pub enum Stage {
         #[serde(default)]
         audio_stats: Option<String>,
         #[serde(default)]
+        text_events: Option<String>,
+        #[serde(default)]
         from_frame: Option<u64>,
         #[serde(default)]
         to_frame: Option<u64>,
@@ -468,6 +470,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                 spectrogram,
                 audio_events,
                 audio_stats,
+                text_events,
                 from_frame,
                 to_frame,
                 window_frames,
@@ -481,6 +484,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                     spectrogram.as_deref(),
                     audio_events.as_deref(),
                     audio_stats.as_deref(),
+                    text_events.as_deref(),
                 ];
                 if outputs.iter().all(Option::is_none) {
                     return Err(format!("stage {index} capture has no outputs"));
@@ -618,6 +622,7 @@ fn execute_stage(
             spectrogram,
             audio_events,
             audio_stats,
+            text_events,
             from_frame,
             to_frame,
             window_frames,
@@ -684,6 +689,19 @@ fn execute_stage(
                 report
                     .artifacts
                     .push(write_artifact(root, name, "audio_stats", &bytes)?);
+            }
+            if let Some(name) = text_events {
+                let events = session
+                    .text_events(*from_frame)
+                    .map_err(|error| error.to_string())?;
+                let bytes = serde_json::to_vec_pretty(&json!({
+                    "events": events,
+                    "advice": []
+                }))
+                .map_err(|error| format!("serializing text events: {error}"))?;
+                report
+                    .artifacts
+                    .push(write_artifact(root, name, "text_events", &bytes)?);
             }
         }
     }

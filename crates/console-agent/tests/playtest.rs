@@ -258,3 +258,52 @@ fn invalid_schema_and_escape_paths_exit_two_without_writing() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("not allowed"));
     assert!(!dir.join("escape.png").exists());
 }
+
+#[test]
+fn scenario_captures_text_layout_events() {
+    let dir = scratch("text-events");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    let scenario = dir.join("text.json");
+    let artifacts = dir.join("artifacts");
+    fs::write(
+        &cart,
+        "__lua__\nfunction _draw() print('READY', 96, 12, 14, 'center') end\n",
+    )
+    .unwrap();
+    fs::write(
+        &scenario,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "stages": [
+                {"op":"input", "frames":1, "buttons":""},
+                {"op":"capture", "text_events":"layout.json", "from_frame":1}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&[
+        "playtest",
+        as_str(&cart),
+        "--scenario",
+        as_str(&scenario),
+        "--artifacts",
+        as_str(&artifacts),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.status.success(),
+        "playtest failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let artifact: Value =
+        serde_json::from_slice(&fs::read(artifacts.join("layout.json")).unwrap()).unwrap();
+    assert_eq!(artifact["events"][0]["frame"], 1);
+    assert_eq!(artifact["events"][0]["text"], "READY");
+    assert_eq!(artifact["events"][0]["align"], "center");
+    assert_eq!(artifact["events"][0]["x"], 86);
+    assert_eq!(artifact["events"][0]["width"], 20);
+}

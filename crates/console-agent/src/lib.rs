@@ -35,7 +35,7 @@ pub mod value;
 pub const RUN_USAGE: &str = "\
 usage:
   console-agent run <cart> [--frames N] [--input SPEC] [--screenshot out.png] [--screen-text] [--eval CODE] [--seed N]
-                    [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats]";
+                    [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats] [--text-events]";
 
 pub const SERVE_USAGE: &str = "usage:\n  console-agent serve";
 
