@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "seed": 8675309,
+  "stages": [
+    {"name":"title","op":"input","frames":1,"buttons":""},
+    {"name":"deploy","op":"input","frames":1,"buttons":"A"},
+    {"name":"release","op":"input","frames":1,"buttons":""},
+
+    {"name":"stage_zone_0","op":"eval","code":"dev_stage_environment(0)"},
+    {"name":"draw_zone_0","op":"input","frames":1,"buttons":""},
+    {"name":"capture_zone_0","op":"capture","screenshot":"01-loading-roofs.png","zoom":4},
+
+    {"name":"stage_zone_1","op":"eval","code":"dev_stage_environment(1)"},
+    {"name":"draw_zone_1","op":"input","frames":1,"buttons":""},
+    {"name":"capture_zone_1","op":"capture","screenshot":"02-waterworks.png","zoom":4},
+
+    {"name":"stage_zone_2","op":"eval","code":"dev_stage_environment(2)"},
+    {"name":"draw_zone_2","op":"input","frames":1,"buttons":""},
+    {"name":"capture_zone_2","op":"capture","screenshot":"03-molt-billboard.png","zoom":4},
+
+    {"name":"stage_zone_3","op":"eval","code":"dev_stage_environment(3)"},
+    {"name":"draw_zone_3","op":"input","frames":1,"buttons":""},
+    {"name":"capture_zone_3","op":"capture","screenshot":"04-gene-bar.png","zoom":4},
+
+    {"name":"stage_zone_4","op":"eval","code":"dev_stage_environment(4)"},
+    {"name":"draw_zone_4","op":"input","frames":1,"buttons":""},
+    {"name":"capture_zone_4","op":"capture","screenshot":"05-croak-tower.png","zoom":4},
+
+    {"name":"stage_zone_5","op":"eval","code":"dev_stage_environment(5)"},
+    {"name":"draw_zone_5","op":"input","frames":1,"buttons":""},
+    {"name":"capture_zone_5","op":"capture","screenshot":"06-mutagen-works.png","zoom":4},
+
+    {"name":"stage_zone_6","op":"eval","code":"dev_stage_environment(6)"},
+    {"name":"draw_zone_6","op":"input","frames":1,"buttons":""},
+    {"name":"capture_zone_6","op":"capture","screenshot":"07-bzz-co-arena.png","zoom":4}
+  ]
+}

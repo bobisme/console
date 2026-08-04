@@ -54,6 +54,24 @@ Use `--extract` after an exact PNG import to refresh the compact source. The
 runtime draws every insect and boss module inside a scoped identity palette;
 Buzzkill's green index `12` accent is the only phase-remapped material.
 
+## Production environment atlas
+
+`environment-atlas.pixels` stores the live `8x8` material kit and the three
+generated-then-cleaned `16x16` prop clusters. It includes topology variants,
+pipe and fence components, hazard lips, and paired cap/face families for rusted
+loading roofs, damp concrete, violet lab panels, and mutagen pipeworks. Rebuild
+only those exact cells with:
+
+```bash
+bash carts/ribbit-recoil-art/build-environment-atlas.sh carts/ribbit-recoil.cart
+```
+
+The runtime assigns collision-equivalent variants deterministically from level
+topology and world zone, draws the map in an identity-palette scope, and applies
+lamp, sign, coil, and moon highlights only to nearby exposed terrain edges.
+`ribbit-recoil-environment-art.playtest.json` captures all seven zones at exact
+nearest-neighbor `4x` for native-scale and seam review.
+
 ## Reproduce and inspect
 
 Run from the console repository root:

@@ -61,6 +61,10 @@ fn enemy_atlas_sections() -> BTreeMap<String, Vec<Vec<u8>>> {
     atlas_sections("enemy-atlas.pixels")
 }
 
+fn environment_atlas_sections() -> BTreeMap<String, Vec<Vec<u8>>> {
+    atlas_sections("environment-atlas.pixels")
+}
+
 fn isolated_same_role_pixels(frame: &[Vec<u8>]) -> usize {
     let height = frame.len();
     let width = frame.first().map_or(0, Vec::len);
@@ -657,12 +661,12 @@ fn authored_level_and_animation_contracts_are_present() {
         "#}),
     );
     let result = &authored["result"];
-    assert_eq!(result["floor"], 192);
-    assert_eq!(result["girder"], 193);
-    assert_eq!(result["mud"], 194);
-    assert_eq!(result["acid"], 195);
+    assert_eq!(result["floor"], 205);
+    assert_eq!(result["girder"], 209);
+    assert_eq!(result["mud"], 211);
+    assert_eq!(result["acid"], 222);
     assert_eq!(result["breakable"], 196);
-    assert_eq!(result["bridge"], 193);
+    assert_eq!(result["bridge"], 209);
     assert_eq!(result["frog_run"], 2);
     assert_eq!(result["frog_swing"], 4);
     assert_eq!(result["frog_rise"], 1);
@@ -1045,6 +1049,88 @@ fn enemy_atlas_matches_source_and_obeys_semantic_pixel_contracts() {
 }
 
 #[test]
+fn environment_atlas_matches_source_and_allocated_sheet_cells() {
+    let cart = console_core::Cart::parse(&cart_text()).unwrap();
+    let sections = environment_atlas_sections();
+    let allocations = [
+        ("steel_cap", 0, 12, 8, 8),
+        ("girder", 1, 12, 8, 8),
+        ("slime_cap", 2, 12, 8, 8),
+        ("acid", 3, 12, 8, 8),
+        ("breakable", 4, 12, 8, 8),
+        ("steel_seam", 12, 12, 8, 8),
+        ("steel_left", 13, 12, 8, 8),
+        ("steel_right", 14, 12, 8, 8),
+        ("steel_damaged", 15, 12, 8, 8),
+        ("brace", 0, 13, 8, 8),
+        ("junction", 1, 13, 8, 8),
+        ("cavity", 2, 13, 8, 8),
+        ("masonry_top", 3, 13, 8, 8),
+        ("masonry_face", 4, 13, 8, 8),
+        ("masonry_corner", 5, 13, 8, 8),
+        ("pipe_h", 6, 13, 8, 8),
+        ("pipe_v", 7, 13, 8, 8),
+        ("pipe_elbow", 8, 13, 8, 8),
+        ("pipe_junction", 9, 13, 8, 8),
+        ("vent_grille", 10, 13, 8, 8),
+        ("fence_post", 11, 13, 8, 8),
+        ("fence_wire", 12, 13, 8, 8),
+        ("fence_damaged", 13, 13, 8, 8),
+        ("acid_lip", 14, 13, 8, 8),
+        ("prop_lamp", 0, 14, 16, 16),
+        ("prop_coil", 2, 14, 16, 16),
+        ("prop_crate", 4, 14, 16, 16),
+        ("prop_sign", 6, 14, 8, 8),
+        ("prop_vent", 7, 14, 8, 8),
+        ("prop_antenna", 6, 15, 8, 8),
+        ("prop_cable", 7, 15, 8, 8),
+        ("rust_cap", 8, 15, 8, 8),
+        ("rust_face", 9, 15, 8, 8),
+        ("concrete_cap", 10, 15, 8, 8),
+        ("concrete_face", 11, 15, 8, 8),
+        ("lab_cap", 12, 15, 8, 8),
+        ("lab_face", 13, 15, 8, 8),
+        ("pipeworks_cap", 14, 15, 8, 8),
+        ("pipeworks_face", 15, 15, 8, 8),
+    ];
+
+    assert_eq!(sections.len(), allocations.len());
+    for (name, tx, ty, width, height) in allocations {
+        let frame = sections
+            .get(name)
+            .unwrap_or_else(|| panic!("missing environment atlas section @{name}"));
+        assert_eq!(frame.len(), height, "@{name} height");
+        assert!(frame.iter().all(|row| row.len() == width), "@{name} width");
+        let colors: BTreeSet<u8> = frame
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|&c| c != 0)
+            .collect();
+        assert!(
+            (1..=8).contains(&colors.len()),
+            "@{name} uses {} nontransparent indices: {colors:?}",
+            colors.len()
+        );
+        let isolated_budget = if width == 8 { 8 } else { 40 };
+        assert!(
+            isolated_same_role_pixels(frame) <= isolated_budget,
+            "@{name} exceeds its {isolated_budget}-pixel isolated-accent budget"
+        );
+        for (y, row) in frame.iter().enumerate() {
+            for (x, expected) in row.iter().enumerate() {
+                let sheet_index = (ty * 8 + y) * console_core::SHEET_W + tx * 8 + x;
+                assert_eq!(
+                    cart.sprites()[sheet_index],
+                    *expected,
+                    "@{name} differs from the allocated cart cell at ({x},{y})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn frog_atlas_builder_is_a_byte_exact_rebuild() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let nonce = SystemTime::now()
@@ -1100,6 +1186,38 @@ fn enemy_atlas_builder_is_a_byte_exact_rebuild() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(rebuilt, original, "enemy atlas builder must be byte-exact");
+}
+
+#[test]
+fn environment_atlas_builder_is_a_byte_exact_rebuild() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let scratch = std::env::temp_dir().join(format!(
+        "ribbit-recoil-environment-atlas-{}-{nonce}.cart",
+        std::process::id()
+    ));
+    let original = cart_text();
+    fs::write(&scratch, &original).unwrap();
+    let output = Command::new("bash")
+        .arg(root.join("carts/ribbit-recoil-art/build-environment-atlas.sh"))
+        .arg(&scratch)
+        .env("CONSOLE_BIN", env!("CARGO_BIN_EXE_console"))
+        .output()
+        .expect("run environment atlas builder");
+    let rebuilt = fs::read_to_string(&scratch).expect("read rebuilt scratch cart");
+    fs::remove_file(&scratch).expect("remove scratch cart");
+    assert!(
+        output.status.success(),
+        "environment atlas builder failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        rebuilt, original,
+        "environment atlas builder must be byte-exact"
+    );
 }
 
 #[test]

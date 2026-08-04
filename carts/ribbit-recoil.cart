@@ -18,6 +18,19 @@ local MIN_ROPE, MAX_TONGUE, TONGUE_SPEED = 18, 116, 7.2
 local HOP_SPEED, RUN_SPEED, AIR_SPEED = -4.65, 2.8, 3.4
 
 local STEEL, GIRDER, MUD, ACID, BREAKABLE = 192, 193, 194, 195, 196
+-- These IDs are globals because the cartridge VM caps main-chunk locals at 200.
+STEEL_SEAM, STEEL_LEFT, STEEL_RIGHT, STEEL_DAMAGED = 204, 205, 206, 207
+BRACE, JUNCTION, CAVITY = 208, 209, 210
+MASONRY_TOP, MASONRY_FACE, MASONRY_CORNER = 211, 212, 213
+PIPE_H, PIPE_V, PIPE_ELBOW, PIPE_JUNCTION = 214, 215, 216, 217
+VENT_GRILLE, FENCE_POST, FENCE_WIRE, FENCE_DAMAGED = 218, 219, 220, 221
+ACID_LIP = 222
+PROP_LAMP, PROP_COIL, PROP_CRATE = 224, 226, 228
+PROP_SIGN, PROP_VENT, PROP_ANTENNA, PROP_CABLE = 230, 231, 246, 247
+RUST_CAP, RUST_FACE, CONCRETE_CAP, CONCRETE_FACE = 248, 249, 250, 251
+LAB_CAP, LAB_FACE, PIPEWORKS_CAP, PIPEWORKS_FACE = 252, 253, 254, 255
+ZONE_STEEL_CAP={RUST_CAP,CONCRETE_CAP,RUST_CAP,LAB_CAP,CONCRETE_CAP,PIPEWORKS_CAP,STEEL}
+ZONE_STEEL_FACE={RUST_FACE,CONCRETE_FACE,RUST_FACE,LAB_FACE,CONCRETE_FACE,PIPEWORKS_FACE,STEEL}
 local E_GNAT, E_BEETLE, E_WASP, E_BOSS = 1, 2, 3, 4
 local P_LASER, P_FIRE = 1, 2
 local B_STINGER, B_BOMB = 1, 2
@@ -57,10 +70,12 @@ local LEVELS = {{
   bombs={{368,416}, {514,344}, {660,440}, {824,446}},
   secrets={{354,402,1500}},
   props={
-    {"pipe",24,468,70}, {"fence",104,472,88}, {"sign",184,438,0},
-    {"vent",244,456,0}, {"tank",404,432,0}, {"pipe",462,466,92},
-    {"sign",574,430,1}, {"fence",674,450,74}, {"vent",736,440,0},
-    {"tank",846,438,0}, {"pipe",886,470,54}
+    {"lamp",56,488,0}, {"pipe",24,468,70}, {"fence",104,472,88},
+    {"lamp",184,392,0}, {"vent",244,344,0},
+    {"coil",404,464,0}, {"pipe",462,466,92}, {"lamp",536,368,0},
+    {"sign",574,368,1}, {"fence",674,450,74},
+    {"crate",736,472,0}, {"lamp",792,472,0}, {"tank",846,438,0},
+    {"pipe",886,470,54}
   },
   checkpoints={{330,444}, {650,432}},
   boss={x=854,y=438,range_x=30,range_y=34,hp=8},
@@ -115,12 +130,27 @@ local function norm(dx,dy)
   return dx/d,dy/d
 end
 
-local function solid(tile)
-  return tile==STEEL or tile==GIRDER or tile==MUD or tile==BREAKABLE
-end
+SOLID_TILES={
+  [STEEL]=true,[GIRDER]=true,[MUD]=true,[BREAKABLE]=true,
+  [STEEL_SEAM]=true,[STEEL_LEFT]=true,[STEEL_RIGHT]=true,[STEEL_DAMAGED]=true,
+  [BRACE]=true,[JUNCTION]=true,[CAVITY]=true,
+  [MASONRY_TOP]=true,[MASONRY_FACE]=true,[MASONRY_CORNER]=true,
+  [RUST_CAP]=true,[RUST_FACE]=true,[CONCRETE_CAP]=true,[CONCRETE_FACE]=true,
+  [LAB_CAP]=true,[LAB_FACE]=true,[PIPEWORKS_CAP]=true,[PIPEWORKS_FACE]=true
+}
 
-local function hazardous(tile)
-  return tile==ACID
+local function solid(tile) return SOLID_TILES[tile] or false end
+local function hazardous(tile) return tile==ACID or tile==ACID_LIP end
+function breakable(tile) return tile==BREAKABLE end
+function steel_material(tile)
+  return tile==STEEL or tile==STEEL_SEAM or tile==STEEL_LEFT
+    or tile==STEEL_RIGHT or tile==STEEL_DAMAGED or tile>=RUST_CAP
+end
+function girder_material(tile)
+  return tile==GIRDER or tile==BRACE or tile==JUNCTION or tile==CAVITY
+end
+function masonry_material(tile)
+  return tile==MUD or tile==MASONRY_TOP or tile==MASONRY_FACE or tile==MASONRY_CORNER
 end
 
 local function solid_box(x,y,w,h)
@@ -210,7 +240,7 @@ local function add_explosion(x,y,power,player_owned)
     local radius=24+power*6
     for cy=max(0,flr((y-radius)/8)),min(63,flr((y+radius)/8)) do
       for cx=max(0,flr((x-radius)/8)),min(127,flr((x+radius)/8)) do
-        if mget(cx,cy)==BREAKABLE and dist(x,y,cx*8+4,cy*8+4)<radius then
+        if breakable(mget(cx,cy)) and dist(x,y,cx*8+4,cy*8+4)<radius then
           mset(cx,cy,0)
           burst(cx*8+4,cy*8+4,4,5,1.1,2)
           score=score+25
@@ -265,6 +295,45 @@ local function build_level(index)
     local p=level.platforms[i]
     for cy=p[2],p[2]+p[4]-1 do
       for cx=p[1],p[1]+p[3]-1 do mset(cx,cy,p[5]) end
+    end
+    -- Replace collision-equivalent base fills with authored, topology-aware
+    -- material variants. Endcaps, junctions, damage and undersides stay stable
+    -- across runs so the level reads as constructed architecture, not wallpaper.
+    for cy=p[2],p[2]+p[4]-1 do
+      for cx=p[1],p[1]+p[3]-1 do
+        local relx,rely=cx-p[1],cy-p[2]
+        local tile=p[5]
+        if tile==STEEL then
+          local zone=mid(0,flr(cx/16),6)
+          if rely>0 then
+            tile=ZONE_STEEL_FACE[zone+1]
+            if (cx*3+cy*5+i)%7==0 then
+              tile=zone==0 and STEEL_DAMAGED
+                or (zone==1 or zone==4) and MASONRY_FACE
+                or zone==3 and CAVITY
+                or zone==5 and BRACE
+                or tile
+            end
+          elseif relx==0 then tile=STEEL_LEFT
+          elseif relx==p[3]-1 then tile=STEEL_RIGHT
+          elseif (cx+i*3)%13==0 then tile=STEEL_DAMAGED
+          elseif (cx+i)%11==0 then tile=STEEL_SEAM
+          else tile=ZONE_STEEL_CAP[zone+1] end
+        elseif tile==GIRDER then
+          local zone=mid(0,flr(cx/16),6)
+          if relx==0 or relx==p[3]-1 then tile=JUNCTION
+          elseif (relx+i)%5==0 then tile=ZONE_STEEL_CAP[zone+1]
+          elseif (relx+i)%4==0 then tile=CAVITY
+          elseif (relx+i)%2==0 then tile=BRACE end
+        elseif tile==MUD then
+          if relx==p[3]-1 then tile=MASONRY_CORNER
+          elseif rely==0 then tile=MASONRY_TOP
+          else tile=MASONRY_FACE end
+        elseif tile==ACID and rely==0 then
+          tile=ACID_LIP
+        end
+        mset(cx,cy,tile)
+      end
     end
   end
   enemies={}
@@ -685,13 +754,13 @@ local function laser_attack()
     x,y=x+ax*3,y+ay*3
     local tcx,tcy=flr(x/8),flr(y/8)
     local tile=mget(tcx,tcy)
-    if tile==BREAKABLE then
+    if breakable(tile) then
       -- Laser eyes punch a frog-sized aperture instead of shaving one pixel row.
       -- This makes the mutation read as a weapon and prevents an awkward
       -- second shot at a tile the standing frog cannot aim toward.
       for by=tcy-1,tcy+1 do
         for bx=tcx-1,tcx+1 do
-          if mget(bx,by)==BREAKABLE then
+          if breakable(mget(bx,by)) then
             mset(bx,by,0)
             burst(bx*8+4,by*8+4,10,5,1.0,4)
             score=score+25
@@ -1262,6 +1331,12 @@ local function begin_authored_sprite_scope(hurt,phase_ink)
 end
 
 local ZONE_ACCENT={6,4,10,45,31,36,14}
+ENV_LAMPS={{56,488,31},{184,392,31},{536,368,45},{792,472,36}}
+ENV_SURFACE_LIGHTS={
+  {56,488,31,28},{184,392,31,25},{354,450,38,31},{404,464,10,24},
+  {536,368,45,25},{691,438,10,28},{760,456,36,27},{792,472,31,25},
+  {884,472,36,29}
+}
 
 local function scene_zone()
   return mid(0,flr((camera_x+92)/128),6)
@@ -1281,14 +1356,13 @@ end
 local function draw_backdrop()
   local zone=scene_zone()
   local accent=ZONE_ACCENT[zone+1]
-  cls(49)
-  rectfill(0,HUD_H,SW-1,76,40)
-  rectfill(0,77,SW-1,143,41)
-  rectfill(0,144,SW-1,211,9)
-  rectfill(0,212,SW-1,SH-1,1)
-  fillp(0x8888,49)
-  rectfill(0,80,SW-1,108,41)
+  begin_authored_sprite_scope(false)
+  cls(0)
+  rectfill(0,HUD_H,SW-1,178,0)
+  rectfill(0,179,SW-1,231,1)
+  rectfill(0,232,SW-1,SH-1,40)
   fillp()
+  restore_legacy_palette()
 
   -- A stable landmark moon. Its full silhouette is deliberately kept in frame.
   if zone<=1 or zone==6 then
@@ -1320,53 +1394,54 @@ local function draw_backdrop()
   end
 
   -- Thin vapor shelves leave room for silhouettes instead of reading as black hills.
-  for band=0,1 do
-    local cy=116+band*47+flr((camera_y-208)*(0.015+band*0.01))
-    local drift=flr(camera_x*(0.045+band*0.035))
+  for band=0,2 do
+    local cy=101+band*39+flr((camera_y-208)*(0.012+band*0.009))
+    local drift=flr(camera_x*(0.035+band*0.028))
     for i=0,3 do
-      local x=(i*70+band*27-drift)%(SW+88)-44
-      draw_cloud_mass(x,cy,36+((i+zone)%3)*7,
-        band==0 and 50 or 8,band==0 and 52 or 9)
+      local x=(i*67+band*23-drift)%(SW+92)-46
+      draw_cloud_mass(x,cy,41+((i+zone+band)%3)*8,
+        band==0 and 40 or band==1 and 49 or 40,
+        band==0 and 49 or band==1 and 50 or 9)
     end
   end
 
-  -- Far skyline: narrow, quiet, and low contrast.
-  for i=0,15 do
-    local x=(i*19-flr(camera_x*0.10))%(SW+44)-22
-    local w=11+(i*7+zone*3)%12
-    local h=38+(i*13+zone*9)%62
-    local top=229-h
-    rectfill(x,top,x+w,SH,49)
-    rectfill(x+2,top+3,x+w-2,SH,50)
-    line(x+2,top+2,x+w-2,top+2,52)
+  -- Far skyline: broad, irregular masses with genuine gaps and low contrast.
+  for i=0,8 do
+    local x=(i*34-flr(camera_x*0.10))%(SW+70)-35
+    local w=17+(i*11+zone*5)%20
+    local h=31+(i*17+zone*7)%56
+    local top=235-h
+    rectfill(x,top,x+w,SH,40)
+    rectfill(x+3,top+4,x+w-3,SH,1)
+    line(x+3,top+3,x+w-3,top+3,2)
     if (i+zone)%4==0 then
-      rectfill(x+3,top-7,x+w-3,top,49)
-      line(x+w/2,top-7,x+w/2,top-14,52)
+      rectfill(x+5,top-8,x+w-5,top,40)
+      line(x+w/2,top-8,x+w/2,top-17,2)
       pset(x+w/2,top-15,accent)
     elseif (i+zone)%4==1 then
-      rectfill(x+w-6,top-10,x+w-3,top,50)
-      line(x+w-5,top-10,x+w-5,top-17,52)
+      rectfill(x+w-8,top-12,x+w-4,top,40)
+      line(x+w-6,top-12,x+w-6,top-20,2)
     elseif (i+zone)%4==2 then
-      line(x+2,top,x+w-2,top-8,51)
-      line(x+w-2,top,x+2,top-8,51)
+      line(x+3,top,x+w-3,top-9,2)
+      line(x+w-3,top,x+3,top-9,2)
     end
-    for wy=top+9,226,9 do
-      for wx=x+4,x+w-4,6 do
-        if (i+wx+wy+zone)%4<2 then
-          pset(wx,wy,(wy+i)%5==0 and accent or 30)
+    for wy=top+11,230,12 do
+      for wx=x+6,x+w-5,9 do
+        if (i+flr(wx/9)+flr(wy/12)+zone)%5<2 then
+          pset(wx,wy,(wy+i)%7==0 and accent or 18)
         end
       end
     end
   end
 
-  -- Middle skyline uses larger authored shapes and warmer focal windows.
-  for i=0,8 do
-    local x=(i*34+zone*11-flr(camera_x*0.22))%(SW+68)-34
-    local w=24+(i*9+zone*5)%20
-    local top=176+(i*17+zone*13)%44
-    rectfill(x,top,x+w,SH,49)
-    rect(x+2,top+3,x+w-2,SH,51)
-    line(x+3,top+2,x+w-3,top+2,53)
+  -- Middle skyline has fewer, heavier silhouettes and warmer focal windows.
+  for i=0,5 do
+    local x=(i*53+zone*13-flr(camera_x*0.22))%(SW+92)-46
+    local w=29+(i*13+zone*7)%24
+    local top=193+(i*19+zone*11)%48
+    rectfill(x,top,x+w,SH,48)
+    rect(x+3,top+4,x+w-3,SH,50)
+    line(x+4,top+3,x+w-4,top+3,52)
     if (i+zone)%3==0 then
       rectfill(x+5,top-9,x+w-6,top,49)
       line(x+w/2,top-9,x+w/2,top-18,52)
@@ -1375,8 +1450,8 @@ local function draw_backdrop()
       line(x+w-4,top,x+w-10,top-11,51)
       line(x+10,top-11,x+w-10,top-11,53)
     end
-    for wy=top+13,278,13 do
-      for wx=x+7,x+w-6,9 do
+    for wy=top+15,278,14 do
+      for wx=x+8,x+w-7,11 do
         local lit=(i+flr(wy/13)+flr(wx/9)+zone)%5
         if lit<2 then
           rectfill(wx,wy,wx+2,wy+3,lit==0 and 31 or accent)
@@ -1423,17 +1498,39 @@ local function draw_backdrop()
     circfill(138,134,3,36)
   end
 
-  -- Near silhouette is sparse and asymmetric, separating it from the play layer.
-  for i=0,4 do
-    local x=(i*57-flr(camera_x*0.34))%(SW+92)-46
-    local y=252+(i*19+zone*7)%34+flr((camera_y-208)/28)
-    rectfill(x,y,x+35,SH,48)
-    line(x-5,y+8,x+40,y+8,52)
-    line(x+8,y,x+8,y-15,51)
-    line(x+27,y,x+27,y-9,51)
-    for wy=y+16,SH-8,14 do
-      rectfill(x+9,wy,x+11,wy+2,(wy+i)%3==0 and 31 or 13)
-      rectfill(x+24,wy,x+26,wy+2,13)
+  -- Near parallax rotates between tower, tank, crane and low-roof families.
+  -- Their unequal mass and intentional gaps stop the skyline becoming a fence.
+  for i=0,3 do
+    local x=(i*71+zone*17-flr(camera_x*0.34))%(SW+116)-58
+    local y=246+(i*23+zone*9)%42+flr((camera_y-208)/28)
+    local family=(i+zone)%4
+    if family==0 then
+      rectfill(x,y,x+31,SH,48)
+      rect(x+3,y+4,x+28,SH,50)
+      rectfill(x+7,y-9,x+23,y,48)
+      line(x+15,y-9,x+15,y-24,52)
+      pset(x+15,y-25,accent)
+      for wy=y+15,SH-9,17 do rectfill(x+9,wy,x+11,wy+3,31) end
+    elseif family==1 then
+      rectfill(x-3,y+18,x+39,SH,48)
+      line(x,y+18,x+36,y+18,52)
+      circfill(x+18,y+7,15,48) circ(x+18,y+7,14,50)
+      line(x+5,y+7,x+31,y+7,49)
+      line(x+8,y+20,x+2,SH,50) line(x+28,y+20,x+35,SH,50)
+    elseif family==2 then
+      rectfill(x+4,y+12,x+9,SH,48)
+      line(x+6,y+12,x+6,y-20,52)
+      line(x+6,y-18,x+43,y-18,52)
+      line(x+6,y-18,x+34,y+3,50)
+      line(x+36,y-18,x+36,y+5,51)
+      rectfill(x+33,y+5,x+39,y+10,48)
+    else
+      rectfill(x,y+22,x+46,SH,48)
+      line(x-5,y+22,x+51,y+22,52)
+      line(x+7,y+21,x+15,y+10,50)
+      line(x+39,y+21,x+31,y+10,50)
+      line(x+15,y+10,x+31,y+10,51)
+      line(x+4,y+3,x+42,y-5,49)
     end
   end
 end
@@ -2092,27 +2189,41 @@ local function draw_zone_architecture()
     local x,y,w=p[1]*8,p[2]*8,p[3]*8
     if p[4]==1 and p[5]~=ACID and x+w>camera_x-24 and x<camera_x+SW+24 then
       local depth=mid(16,22+(i*11)%27,WORLD_H-y-1)
+      fillp(0xaaaa,49)
+      rectfill(x+3,y+8,x+w-4,y+12,48)
+      fillp()
       if p[5]==MUD then
         line(x+4,y+7,x+1,y+depth,9)
         line(x+w-5,y+7,x+w-2,y+depth,9)
         for root=x+10,x+w-8,16 do
           line(root,y+6,root-3+(root%7),y+14+(root%13),10)
         end
-      elseif p[5]==GIRDER and i%2==0 then
-        rectfill(x+2,y+5,x+w-3,y+8,50)
-        for bx=x+4,x+w-12,16 do
-          line(bx,y+9,bx,y+depth,52)
-          line(bx+12,y+9,bx+12,y+depth,52)
-          line(bx,y+10,bx+12,y+depth-1,54)
-          line(bx+12,y+10,bx,y+depth-1,51)
-          circfill(bx,y+10,1,13) circfill(bx+12,y+10,1,13)
-        end
       elseif p[5]==GIRDER then
-        line(x+5,y+6,x+5,y-24,52)
-        line(x+w-6,y+6,x+w-6,y-24,52)
-        line(x+5,y-20,x+w-6,y-8,54)
-        line(x+w-6,y-20,x+5,y-8,51)
-        for cable=x+12,x+w-10,18 do line(cable,y+6,cable,y-13,53) end
+        rectfill(x+2,y+6,x+w-3,y+9,50)
+        local spacing=zone==2 and 24 or zone>=5 and 28 or 18+(i%3)*4
+        for bx=x+4,x+w-9,spacing do
+          if zone==1 then
+            rectfill(bx,y+9,bx+5,y+depth,49)
+            line(bx+1,y+10,bx+1,y+depth,54)
+            pset(bx+3,y+14,10)
+          elseif zone==3 then
+            line(bx,y+9,bx,y+depth,52)
+            line(bx+6,y+9,bx+6,y+depth-4,50)
+            circ(bx+3,y+depth-2,3,45)
+          elseif zone==4 then
+            line(bx,y+9,bx+spacing-4,y+depth,52)
+            line(bx+spacing-4,y+9,bx,y+depth,50)
+          elseif zone>=5 then
+            rectfill(bx,y+9,bx+7,y+15,49)
+            line(bx,y+16,bx+7,y+depth,52)
+            line(bx+7,y+16,bx,y+depth,50)
+          else
+            line(bx,y+9,bx,y+depth,52)
+            line(bx+spacing-5,y+9,bx+spacing-5,y+depth,52)
+            line(bx,y+10,bx+spacing-5,y+depth-1,54)
+            line(bx+spacing-5,y+10,bx,y+depth-1,51)
+          end
+        end
       else
         rectfill(x+2,y+6,x+w-3,y+depth,50)
         rect(x+4,y+9,x+w-5,y+depth,52)
@@ -2126,11 +2237,14 @@ local function draw_zone_architecture()
       end
     end
   end
-  -- Three restrained light pools guide the eye through every camera sector.
-  local sector=zone*128
-  draw_light_pool(sector+30,camera_y+196,zone%2==0 and 31 or accent)
-  draw_light_pool(sector+92,camera_y+236,zone%2==0 and accent or 31)
-  draw_light_pool(sector+154,camera_y+174,zone%3==0 and 36 or 31)
+  -- Lamps are tied to actual roof surfaces. Each cone has empty darkness around
+  -- it, so lighting groups architecture instead of forming a repeated screen-wide band.
+  for i=1,#ENV_LAMPS do
+    local lamp=ENV_LAMPS[i]
+    if lamp[1]>camera_x-24 and lamp[1]<camera_x+SW+24 then
+      draw_light_pool(lamp[1],lamp[2],lamp[3])
+    end
+  end
 
   -- One major landmark per zone, supported by smaller asymmetric machinery.
   if zone==0 then
@@ -2168,48 +2282,72 @@ end
 local function draw_prop(p)
   local kind,x,y,w=p[1],p[2],p[3],p[4]
   if kind=="pipe" then
-    rectfill(x,y-4,x+w,y+3,50)
-    line(x,y-4,x+w,y-4,59) line(x,y+3,x+w,y+3,52)
-    rectfill(x-3,y-28,x+5,y+2,50)
-    line(x-3,y-28,x-3,y+1,59) line(x+5,y-28,x+5,y+1,52)
-    circ(x+1,y-28,6,55) circ(x+1,y-28,3,13)
-    for px=x+12,x+w-4,20 do
-      rectfill(px,y-5,px+3,y+4,52)
-      line(px+1,y-3,px+1,y+2,13)
+    begin_authored_sprite_scope(false)
+    for px=x,x+w-8,8 do
+      spr((px-x)%32==24 and PIPE_JUNCTION or PIPE_H,px,y-8)
+    end
+    for py=y-32,y-16,8 do spr(PIPE_V,x-4,py) end
+    spr(PIPE_ELBOW,x-4,y-16)
+    restore_legacy_palette()
+    for px=x+12,x+w-4,24 do
+      pset(px,y-5,31) pset(px+1,y-4,13)
     end
   elseif kind=="fence" then
-    rectfill(x,y-31,x+w,y-28,50)
-    line(x,y-31,x+w,y-31,59) line(x,y,x+w,y,52)
-    for px=x,x+w,12 do
-      rectfill(px,y-31,px+2,y,50)
-      line(px+2,y-28,px+12,y-2,53)
-      line(px+12,y-28,px+2,y-2,52)
-      circfill(px+1,y-31,1,13)
+    begin_authored_sprite_scope(false)
+    pal(59,52) pal(52,50) pal(31,13)
+    for py=y-32,y-8,8 do
+      for px=x,x+w-8,8 do
+        local damaged=(px+py+flr(x/8))%40==0
+        spr(damaged and FENCE_DAMAGED or FENCE_WIRE,px,py)
+      end
     end
+    for px=x,x+w,16 do spr(FENCE_POST,px,y-32) end
+    restore_legacy_palette()
+    line(x,y-33,x+w,y-33,59)
   elseif kind=="sign" then
-    rectfill(x-13,y-29,x+13,y+1,49)
-    rect(x-14,y-30,x+14,y+2,59)
-    rect(x-11,y-27,x+11,y-4,52)
-    rectfill(x-9,y-25,x+9,y-6,p[4]==1 and 35 or 41)
-    line(x-9,y-25,x+9,y-25,p[4]==1 and 36 or 45)
-    if p[4]==1 then
-      line(x-6,y-21,x+6,y-9,4) line(x+6,y-21,x-6,y-9,4)
-      pset(x,y-15,63)
-    else
-      circfill(x,y-16,6,7)
-      circfill(x-3,y-18,2,11) circfill(x+3,y-18,2,11)
-      pset(x-3,y-18,48) pset(x+3,y-18,48)
-      line(x-5,y-11,x+5,y-11,14)
-    end
-    line(x-9,y+2,x-5,y+8,52) line(x+9,y+2,x+5,y+8,52)
+    fillp(0xaaaa,p[4]==1 and 36 or 45)
+    rectfill(x-17,y-31,x+17,y+2,p[4]==1 and 36 or 45)
+    fillp()
+    begin_authored_sprite_scope(false)
+    sspr((PROP_SIGN%16)*8,flr(PROP_SIGN/16)*8,8,8,x-12,y-28,24,24)
+    restore_legacy_palette()
+    line(x-9,y-3,x-6,y+7,52) line(x+9,y-3,x+6,y+7,52)
+    line(x-16,y+2,x+16,y+2,p[4]==1 and 36 or 45)
   elseif kind=="vent" then
-    rectfill(x-16,y-23,x+16,y+1,49)
-    rect(x-17,y-24,x+17,y+2,59)
-    rect(x-13,y-20,x+13,y-3,52)
-    circfill(x,y-12,9,50) circ(x,y-12,9,55)
-    line(x,y-21,x,y-3,13) line(x-9,y-12,x+9,y-12,13)
-    line(x-6,y-18,x+6,y-6,52) line(x+6,y-18,x-6,y-6,52)
-    for bolt=-13,13,26 do pset(x+bolt,y-21,31) pset(x+bolt,y-2,31) end
+    rectfill(x-17,y-25,x+17,y+2,48)
+    begin_authored_sprite_scope(false)
+    sspr((PROP_VENT%16)*8,flr(PROP_VENT/16)*8,8,8,x-16,y-24,32,24)
+    restore_legacy_palette()
+    rect(x-17,y-25,x+17,y+2,59)
+    pset(x-14,y-22,31) pset(x+14,y-22,31)
+  elseif kind=="lamp" then
+    fillp(0xaaaa,31)
+    line(x-3,y-13,x-14,y,31) line(x+3,y-13,x+14,y,31)
+    line(x-10,y-4,x+10,y-4,31)
+    rectfill(x-13,y-2,x+13,y,31)
+    fillp()
+    begin_authored_sprite_scope(false)
+    spr(PROP_LAMP,x-8,y-16,2,2)
+    restore_legacy_palette()
+    line(x-12,y,x+12,y,31)
+    pset(x-15,y,38) pset(x+15,y,38)
+  elseif kind=="coil" then
+    fillp(0xaaaa,10)
+    circfill(x,y-10,17,10)
+    fillp()
+    begin_authored_sprite_scope(false)
+    spr(PROP_COIL,x-8,y-16,2,2)
+    restore_legacy_palette()
+    circ(x,y-10,15,10)
+    for a=0,3 do
+      pset(x+cos(a/4+frame_now/90)*18,y-10+sin(a/4+frame_now/90)*12,a%2==0 and 10 or 45)
+    end
+  elseif kind=="crate" then
+    rectfill(x-9,y-17,x+9,y+1,48)
+    begin_authored_sprite_scope(false)
+    spr(PROP_CRATE,x-8,y-16,2,2)
+    restore_legacy_palette()
+    line(x-8,y,x+8,y,31)
   elseif kind=="tank" then
     rectfill(x-15,y-30,x+15,y,49)
     circfill(x,y-30,15,49)
@@ -2221,6 +2359,41 @@ local function draw_prop(p)
     line(x,y-45,x,y-55,52)
     pset(x,y-56,36)
     line(x-10,y,x-14,y+8,52) line(x+10,y,x+14,y+8,52)
+    rectfill(x-9,y-21,x+9,y-14,48)
+    print("GULP",x,y-20,10,"center")
+    pset(x-12,y-25,31) pset(x+12,y-25,31)
+  end
+end
+
+function draw_surface_lighting()
+  for i=1,#ENV_SURFACE_LIGHTS do
+    local light=ENV_SURFACE_LIGHTS[i]
+    local lx,ly,accent,radius=light[1],light[2],light[3],light[4]
+    if lx+radius>camera_x and lx-radius<camera_x+SW then
+      local x0=max(0,flr((lx-radius)/8))
+      local x1=min(119,flr((lx+radius)/8))
+      local y0=max(0,flr((ly-radius)/8))
+      local y1=min(63,flr((ly+radius)/8))
+      for cy=y0,y1 do
+        for cx=x0,x1 do
+          local tile=mget(cx,cy)
+          local px,py=cx*8,cy*8
+          local d=dist(lx,ly,px+4,py+4)
+          if solid(tile) and d<radius then
+            if not solid(mget(cx,cy-1)) then
+              local inset=d<radius*0.5 and 1 or 2
+              line(px+inset,py,px+7-inset,py,accent)
+              if d<radius*0.42 then line(px+2,py+1,px+5,py+1,31) end
+            end
+            if px<lx and not solid(mget(cx+1,cy)) then
+              line(px+7,py+2,px+7,py+5,accent)
+            elseif px>lx and not solid(mget(cx-1,cy)) then
+              line(px,py+2,px,py+5,accent)
+            end
+          end
+        end
+      end
+    end
   end
 end
 
@@ -2235,52 +2408,30 @@ local function draw_terrain_detail()
       local tile=mget(cx,cy)
       local x,y=cx*8,cy*8
       if solid(tile) then
+        -- The atlas carries the material drawing. Runtime accents are sparse,
+        -- directional responses to moon, lamps, damage, and slime motion.
         if not solid(mget(cx,cy-1)) then
-          local cap=tile==MUD and 14 or tile==BREAKABLE and 4 or 59
-          line(x,y,x+7,y,cap)
-          line(x,y+1,x+7,y+1,tile==MUD and 11 or 55)
-          line(x+1,y+2,x+6,y+2,tile==MUD and 9 or 52)
-          pset(x+1,y,63) pset(x+6,y+1,13)
-          if zone==1 and cx%4==0 then
-            line(x+2,y-2,x+5,y-2,31)
-          elseif zone==2 and cx%3==0 then
-            pset(x+3,y-1,45) pset(x+4,y-1,45)
-          elseif zone==3 and cx%4==1 then
-            line(x+2,y-1,x+5,y-1,10)
-          elseif zone==4 and cx%3==0 then
-            line(x+1,y-2,x+3,y,36) line(x+4,y,x+6,y-2,31)
-          elseif zone>=5 and cx%4==2 then
-            rectfill(x+2,y-2,x+5,y-1,36)
-            pset(x+3,y-2,63)
-          end
-          if tile==MUD then
-            pset(x+3,y-1,(cx%3==0) and 6 or 10)
-            if cx%5==0 then line(x+5,y,x+5,y+4,10) end
+          local rim=(zone<=1 or zone==6) and 10 or 13
+          if cx%4==0 then line(x+1,y,x+4,y,rim)
+          elseif cx%4==1 then pset(x+1,y,rim) end
+          if masonry_material(tile) and cx%3==0 then
+            line(x+4,y,x+4,y+3,10)
+            pset(x+5,y+3,10)
           end
         end
-        if not solid(mget(cx-1,cy)) then line(x,y+1,x,y+7,59) end
-        if not solid(mget(cx+1,cy)) then line(x+7,y+1,x+7,y+7,52) end
-        if tile==STEEL then
-          line(x+1,y+4,x+6,y+4,52)
-          if (cx+cy)%3==0 then circfill(x+4,y+5,1,13) end
-          if (cx*7+cy)%5==0 then pset(x+2,y+6,31) end
-        end
-        if tile==GIRDER then
-          line(x+1,y+2,x+6,y+6,55) line(x+6,y+2,x+1,y+6,52)
-          pset(x+1,y+2,13) pset(x+6,y+2,13)
-        elseif tile==MUD and (cx+cy)%2==0 then
-          line(x+2,y+1,x+2,y+5,6) pset(x+5,y+2,11)
-          pset(x+6,y+5,9)
-        elseif tile==BREAKABLE then
-          rect(x+1,y+1,x+6,y+6,35)
-          line(x+1,y+1,x+6,y+6,36) line(x+6,y+1,x+1,y+6,36)
+        if steel_material(tile) and (cx*7+cy)%11==0 then
+          line(x+2,y+3,x+2,y+6,38)
+          pset(x+3,y+6,24)
+        elseif girder_material(tile) and (cx+cy)%4==0 then
+          line(x+1,y+1,x+2,y+2,31) pset(x+6,y+6,13)
+        elseif masonry_material(tile) and (cx+cy)%5==0 then
+          line(x+5,y+2,x+5,y+5,10)
+        elseif breakable(tile) and frame_now%8<6 then
           pset(x+3,y+3,31)
         end
-      elseif tile==ACID then
+      elseif hazardous(tile) then
         local bob=(frame_now+cx*7)%18
-        line(x,y+1,x+7,y+1,(cx+frame_now)%4<2 and 10 or 6)
-        fillp(0x5a5a,8) rectfill(x,y+3,x+7,y+7,9) fillp()
-        if bob<5 then circ(x+2+(cx%3)*2,y+2,1,bob<2 and 31 or 6) end
+        if bob<5 then circ(x+2+(cx%3)*2,y+1,1,bob<2 and 31 or 10) end
       end
     end
   end
@@ -2292,7 +2443,10 @@ local function draw_world()
   clip(0,HUD_H,SW,SH-HUD_H)
   camera(camera_x-sx,camera_y-HUD_H-sy)
   draw_zone_architecture()
+  begin_authored_sprite_scope(false)
   map()
+  restore_legacy_palette()
+  draw_surface_lighting()
   draw_terrain_detail()
   for i=1,#level.props do
     local p=level.props[i]
@@ -2603,6 +2757,26 @@ function dev_warp(x,y)
   reset_tongue()
   camera_x=mid(0,x-SW*0.42,WORLD_W-SW)
   camera_y=mid(0,y-(SH-HUD_H)*0.56,WORLD_H-(SH-HUD_H))
+end
+
+function dev_stage_environment(zone)
+  zone=mid(0,flr(zone or 0),6)
+  camera_x=mid(0,zone*128,WORLD_W-SW)
+  camera_y=WORLD_H-(SH-HUD_H)
+  -- Keep the actor safely outside the review frame so pickups, pits, and the
+  -- boss trigger cannot contaminate a deterministic environment capture.
+  player_x,player_y=camera_x-100,0
+  vx,vy,grounded=0,0,false
+  reset_tongue()
+  for i=1,#enemies do enemies[i].alive=false end
+  for i=1,#pickups do pickups[i].alive=false end
+  for i=1,#bombs do bombs[i].alive=false end
+  for i=1,#secrets do secrets[i].alive=false end
+  particles,explosions,bullets={},{},{}
+  boss_started,boss_intro=false,0
+  banner,banner_timer="",0
+  transition,flash,shake,hitstop=0,0,0,0
+  respawn_timer,hurt_timer,invuln=9999,0,9999
 end
 
 function dev_grant(which)
@@ -4427,15 +4601,39 @@ MQMMMSSSSSSQMMQMQQQM000QMMMQQ0000QQQQQQQQQW0SSQ0000QQMSSCCQQQCCCMMMQQ000MMMMMMQQ
 00MQMQQMMQQQQM00000QQQ00QQ0000000MMMMMMMQMM00MQ000MMQMMQMSQMMQQQMMQQMM0000MMQQSSQQQQMQQQQQQQMM0000000000000000000000000000000000
 000MMMMSSMMMM00000000Q0000000000000MMMMQMM0000000MMMQQMQMSSQQWQMMMQQMMM000MQQQSQQQQQQQQQQQQMQM0000000000000000000000000000000000
 000000MMMM000000000000Q000000000000000MQM00000000QQMQQQMQQSQWQQMMQQQMMM000QMMMQMMMMQMMMMMQMMQQ0000000000000000000000000000000000
-eeeeeeeecccccccc66666666aaa000aa44434444000000000QMQQQSSSQQSQQQQQQQQMMM000MMMMMMMMQQQMMMQMMMMM0000000000000000000000000000000000
-ebccccbedbdddddddddddddd888aaa8845d3ddd4000000000QMQQSSQQSSSSQQQQQQQMMM000MMQSQMMMQQQQMMMQQMMM0000000000000000000000000000000000
-eddddddedd0000ee77777777888888884ddd3dd4000000000MMQQQQSSSSSQQQQQQMMQMM0000MQSQMMMQQQMMMQQQQM00000000000000000000000000000000000
-edccccde00ddee0076777777888888884ddd1dd40000000000MQQQQQQQQQQQQQQQMMMM00000MSQSMMMSQQSMMQQSSM00000000000000000000000000000000000
-edddddde00eedd0077777677868888884dd3d11400000000000MQQQQQQQQQQQQQQQMM000000MMSMMMMMSSQQMMSSS000000000000000000000000000000000000
-eddddddeee0000dd7777777788888a884dd3ddd1000000000000MMQQQQQMMQQQQMMM000000000MMMSQMMMQQSMM00000000000000000000000000000000000000
-ebeeeebeddddddbd777e7777888888884d3ddd540000000000000MMMMMMMMMMMMMM0000000000000SS0000SS0000000000000000000000000000000000000000
-eeeeeeeecccccccc7777777788898888444444440000000000000000MMMMMMMM0000000000000000000000000000000000000000000000000000000000000000
+XXXUXXXXXXXXXXXXeeeeceeeMMMMMMMMXvXXvXXX000000000QMQQQSSSQQSQQQQQQQQMMM000MMMMMMMMQQQMMMQMMMMM00XXXXXXXX0XXXXXXXXXXXXXX0XXUXXXXX
+SSSSSSSSQQQQQQQQcccecccccc8cc8ccQQQQQQQQ000000000QMQQSSQQSSSSQQQQQQQMMM000MMQSQMMMQQQQMMMQQMMM00SSSSSSSS0SSSSSSSSSSSSSS0SSSS0SSS
+QQQQQQQQMMQ00QMM8c888c888c88c888QMAAMMAQ000000000MMQQQQSSSSSQQQQQQMMQMM0000MQSQMMMQQQMMMQQQQM000QQQXQQQQQQQQQQQQQQQQQQQQQQQ00QQQ
+QMMQMQMQ0Q0QQ0Q0MMNMMNMMN8NN8NNNMQAAMQAM0000000000MQQQQQQQQQQQQQQQMMMM00000MSQSMMMSQQSMMQQSSM000QMMXMMMQXMMQMMMMQMMQMMMXQMM0MMMQ
+QAAMMMMM00QMMQ00NQQNNQQNMNNMNNMNQMAAMAMQ00000000000MQQQQQQQQQQQQQQQMM000000MMSMMMMMSSQQMMSSS0000QMAXAMMQQAAMQMMMQMMMQAAQQAA00MMQ
+QMMQQQMM0Q0QQ0Q0NNMNNMNNNNMNNMNNMAAMQAMM000000000000MMQQQQQMMQQQQMMM000000000MMMSQMMMQQSMM000000QMMXQMMQQMMQQQMMMMQQQMMQQMMQ0QMQ
+MMMMMMMMMMQ00QMMMMMMMMMMMNNMNNMNQMMQMMQM0000000000000MMMMMMMMMMMMMM0000000000000SS0000SS00000000MMMXMMMMMMMMMMMMMMMMMMMMMMMAMMMM
+NNNNNNNNQQQQQQQQNNNNNNNNNNNNNNNNMMMMMMMM0000000000000000MMMMMMMM00000000000000000000000000000000NNNXNNNNNNNNNNNNNNNNNNNNNNNNNNNN
 
+QQ0000QQ0XXXXXX0QQQQQQQQUUUUUUUUNNNNQNNNUUUUUU000000000000XQQX0000XQQX0000XQQX00XXXXXXXX00XQQX000000000000000000eeeeceee00000000
+XQ0000QX0QQQQQQ0QMMMMMMQSSSSSSSSNMMMNNMNSSSSSS000XXXXXX000XNNX0000XNNQX000XNNX00XQQQQQQX00XQQX00X000000XX0000000cccecccc00000000
+0QQ00QQ0QQQMMQQQQMNNNNMQRRQRRRQRNNNNNNNNRRQRRQ00XQQQQQQX00XNNX0000XNNNQXXXQAAQXXXMMXMMMX00XvvX000X0000X00X000X008c888c8800000000
+00QXXQ00QQXvvXQQQMN00NMQNMMNNMNNMQNNMMNNNMMNNQ00QNNNNNNQ0XQAAQX000XQNNNQQNNAANNQXMMXMMMX00XQQX0000X00X0000X0X000MMMMMMMM00000000
+00QXXQ00QQXvvXQQQMN00NMQNNNNNNNNNNNNNNQNNNNNQ000QNAANNNQ0XQAAQX0000XQNNQQNNAANNQXMMXMMMX00XQQX00000XX000000X0000N8NN8NNN00000000
+0QQ00QQ0QQQMMQQQQMNNNNMQMNMMNNMNNNMNMMNNMNNQ0000XQQQQQQX00XNNX000000XQQXXXQAAQXXXMMXMMMX00XQQX0000X00X0000X00000MNNMNNMN00000000
+XQ0000QX0QQQQQQ0QMMMMMMQNNNNMNNNNQNNNNMNNNQ000000XXXXXX000XNNX000000000000XNNX00XQQQQQQX00XQQX000X0000X00X000000NNMNNMNN00000000
+QQ0000QQ0XXXXXX0QQQQQQQQMMMMMMMMMMMMMMMMMM0000000000000000XQQX000000000000XQQX00XXXXXXXX0XXXXXX0X000000XX0000000NNNNNNNN00000000
+0000000FF000000000GFiG0000FiF000000GhghghhggGhG00v0000v000XXXX000000000000000000000000000000000000000000000000000000000000000000
+0000000wF000000000FOOxxxRxOOF00000GhoogggggggggovXXXXXXv0XQQQQX00000000000000000000000000000000000000000000000000000000000000000
+0000000Fw00000000000FOOiiOOG00000hgoghghhhgghhPwXvAAAAAXXQMMMMQX0000000000000000000000000000000000000000000000000000000000000000
+0000000wF00000000000GFMOOOGG0000ggghhhhhhhhhhON0XAAvvAAXXQMXMMQX0000000000000000000000000000000000000000000000000000000000000000
+0000000ww000000000xxMOxxRRRxiG00wwowwwwwwwOPgNo0XAAvvAAXXQMMXMQX0000000000000000000000000000000000000000000000000000000000000000
+000000wwQF0000000xxppipppiiiipF0wNNNNNNNNNNOoOo0XAAAAAAXXQMMMMQX0000000000000000000000000000000000000000000000000000000000000000
+000000hjDw0000000GxMMOMOOOOMOG00NwNOwNONNNNNoow0vXXXXXXv0XQQQQX00000000000000000000000000000000000000000000000000000000000000000
+00000FwQSQ0000000Gxxxxppiipppp00wPNNooNwoNNogww00v0000v000XXXX000000000000000000000000000000000000000000000000000000000000000000
+00000wwQSQF000000FxMMMMOMMMMxi00wPNNNOoowONwgww0000v000000000000ppohphppMNNMNNMNUUUUUUUUNMMNNNMNDDADDDDDMMMMMMMMceecececMMMMMMMM
+0000FwQSjSQF00000GxOxpppiiiipG00wPNONwowNPNogwoo000X0000X000000XhhhhhhhhNMMhMMMNSSSSSSSSNNNQNNNNAAAAAAAAMQQQQQQMccccccccMXQQXMMM
+00FQwQQSjfSQF0000FxOMMMMMMOOppF0woNOwowOwwNogwwo00XQX0000X0000X0QhQQQpQQMMMpMMMMRRQRRRQRMMNNMMMNQAAQAAQAMQNNNNQMQMMQQMMQMXccXMMM
+0FwwQQQSSjSSQF000GOMOxppiippxx00wPNOoNNwwONwgwgo000X000000X00X00QMMhMMMMNMhMMNNMNNMNNMNNNNNNNNNNQMMQMMQMMQNDDNQMQceQMMMQMXccXMMM
+0wwwQQQQQSSSQQF0FOOOxOMOxxxpppx0wwNONNNNOwNwPgOo00XQX000000XX000QMpMMMQMMMMNMMMMNQNNNNMNNMNNQNMMQADQAAMQMQNDDNQMQMMQceMQMXQQXXXX
+wwhjDjDffDjDhhwFOOOOOxxpppxxRRRGoPoPPoPPoOwPgOo00XQQQX00000XX000QMMMQhMMMpoMMMNMNNMNNNNNNNMMNNNNQMMQMMMQMQNNNNQMQMMQQMMQMMMMQeeQ
+whjDDDDDDDDDDjw0MOMOOxRRRRRRxOOGwNOwOOOOOONwgo000XMMMX0000XQQX00MMMMMMMMNMMMMMNNMNNNMNNMMNNNNMNNMMMMMMMMMQQQQQQMMMMMMMMMMMMMXQQX
+000hjjjjjjjjh0000xxMMOOOxRxOOF000000000woowwo000XXXXXXXXXXXXXXXXNNNNNNNNMMMMMMMMMMMMMMMMMMMMMMMMNNNNNNNNMMMMMMMMNNNNNNNNNNNNNNNN
 __map__
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000

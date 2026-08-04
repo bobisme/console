@@ -154,7 +154,7 @@ envelopes invisibly.
 
 ## Material kit
 
-The 24 terrain tiles preserve the five live gameplay IDs and add 19 variants:
+The 32 terrain tiles preserve the five live gameplay IDs and add 27 variants:
 
 - steel intact/seam/left end/right end and damaged cap;
 - girder beam/diagonal brace/support junction/deep cavity;
@@ -164,6 +164,8 @@ The 24 terrain tiles preserve the five live gameplay IDs and add 19 variants:
 - fence post/wire/damaged wire;
 - acid/runoff fill and lit hazard lip;
 - one unmistakable breakable refinery face.
+- paired cap/face families for rusted loading roofs, damp concrete, violet lab
+  panels, and mutagen pipeworks.
 
 Never repeat one truss tile across an entire platform. Build a readable cap and
 underside first, then alternate seam/damage/support modules at irregular but
@@ -190,14 +192,15 @@ supports flips.
   beam itself supplies direction and narrows to a one-pixel white core.
 - **Fire (5 tiles):** one radial mouth base, three irregular plume clusters, one
   ember cluster. Placement along the aim vector supplies the taper.
-- **Bomb/explosion (8 tiles):** one `8x8` egg bomb, two irregular nuclei, two
-  debris clusters, and three smoke remnants. Compose them over `24-32px`; each
-  later frame loses brightness and gains negative space.
+- **Bomb/explosion (2 tiles plus primitives):** one `8x8` egg bomb and one
+  irregular nucleus seed the existing procedural shards, rings, debris, and
+  smoke. Compose them over `24-32px`; each later frame loses brightness and
+  gains negative space.
 
 Module IDs are explicit: tongue hook/knot/saliva `172,173,174`; laser
 corona/impact A/B/C `175,188,189,190`; fire mouth/plume A/B/C/ember
-`191,232,233,234,235`; egg bomb/nucleus A/B/debris A/B/smoke A/B/C
-`236,237,248,249,250,251,252,253`.
+`191,232,233,234,235`; egg bomb/nucleus `236,237`. The former `248..253`
+effect reservation now belongs to the zone-specific environment kit.
 
 An effect may occlude its source for one impact frame, never for the whole
 animation. Nearby moonlit rims may briefly switch to the effect's hot ramp, but
@@ -206,8 +209,8 @@ background particles stay darker than actor outlines.
 ## Atlas allocation
 
 The sheet remains `16x16` addressable tiles (`128x128` pixels). This plan uses
-250 tiles and leaves six tiles unassigned, including a contiguous `2x2` repair
-block. Coordinates below are tile coordinates; ID is `ty * 16 + tx`.
+252 tiles and leaves four repair cells unassigned. Coordinates below are tile
+coordinates; ID is `ty * 16 + tx`.
 
 | Region | Tile coordinates / IDs | Tiles | Contents |
 |---|---|---:|---|
@@ -216,10 +219,10 @@ block. Coordinates below are tile coordinates; ID is `ty * 16 + tx`.
 | Common insects | eight `2x2` frames at `y=6`, `x=0..14 step 2`; one at `(0,8)` | 36 | Gnat origins `96,98,100`; wasp `102,104,106`; beetle `108,110,128`. |
 | Boss modules | seven `2x2` assets at `y=8`, `x=2..14 step 2`; three at `y=10`, `x=0,2,4` | 40 | Upper wings L/R `130,132`; lower wings L/R `134,136`; side armor L/R `138,140`; weak point closed/open `142,160`; claw `162`; cannon `164`. |
 | Boss pod cores | two `3x3` assets at `(6,10)` and `(9,10)` | 18 | Upper pod origin `166`, lower pod origin `169`; both draw simultaneously. |
-| Terrain kit | IDs `192..196`, `204..222` | 24 | Exact semantic table below; current collision IDs remain stable. |
+| Terrain kit | IDs `192..196`, `204..222`, `248..255` | 32 | Exact semantic table below; current collision IDs remain stable. |
 | Props | roots `(0,14)`, `(2,14)`, `(4,14)` plus component cells `(6,14)`, `(7,14)`, `(6,15)`, `(7,15)` | 16 | Lamp `224,225,240,241`; coil `226,227,242,243`; crate `228,229,244,245`; sign `230`; vent/barrel `231`; antenna `246`; cable footing `247`. |
-| VFX | IDs `172..175`, `188..191`, `232..237`, `248..253` | 20 | Exact logical-to-physical order is defined in the VFX section. |
-| Reserve | IDs `197,223,238,239,254,255` | 6 | Two single-tile repairs plus a contiguous `2x2` future module. |
+| VFX | IDs `172..175`, `188..191`, `232..237` | 14 | Exact logical-to-physical order is defined in the VFX section. |
+| Reserve | IDs `197,223,238,239` | 4 | Four single-tile repair cells. |
 
 Compact map:
 
@@ -231,7 +234,8 @@ y 08-09  BBMMMMMMMMMMMMMM
 y 10-11  MMMMMMCCCCCCVVVV
 y 12     TTTTTRCCCCCCTTTT
 y 13     TTTTTTTTTTTTTTTR
-y 14-15  PPPPPPPPVVVVVVRR
+y 14     PPPPPPPPVVVVVVRR
+y 15     PPPPPPPPTTTTTTTT
 
 F frog  B common bug  M boss module  C boss core
 O frog/mutation overlay  T terrain  P prop  V VFX  R reserve
@@ -262,7 +266,7 @@ additional tile has an explicit class:
 | 207 | damaged steel cap | solid, tongueable | Sparse variation, not adjacent to every seam. |
 | 208 | diagonal girder brace | solid, tongueable | Alternates with ID `193` under long spans. |
 | 209 | support junction | solid, tongueable | At column/platform intersections. |
-| 210 | deep support cavity | decorative, passable | Behind or below collision cells. |
+| 210 | deep support cavity | solid, tongueable | Collision-preserving dark patch in long spans and lab foundations. |
 | 211 | masonry top | solid, tongueable | Top row of a masonry mass. |
 | 212 | masonry face | solid, tongueable | Interior wall/column cell. |
 | 213 | masonry outside corner | solid, tongueable | Exposed top-side corner. Flip only if its lighting is top-symmetric; if a lateral moon rim is necessary, spend a reserve tile on the opposite authored corner. |
@@ -275,6 +279,14 @@ additional tile has an explicit class:
 | 220 | fence wire | decorative, passable | Between posts; do not imply a solid ledge. |
 | 221 | damaged fence wire | decorative, passable | Sparse interrupted fence run. |
 | 222 | lit acid/runoff lip | hazard | Bright cap over ID `195`; contact remains instant death. |
+| 248 | rusted loading-roof cap | solid, tongueable | Zone 0 and billboard-zone exposed steel surfaces. |
+| 249 | rusted loading-roof face | solid, tongueable | Lower rows beneath ID `248`. |
+| 250 | damp concrete cap | solid, tongueable | Waterworks and tower-zone exposed surfaces. |
+| 251 | damp concrete face | solid, tongueable | Lower rows beneath ID `250`. |
+| 252 | violet lab-panel cap | solid, tongueable | Gene Bar exposed surfaces. |
+| 253 | violet lab-panel face | solid, tongueable | Lower rows beneath ID `252`. |
+| 254 | mutagen pipeworks cap | solid, tongueable | Mutagen Works exposed surfaces. |
+| 255 | mutagen pipeworks face | solid, tongueable | Lower rows beneath ID `254`. |
 
 Every ID has one gameplay class. The environment bone replaces scalar
 `solid()`/`hazardous()` comparisons with tables for solid, hazard, tongueable,
