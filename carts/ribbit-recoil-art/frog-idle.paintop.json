@@ -1,0 +1,361 @@
+{
+  "paintop": "1.0",
+  "name": "ribbit-recoil-frog-idle-apollo64",
+  "description": "A native 24x24 frog production spike built from grid-aligned masks and exact Apollo64 sRGB values. Every edge is on an integer pixel boundary so the encoded PNG remains hard-edged and exact-importable.",
+  "policy": {
+    "resources": {
+      "max_nodes": 64,
+      "max_pixels_per_resource": 4096,
+      "max_splats": 1
+    },
+    "execution": {
+      "deadline_ms": 10000,
+      "allowed_backends": ["cpu-reference"]
+    }
+  },
+  "inputs": {},
+  "nodes": [
+    {
+      "id": "canvas",
+      "op": "image.create@1",
+      "params": {
+        "width": 24,
+        "height": 24,
+        "layout": "rgba",
+        "fill": [0.0, 0.0, 0.0, 0.0],
+        "color": "srgb",
+        "range": "display-referred",
+        "alpha": "straight",
+        "semantic": "color"
+      }
+    },
+    {
+      "id": "outline_mask",
+      "op": "mask.polygon@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": {
+        "fill_rule": "nonzero",
+        "points": [
+          [5.0, 2.0], [9.0, 2.0], [9.0, 3.0], [10.0, 3.0],
+          [10.0, 5.0], [14.0, 5.0], [14.0, 3.0], [15.0, 3.0],
+          [15.0, 2.0], [19.0, 2.0], [19.0, 3.0], [20.0, 3.0],
+          [20.0, 8.0], [21.0, 8.0], [21.0, 11.0], [23.0, 11.0],
+          [23.0, 12.0], [24.0, 12.0], [24.0, 14.0], [22.0, 14.0],
+          [22.0, 15.0], [20.0, 15.0], [20.0, 18.0], [22.0, 18.0],
+          [22.0, 19.0], [24.0, 19.0], [24.0, 21.0], [20.0, 21.0],
+          [20.0, 23.0], [15.0, 23.0], [15.0, 21.0], [14.0, 21.0],
+          [14.0, 19.0], [10.0, 19.0], [10.0, 21.0], [9.0, 21.0],
+          [9.0, 23.0], [4.0, 23.0], [4.0, 22.0], [0.0, 22.0],
+          [0.0, 20.0], [2.0, 20.0], [2.0, 19.0], [4.0, 19.0],
+          [4.0, 18.0], [5.0, 18.0], [5.0, 15.0], [3.0, 15.0],
+          [3.0, 14.0], [0.0, 14.0], [0.0, 12.0], [1.0, 12.0],
+          [1.0, 11.0], [3.0, 11.0], [3.0, 8.0], [4.0, 8.0],
+          [4.0, 3.0], [5.0, 3.0]
+        ]
+      }
+    },
+    {
+      "id": "outlined",
+      "op": "paint.fill@1",
+      "in": { "image": "node:canvas/image", "mask": "node:outline_mask/mask" },
+      "params": { "value": [0.03529411764705882, 0.0392156862745098, 0.0784313725490196, 1.0] }
+    },
+    {
+      "id": "inner_mask",
+      "op": "mask.polygon@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": {
+        "fill_rule": "nonzero",
+        "points": [
+          [5.0, 4.0], [9.0, 4.0], [9.0, 6.0], [15.0, 6.0],
+          [15.0, 4.0], [19.0, 4.0], [19.0, 8.0], [20.0, 8.0],
+          [20.0, 12.0], [19.0, 12.0], [19.0, 16.0], [18.0, 16.0],
+          [18.0, 19.0], [16.0, 19.0], [16.0, 21.0], [15.0, 21.0],
+          [15.0, 18.0], [9.0, 18.0], [9.0, 21.0], [8.0, 21.0],
+          [8.0, 19.0], [6.0, 19.0], [6.0, 16.0], [5.0, 16.0],
+          [5.0, 12.0], [4.0, 12.0], [4.0, 8.0], [5.0, 8.0]
+        ]
+      }
+    },
+    {
+      "id": "shadowed",
+      "op": "paint.fill@1",
+      "in": { "image": "node:outlined/image", "mask": "node:inner_mask/mask" },
+      "params": { "value": [0.09803921568627451, 0.2, 0.17647058823529413, 1.0] }
+    },
+    {
+      "id": "body_mask",
+      "op": "mask.polygon@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": {
+        "fill_rule": "nonzero",
+        "points": [
+          [5.0, 7.0], [19.0, 7.0], [19.0, 9.0], [20.0, 9.0],
+          [20.0, 12.0], [18.0, 12.0], [18.0, 14.0], [17.0, 14.0],
+          [17.0, 18.0], [15.0, 18.0], [15.0, 20.0], [9.0, 20.0],
+          [9.0, 18.0], [7.0, 18.0], [7.0, 14.0], [6.0, 14.0],
+          [6.0, 12.0], [4.0, 12.0], [4.0, 9.0], [5.0, 9.0]
+        ]
+      }
+    },
+    {
+      "id": "body",
+      "op": "paint.fill@1",
+      "in": { "image": "node:shadowed/image", "mask": "node:body_mask/mask" },
+      "params": { "value": [0.36470588235294116, 0.5803921568627451, 0.23137254901960785, 1.0] }
+    },
+    {
+      "id": "eye_left_mask",
+      "op": "mask.polygon@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": {
+        "fill_rule": "nonzero",
+        "points": [[5.0, 3.0], [8.0, 3.0], [8.0, 4.0], [9.0, 4.0], [9.0, 7.0], [5.0, 7.0], [5.0, 6.0], [4.0, 6.0], [4.0, 4.0], [5.0, 4.0]]
+      }
+    },
+    {
+      "id": "eye_right_mask",
+      "op": "mask.polygon@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": {
+        "fill_rule": "nonzero",
+        "points": [[16.0, 3.0], [19.0, 3.0], [19.0, 4.0], [20.0, 4.0], [20.0, 6.0], [19.0, 6.0], [19.0, 7.0], [15.0, 7.0], [15.0, 4.0], [16.0, 4.0]]
+      }
+    },
+    {
+      "id": "eyes_mask",
+      "op": "mask.union@1",
+      "in": { "a": "node:eye_left_mask/mask", "b": "node:eye_right_mask/mask" }
+    },
+    {
+      "id": "eyes",
+      "op": "paint.fill@1",
+      "in": { "image": "node:body/image", "mask": "node:eyes_mask/mask" },
+      "params": { "value": [0.9215686274509803, 0.9294117647058824, 0.9137254901960784, 1.0] }
+    },
+    {
+      "id": "pupil_left_mask",
+      "op": "mask.rect@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": { "rect": [6.0, 4.0, 8.0, 6.0] }
+    },
+    {
+      "id": "pupil_right_mask",
+      "op": "mask.rect@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": { "rect": [16.0, 4.0, 18.0, 6.0] }
+    },
+    {
+      "id": "pupils_mask",
+      "op": "mask.union@1",
+      "in": { "a": "node:pupil_left_mask/mask", "b": "node:pupil_right_mask/mask" }
+    },
+    {
+      "id": "pupils",
+      "op": "paint.fill@1",
+      "in": { "image": "node:eyes/image", "mask": "node:pupils_mask/mask" },
+      "params": { "value": [0.03529411764705882, 0.0392156862745098, 0.0784313725490196, 1.0] }
+    },
+    {
+      "id": "glint_left_mask",
+      "op": "mask.rect@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": { "rect": [6.0, 4.0, 7.0, 5.0] }
+    },
+    {
+      "id": "glint_right_mask",
+      "op": "mask.rect@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": { "rect": [16.0, 4.0, 17.0, 5.0] }
+    },
+    {
+      "id": "glints_mask",
+      "op": "mask.union@1",
+      "in": { "a": "node:glint_left_mask/mask", "b": "node:glint_right_mask/mask" }
+    },
+    {
+      "id": "glints",
+      "op": "paint.fill@1",
+      "in": { "image": "node:pupils/image", "mask": "node:glints_mask/mask" },
+      "params": { "value": [0.9098039215686274, 0.7568627450980392, 0.4392156862745098, 1.0] }
+    },
+    {
+      "id": "limb_left_hand",
+      "op": "mask.polygon@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": {
+        "fill_rule": "nonzero",
+        "points": [[1.0, 12.0], [4.0, 12.0], [4.0, 14.0], [3.0, 14.0], [3.0, 15.0], [1.0, 15.0]]
+      }
+    },
+    {
+      "id": "limb_right_hand",
+      "op": "mask.polygon@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": {
+        "fill_rule": "nonzero",
+        "points": [[20.0, 12.0], [23.0, 12.0], [23.0, 15.0], [21.0, 15.0], [21.0, 14.0], [20.0, 14.0]]
+      }
+    },
+    {
+      "id": "limb_left_foot",
+      "op": "mask.polygon@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": {
+        "fill_rule": "nonzero",
+        "points": [[2.0, 19.0], [7.0, 19.0], [7.0, 21.0], [5.0, 21.0], [5.0, 22.0], [1.0, 22.0], [1.0, 20.0], [2.0, 20.0]]
+      }
+    },
+    {
+      "id": "limb_right_foot",
+      "op": "mask.polygon@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": {
+        "fill_rule": "nonzero",
+        "points": [[17.0, 19.0], [22.0, 19.0], [22.0, 20.0], [23.0, 20.0], [23.0, 22.0], [19.0, 22.0], [19.0, 21.0], [17.0, 21.0]]
+      }
+    },
+    {
+      "id": "limbs_1",
+      "op": "mask.union@1",
+      "in": { "a": "node:limb_left_hand/mask", "b": "node:limb_right_hand/mask" }
+    },
+    {
+      "id": "limbs_2",
+      "op": "mask.union@1",
+      "in": { "a": "node:limb_left_foot/mask", "b": "node:limb_right_foot/mask" }
+    },
+    {
+      "id": "limbs_mask",
+      "op": "mask.union@1",
+      "in": { "a": "node:limbs_1/mask", "b": "node:limbs_2/mask" }
+    },
+    {
+      "id": "limbs",
+      "op": "paint.fill@1",
+      "in": { "image": "node:glints/image", "mask": "node:limbs_mask/mask" },
+      "params": { "value": [0.36470588235294116, 0.5803921568627451, 0.23137254901960785, 1.0] }
+    },
+    {
+      "id": "belly_mask",
+      "op": "mask.polygon@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": {
+        "fill_rule": "nonzero",
+        "points": [[10.0, 13.0], [14.0, 13.0], [14.0, 14.0], [15.0, 14.0], [15.0, 17.0], [14.0, 17.0], [14.0, 18.0], [10.0, 18.0], [10.0, 17.0], [9.0, 17.0], [9.0, 14.0], [10.0, 14.0]]
+      }
+    },
+    {
+      "id": "belly",
+      "op": "paint.fill@1",
+      "in": { "image": "node:limbs/image", "mask": "node:belly_mask/mask" },
+      "params": { "value": [0.6588235294117647, 0.792156862745098, 0.34509803921568627, 1.0] }
+    },
+    {
+      "id": "mouth_mask",
+      "op": "mask.polygon@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": {
+        "fill_rule": "nonzero",
+        "points": [[7.0, 10.0], [17.0, 10.0], [17.0, 12.0], [16.0, 12.0], [16.0, 13.0], [8.0, 13.0], [8.0, 12.0], [7.0, 12.0]]
+      }
+    },
+    {
+      "id": "mouth",
+      "op": "paint.fill@1",
+      "in": { "image": "node:belly/image", "mask": "node:mouth_mask/mask" },
+      "params": { "value": [0.03529411764705882, 0.0392156862745098, 0.0784313725490196, 1.0] }
+    },
+    {
+      "id": "mouth_inner_mask",
+      "op": "mask.rect@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": { "rect": [9.0, 11.0, 15.0, 12.0] }
+    },
+    {
+      "id": "mouth_inner",
+      "op": "paint.fill@1",
+      "in": { "image": "node:mouth/image", "mask": "node:mouth_inner_mask/mask" },
+      "params": { "value": [0.8117647058823529, 0.3411764705882353, 0.23529411764705882, 1.0] }
+    },
+    {
+      "id": "highlight_cheek",
+      "op": "mask.rect@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": { "rect": [17.0, 7.0, 19.0, 8.0] }
+    },
+    {
+      "id": "highlight_head",
+      "op": "mask.rect@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": { "rect": [18.0, 8.0, 20.0, 9.0] }
+    },
+    {
+      "id": "highlight_hand",
+      "op": "mask.rect@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": { "rect": [21.0, 12.0, 23.0, 13.0] }
+    },
+    {
+      "id": "highlight_toe",
+      "op": "mask.rect@1",
+      "in": { "extent_from": "node:canvas/image" },
+      "params": { "rect": [20.0, 20.0, 23.0, 21.0] }
+    },
+    {
+      "id": "highlights_1",
+      "op": "mask.union@1",
+      "in": { "a": "node:highlight_cheek/mask", "b": "node:highlight_head/mask" }
+    },
+    {
+      "id": "highlights_2",
+      "op": "mask.union@1",
+      "in": { "a": "node:highlight_hand/mask", "b": "node:highlight_toe/mask" }
+    },
+    {
+      "id": "highlights_mask",
+      "op": "mask.union@1",
+      "in": { "a": "node:highlights_1/mask", "b": "node:highlights_2/mask" }
+    },
+    {
+      "id": "final",
+      "op": "paint.fill@1",
+      "in": { "image": "node:mouth_inner/image", "mask": "node:highlights_mask/mask" },
+      "params": { "value": [0.6588235294117647, 0.792156862745098, 0.34509803921568627, 1.0] }
+    },
+    {
+      "id": "inspected",
+      "op": "image.inspect@1",
+      "in": { "image": "node:final/image" }
+    },
+    {
+      "id": "alpha_valid",
+      "op": "assert.alpha_valid@1",
+      "in": { "image": "node:final/image" }
+    }
+  ],
+  "assertions": [
+    { "id": "alpha-valid", "subject": "node:alpha_valid/report" }
+  ],
+  "exports": {
+    "frog-idle": {
+      "resource": "node:final/image",
+      "kind": "image",
+      "path": "frog-idle.png",
+      "encoding": { "format": "png" }
+    }
+  },
+  "evidence": {
+    "trace": "detailed",
+    "graph": ["dot"],
+    "contact_sheet": false,
+    "materialize": [
+      "node:outline_mask/mask",
+      "node:body_mask/mask",
+      "node:eyes_mask/mask",
+      "node:final/image",
+      "node:inspected/report"
+    ],
+    "diffs": []
+  }
+}
