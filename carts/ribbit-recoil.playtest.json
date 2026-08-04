@@ -28,10 +28,40 @@
       "buttons": ""
     },
     {
+      "name": "hop_with_forward_momentum",
+      "op": "input",
+      "frames": 9,
+      "buttons": "RA"
+    },
+    {
+      "name": "hop_is_airborne_and_fast",
+      "op": "assert",
+      "code": "local s=dev_status(); return s.hops == 1 and s.y < 450 and s.vx > 1.8 and s.vy < -3",
+      "equals": true
+    },
+    {
+      "name": "hop_artifacts",
+      "op": "capture",
+      "screenshot": "01-hop.png",
+      "zoom": 4,
+      "screen_text": "01-hop.txt"
+    },
+    {
+      "name": "restage_opening_grapple",
+      "op": "eval",
+      "code": "dev_warp(32,472)"
+    },
+    {
+      "name": "settle_after_hop",
+      "op": "input",
+      "frames": 2,
+      "buttons": ""
+    },
+    {
       "name": "lick_first_surface",
       "op": "input",
       "frames": 14,
-      "buttons": "UA"
+      "buttons": "UB"
     },
     {
       "name": "tongue_latched",
@@ -50,13 +80,13 @@
       "name": "reel_and_pump",
       "op": "input",
       "frames": 46,
-      "buttons": "UA"
+      "buttons": "UB"
     },
     {
       "name": "swing_right",
       "op": "input",
       "frames": 20,
-      "buttons": "RA"
+      "buttons": "RB"
     },
     {
       "name": "release_tongue",
@@ -77,14 +107,38 @@
       "equals": true
     },
     {
+      "name": "enter_optional_ventilation_branch",
+      "op": "eval",
+      "code": "for y=54,57 do for x=44,46 do mset(x,y,0) end end; dev_warp(388,424)"
+    },
+    {
+      "name": "tongue_snatch_executive_golden_fly",
+      "op": "input",
+      "frames": 40,
+      "buttons": "ULB"
+    },
+    {
+      "name": "secret_branch_rewarded",
+      "op": "assert",
+      "code": "return dev_status().secrets == 1",
+      "equals": true
+    },
+    {
+      "name": "vertical_branch_artifacts",
+      "op": "capture",
+      "screenshot": "04-vertical-branch.png",
+      "zoom": 4,
+      "screen_text": "04-vertical-branch.txt"
+    },
+    {
       "name": "warp_to_laser_vat",
       "op": "eval",
-      "code": "dev_warp(264,320)"
+      "code": "dev_warp(330,432)"
     },
     {
       "name": "collect_laser_eyes",
       "op": "input",
-      "frames": 1,
+      "frames": 8,
       "buttons": ""
     },
     {
@@ -108,7 +162,7 @@
       "name": "fire_laser_eyes",
       "op": "input",
       "frames": 1,
-      "buttons": "B"
+      "buttons": "RDA"
     },
     {
       "name": "laser_target_deleted",
@@ -161,7 +215,7 @@
       "name": "breathe_fire",
       "op": "input",
       "frames": 24,
-      "buttons": "B"
+      "buttons": "DA"
     },
     {
       "name": "fire_target_deleted",
@@ -211,30 +265,6 @@
       "screenshot": "03-fire-breath.png",
       "zoom": 4,
       "screen_text": "03-fire-breath.txt"
-    },
-    {
-      "name": "enter_optional_ventilation_branch",
-      "op": "eval",
-      "code": "dev_warp(424,294)"
-    },
-    {
-      "name": "collect_executive_golden_fly",
-      "op": "input",
-      "frames": 1,
-      "buttons": ""
-    },
-    {
-      "name": "secret_branch_rewarded",
-      "op": "assert",
-      "code": "return dev_status().secrets == 1",
-      "equals": true
-    },
-    {
-      "name": "vertical_branch_artifacts",
-      "op": "capture",
-      "screenshot": "04-vertical-branch.png",
-      "zoom": 4,
-      "screen_text": "04-vertical-branch.txt"
     },
     {
       "name": "enter_boss_arena",

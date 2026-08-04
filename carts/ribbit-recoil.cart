@@ -14,7 +14,8 @@ local SW, SH, HUD_H = 192, 320, 16
 local WORLD_W, WORLD_H = 960, 512
 local PLAYER_W, PLAYER_H = 14, 16
 local GRAVITY, MAX_FALL = 0.25, 5.4
-local MAX_TONGUE, TONGUE_SPEED = 116, 7.2
+local MIN_ROPE, MAX_TONGUE, TONGUE_SPEED = 18, 116, 7.2
+local HOP_SPEED, RUN_SPEED, AIR_SPEED = -4.65, 2.8, 3.4
 
 local STEEL, GIRDER, MUD, ACID, BREAKABLE = 192, 193, 194, 195, 196
 local E_GNAT, E_BEETLE, E_WASP, E_BOSS = 1, 2, 3, 4
@@ -39,7 +40,9 @@ local LEVELS = {{
     {82,59,38,5,STEEL}, {90,51,8,1,GIRDER}, {105,49,8,1,MUD},
     {114,55,6,1,GIRDER}, {28,62,10,2,ACID}, {58,62,24,2,ACID},
     {44,54,3,4,BREAKABLE}, {79,56,3,3,BREAKABLE},
-    -- Optional vertical "executive ventilation shaft". Every ledge is tongueable.
+    -- Optional vertical "executive ventilation shaft". The intake alternates
+    -- short hop steps before opening into tongueable upper ledges.
+    {47,55,5,1,GIRDER}, {51,51,5,1,MUD}, {47,47,6,1,GIRDER},
     {40,43,7,1,GIRDER}, {49,44,6,1,GIRDER}, {55,39,6,1,MUD},
     {49,35,6,1,GIRDER},
     {61,34,7,1,STEEL}, {68,39,5,1,GIRDER}, {74,42,7,1,STEEL},
@@ -50,9 +53,9 @@ local LEVELS = {{
     {E_GNAT,420,290,46}, {E_BEETLE,470,320,36}, {E_WASP,560,250,44},
     {E_GNAT,620,310,48}, {E_BEETLE,690,448,46}, {E_WASP,742,356,38}
   },
-  pickups={{P_LASER,272,336}, {P_FIRE,600,449}},
+  pickups={{P_LASER,338,449}, {P_FIRE,600,449}},
   bombs={{368,416}, {514,344}, {660,440}, {824,446}},
-  secrets={{430,302,1500}},
+  secrets={{354,402,1500}},
   props={
     {"pipe",24,468,70}, {"fence",104,472,88}, {"sign",184,438,0},
     {"vent",244,456,0}, {"tank",404,432,0}, {"pipe",462,466,92},
@@ -94,6 +97,8 @@ local level, enemies, pickups, bombs, secrets = nil, {}, {}, {}, {}
 local particles, explosions, bullets, stars = {}, {}, {}, {}
 local run_frames, bugs_defeated, max_combo, secrets_found = 0, 0, 0, 0
 local tutorial_step = 0
+local coyote_timer, hop_buffer, hop_hold = 0, 0, 0
+local hops, landings, movement_fx = 0, 0, 0
 
 local function frame_count()
   return flr(t()*60)
@@ -152,6 +157,14 @@ local function aim_vector(default_up)
   elseif ax==0 and default_up and ay==0 then
     ay=-1
   end
+  return norm(ax,ay)
+end
+
+-- Down is an action modifier for mutations, not an instruction to shoot the floor.
+local function mutation_aim_vector()
+  local ax=(btn(0) and -1 or 0)+(btn(1) and 1 or 0)
+  local ay=btn(2) and -1 or 0
+  if ax==0 and ay==0 then ax=face_left and -1 or 1 end
   return norm(ax,ay)
 end
 
@@ -266,6 +279,7 @@ local function reset_player(full)
   player_x,player_y=checkpoint_x,checkpoint_y
   vx,vy=0,0
   grounded,invuln,hurt_timer=false,75,0
+  coyote_timer,hop_buffer,hop_hold=0,0,0
   respawn_timer,transition=0,12
   reset_tongue()
   if full then player_hp=player_max_hp end
@@ -278,6 +292,7 @@ local function start_game()
   checkpoint_x,checkpoint_y,checkpoint_index=st[1],st[2],0
   player_hp,score,combo,deaths=player_max_hp,0,0,0
   run_frames,bugs_defeated,max_combo,secrets_found=0,0,0,0
+  hops,landings,movement_fx=0,0,0
   tutorial_step=0
   laser_unlocked,fire_unlocked,mutation=false,false,"NONE"
   boss_started,boss_defeated,exit_open=false,false,false
@@ -294,7 +309,7 @@ local function start_game()
   music(0)
   master(2,1,0)
   echo(12,4,3)
-  set_banner("HOLD A + AIM: STICK TO TERRAIN",180)
+  set_banner("A HOPS - HOLD B + AIM: TONGUE",180)
   printh("ribbit recoil level 1 start")
 end
 
@@ -394,12 +409,29 @@ local function hurt_player(reason,from_x)
   combo,combo_timer=0,0
   printh("frog hurt by "..reason.." hp "..player_hp)
   if player_hp<=0 then
+    player_hp=0
     deaths=deaths+1
     respawn_timer=72
     music(-1)
     sfx(24,5)
     set_banner("CLINICALLY DE-FROGGED",65)
   end
+end
+
+local function fatal_player(reason)
+  if respawn_timer>0 or game_scene~="play" then return false end
+  player_hp=0
+  deaths=deaths+1
+  respawn_timer=60
+  vx,vy,grounded=0,0,false
+  coyote_timer,hop_buffer,hop_hold=0,0,0
+  reset_tongue()
+  music(-1)
+  flash,shake,hitstop,transition=5,10,5,10
+  sfx(24,5)
+  set_banner("INSTANTLY DE-FROGGED BY "..reason,75)
+  printh("frog fatally submerged by "..reason)
+  return true
 end
 
 local function move_x(amount)
@@ -433,7 +465,43 @@ local function move_y(amount)
     player_y=player_y+step
     remain=remain-abs(step)
   end
+  -- Snap a subpixel gap to the floor. Without this probe gravity makes the
+  -- frog alternate between airborne and landed every few frames while idle.
+  if dir>0 then
+    local tile,cx,cy=solid_box(player_x,player_y+1,PLAYER_W,PLAYER_H)
+    if tile then
+      grounded=true
+      player_y=cy*8-PLAYER_H
+      vy=0
+      return tile,cx,cy
+    end
+  end
   return nil,nil,nil
+end
+
+local function start_hop()
+  if hop_buffer<=0 or tongue_state=="latched"
+      or not (grounded or coyote_timer>0) then return false end
+  grounded=false
+  coyote_timer,hop_buffer,hop_hold=0,0,10
+  vy=HOP_SPEED
+  if btn(0) then
+    face_left=true
+    vx=min(vx-0.32,-1.0)
+  elseif btn(1) then
+    face_left=false
+    vx=max(vx+0.32,1.0)
+  elseif abs(vx)<0.7 then
+    vx=face_left and -0.7 or 0.7
+  end
+  hops=hops+1
+  movement_fx=movement_fx+3
+  for i=1,3 do
+    add_particle(player_x+7+(i-2)*3,player_y+PLAYER_H,
+      (i-2)*0.35,-0.45-rnd(0.25),8+i,6+i%2,1,0.04,4)
+  end
+  sfx(63,4)
+  return true
 end
 
 local function start_tongue()
@@ -503,13 +571,13 @@ local function latch_terrain(mx,my,last_x,last_y,cx,cy)
   tongue_state="latched"
   tongue_x,tongue_y=last_x,last_y
   tongue_tile_x,tongue_tile_y=cx,cy
-  rope_len=mid(20,dist(mx,my,tongue_x,tongue_y),MAX_TONGUE)
+  rope_len=mid(MIN_ROPE,dist(mx,my,tongue_x,tongue_y),MAX_TONGUE)
   sfx(18,4)
   burst(tongue_x,tongue_y,10,9,1.0,1)
   shake=max(shake,3)
   if tutorial_step==0 then
     tutorial_step=1
-    set_banner("REEL UP/DOWN - RELEASE A TO LAUNCH",150)
+    set_banner("REEL UP/DOWN - RELEASE B TO LAUNCH",150)
   end
 end
 
@@ -550,12 +618,12 @@ local function update_tongue()
     end
   elseif tongue_state=="latched" then
     if not solid(mget(tongue_tile_x,tongue_tile_y)) then begin_retract() return end
-    if not btn(4) then
+    if not btn(5) then
       vx,vy=vx*1.12,vy*1.08-0.65
       begin_retract()
       return
     end
-    if btn(2) then rope_len=max(28,rope_len-1.05) end
+    if btn(2) then rope_len=max(MIN_ROPE,rope_len-1.05) end
     if btn(3) then rope_len=min(MAX_TONGUE,rope_len+0.75) end
   elseif tongue_state=="retract" then
     tongue_len=max(0,tongue_len-12)
@@ -592,7 +660,7 @@ end
 
 local function laser_attack()
   local mx,my=player_mouth()
-  local ax,ay=aim_vector(false)
+  local ax,ay=mutation_aim_vector()
   local x,y=mx,my
   laser_x2,laser_y2=mx,my
   local hit_stamp=frame_now
@@ -601,9 +669,19 @@ local function laser_attack()
     local tcx,tcy=flr(x/8),flr(y/8)
     local tile=mget(tcx,tcy)
     if tile==BREAKABLE then
-      mset(tcx,tcy,0)
-      burst(tcx*8+4,tcy*8+4,10,8,1.0,4)
-      score=score+25
+      -- Laser eyes punch a frog-sized aperture instead of shaving one pixel row.
+      -- This makes the mutation read as a weapon and prevents an awkward
+      -- second shot at a tile the standing frog cannot aim toward.
+      for by=tcy-1,tcy+1 do
+        for bx=tcx-1,tcx+1 do
+          if mget(bx,by)==BREAKABLE then
+            mset(bx,by,0)
+            burst(bx*8+4,by*8+4,10,5,1.0,4)
+            score=score+25
+          end
+        end
+      end
+      add_explosion(tcx*8+4,tcy*8+4,1,true)
       laser_x2,laser_y2=x,y
       break
     elseif solid(tile) then break end
@@ -689,11 +767,11 @@ local function use_mutation()
   if weapon_cooldown>0 then return end
   if mutation=="LASER EYES" then laser_attack()
   elseif mutation=="FIRE BREATH" then
-    fire_aim_x,fire_aim_y=aim_vector(false)
+    fire_aim_x,fire_aim_y=mutation_aim_vector()
     fire_timer,weapon_cooldown=22,8
     sfx(25,5)
   else
-    set_banner("B BUTTON: INSUFFICIENTLY MUTATED",65)
+    set_banner("DOWN+A: INSUFFICIENTLY MUTATED",65)
     sfx(17,5)
     weapon_cooldown=20
   end
@@ -715,10 +793,10 @@ local function collect_pickups()
       p.alive=false
       if p.kind==P_LASER then
         laser_unlocked,mutation=true,"LASER EYES"
-        set_banner("LASER EYES: PRECISION + WALL CUTTING",120)
+        set_banner("DOWN+A LASER: AIM + CUT WALLS",120)
       else
         fire_unlocked,mutation=true,"FIRE BREATH"
-        set_banner("FIRE BREATH: IGNITE BUGS + BOMBS",120)
+        set_banner("DOWN+A FIRE: IGNITE BUGS + BOMBS",120)
       end
       score=score+750
       flash,shake,transition=5,7,7
@@ -728,7 +806,7 @@ local function collect_pickups()
       printh("mutation acquired "..mutation)
       if laser_unlocked and fire_unlocked then
         tutorial_step=2
-        set_banner("DOWN+B SWAPS YOUR BAD DECISIONS",150)
+        set_banner("DOWN+B SWAPS - DOWN+A MUTATES",150)
       end
     end
   end
@@ -737,7 +815,9 @@ end
 local function collect_secrets()
   for i=1,#secrets do
     local s=secrets[i]
-    if s.alive and player_hits(s.x-7,s.y-7,14,14) then
+    -- Golden Flies are deliberate tongue-snatch rewards, not main-route pickups.
+    if s.alive and tongue_state=="latched"
+        and player_hits(s.x-7,s.y-7,14,14) then
       s.alive=false
       secrets_found=secrets_found+1
       score=score+s.value
@@ -939,10 +1019,11 @@ local function check_hazards()
   local y0,y1=flr(player_y/8),flr((player_y+PLAYER_H-1)/8)
   for cy=y0,y1 do
     for cx=x0,x1 do
-      if hazardous(mget(cx,cy)) then hurt_player("union-grade acid",player_x) return end
+      if hazardous(mget(cx,cy)) then return fatal_player("UNION-GRADE RUNOFF") end
     end
   end
-  if player_y>WORLD_H+20 then hurt_player("gravity",player_x) end
+  if player_y>WORLD_H+8 then return fatal_player("THE BOTTOMLESS PUDDLE") end
+  return false
 end
 
 local function finish_level()
@@ -997,9 +1078,14 @@ local function update_play()
     return
   end
 
-  if btnp(4) then start_tongue() end
+  if grounded then coyote_timer=7 else coyote_timer=max(0,coyote_timer-1) end
+  if hop_buffer>0 then hop_buffer=hop_buffer-1 end
+
+  if btnp(4) then
+    if btn(3) then use_mutation() else hop_buffer=7 end
+  end
   if btnp(5) then
-    if not (btn(3) and cycle_mutation()) then use_mutation() end
+    if not (btn(3) and cycle_mutation()) then start_tongue() end
   end
   if fire_timer>0 then
     fire_timer=fire_timer-1
@@ -1007,11 +1093,27 @@ local function update_play()
     if fire_timer%2==0 then fire_damage() end
   end
 
-  local accel=grounded and 0.22 or 0.12
-  if btn(0) then vx,face_left=max(-2.0,vx-accel),true end
-  if btn(1) then vx,face_left=min(2.0,vx+accel),false end
-  if not btn(0) and not btn(1) then vx=vx*(grounded and 0.72 or 0.985) end
-  vy=min(MAX_FALL,vy+GRAVITY)
+  start_hop()
+  local accel=grounded and 0.28 or 0.17
+  local speed_cap=grounded and RUN_SPEED or AIR_SPEED
+  if tongue_state=="latched" then speed_cap,accel=4.6,0.18 end
+  if btn(0) then
+    face_left=true
+    if vx>-speed_cap then vx=max(-speed_cap,vx-accel) else vx=vx*0.998 end
+  end
+  if btn(1) then
+    face_left=false
+    if vx<speed_cap then vx=min(speed_cap,vx+accel) else vx=vx*0.998 end
+  end
+  if not btn(0) and not btn(1) then vx=vx*(grounded and 0.84 or 0.995) end
+  local gravity=GRAVITY
+  if vy<0 and btn(4) and hop_hold>0 then
+    gravity=0.13
+    hop_hold=hop_hold-1
+  else
+    hop_hold=0
+  end
+  vy=min(MAX_FALL,vy+gravity)
 
   move_x(vx)
   local gate=level.boss_gate
@@ -1020,12 +1122,17 @@ local function update_play()
     vx=0
   end
   local was_grounded=grounded
+  local impact_vy=vy
   move_y(vy)
   constrain_rope()
   update_tongue()
-  if not was_grounded and grounded then
-    burst(player_x+7,player_y+PLAYER_H,12,5,0.45,0)
-    if vy>3 then shake=max(shake,2) end
+  if not was_grounded and grounded and impact_vy>1.6 then
+    landings=landings+1
+    movement_fx=movement_fx+2
+    add_particle(player_x+3,player_y+PLAYER_H,-0.8,-0.35,8,7,1,0.04,4)
+    add_particle(player_x+11,player_y+PLAYER_H,0.8,-0.35,8,7,1,0.04,4)
+    sfx(17,5)
+    if impact_vy>3 then shake=max(shake,2) end
   end
 
   collect_pickups()
@@ -1034,7 +1141,7 @@ local function update_play()
   update_enemies()
   update_bullets()
   update_boss_death()
-  check_hazards()
+  if check_hazards() then return end
   if not boss_started and player_x>level.boss_trigger then start_boss() end
   local exit_hitbox=level.exit.hitbox
   if exit_open and player_hits(exit_hitbox.x,exit_hitbox.y,exit_hitbox.w,exit_hitbox.h) then
@@ -1334,6 +1441,7 @@ end
 
 local function draw_grapple_hint()
   if tongue_state~="idle" or respawn_timer>0 or paused then return end
+  if not btn(2) and not btn(3) then return end
   local x,y=grapple_point()
   if not x then return end
   local mx,my=player_mouth()
@@ -1553,11 +1661,12 @@ local function draw_pause()
   rect(20,78,171,243,15)
   rect(23,81,168,240,8)
   print("TACTICAL CROAK BREAK",54,94,6)
-  print("A  TONGUE / HOLD TO SWING",34,120,63)
+  print("A  HOP / HOLD FOR HEIGHT",41,120,63)
   print("UP/DOWN  REEL WHILE LATCHED",28,136,63)
-  print("B  MUTATION WEAPON",48,152,10)
-  print("DOWN+B  SWAP MUTATION",40,168,4)
-  print("NO JUMP. THIS IS A FEATURE.",34,194,31)
+  print("B  TONGUE / HOLD TO SWING",37,152,46)
+  print("DOWN+A  MUTATION WEAPON",38,168,10)
+  print("DOWN+B  SWAP MUTATION",40,184,4)
+  print("HOP + SWING = BAD VELOCITY",35,204,31)
   print("MENU  RETURN TO NONSENSE",40,220,14)
 end
 
@@ -1590,12 +1699,12 @@ local function draw_title()
     rectfill(18,188,173,276,49)
     rect(18,188,173,276,55)
     line(22,192,169,192,13)
-    print("D-PAD  MOVE + AIM",54,199,63)
-    print("HOLD A  STICK TO TERRAIN",42,214,46)
-    print("REEL UP/DOWN - RELEASE = LAUNCH",27,229,31)
-    print("B  MUTATION / DOWN+B SWAP",38,244,10)
+    print("D-PAD  RUN + AIM",57,199,63)
+    print("A  HOP / HOLD FOR HEIGHT",43,214,63)
+    print("HOLD B  TONGUE + REEL",48,229,46)
+    print("DOWN+A FIRE / DOWN+B SWAP",36,244,10)
     print("DEFEAT UPPER MANAGEMENT",39,259,4)
-    print("NO JUMP. LICK THE CEILING.",38,270,59)
+    print("HOP. LICK. ACHIEVE VELOCITY.",32,270,59)
   end
   print(frame_now%80<58 and "A/B  DEPLOY FROG" or "   PRESS THE BAD IDEA",53,286,63)
   print("MENU  TOGGLE BRIEFING",55,304,58)
@@ -1661,6 +1770,8 @@ function dev_status()
   local boss=enemies[#enemies]
   return {scene=game_scene,level=game_level,x=player_x,y=player_y,vx=vx,vy=vy,
     grounded=grounded,hp=player_hp,score=score,combo=combo,deaths=deaths,
+    respawn=respawn_timer,coyote=coyote_timer,hop_buffer=hop_buffer,
+    hops=hops,landings=landings,movement_fx=movement_fx,
     tongue=tongue_state,latched=tongue_state=="latched",rope=rope_len,
     mutation=mutation,laser=laser_unlocked,fire=fire_unlocked,
     bugs=alive,boss_started=boss_started,boss_hp=boss and boss.hp or 0,
@@ -1751,7 +1862,7 @@ wavetable 2 78899aab bccddeef 01122334 45566778
 wavetable 3 fdb97531 02468ace fdb97531 02468ace
 inst croaklead wave=w1 vib=13,3,3 echo=3
 inst swampstab wave=w0 env=0,5,2 trem=3,4 echo=2
-inst mutantbass wave=6 fm=1,9,12 env=0,9,3
+inst mutantbass wave=6 fm=1,9,12
 inst kick wave=3 sweep=-19,5 env=0,6,0 duck=4,9
 inst snare wave=5 env=0,5,0
 inst hat wave=5 env=0,2,0
@@ -1774,6 +1885,9 @@ inst bossbass wave=4 vib=10,5,2
 inst warbrass wave=w3 trem=3,4 echo=2
 inst siren wave=6 fm=2.5,13,8 vib=30,5,2 echo=5
 inst tom wave=3 sweep=-10,6 env=0,7,0 duck=2,7
+inst hop wave=1 env=0,5,0 sweep=9,5
+inst moonpad wave=w2 env=3,20,3 vib=24,2,2 trem=6,2 echo=7
+inst nervepluck wave=w0 sweep=-2,5 echo=3
 master drive=2 tone=1 hiss=0
 echo delay=12 feedback=4 level=3
 
@@ -2735,16 +2849,574 @@ D3 snare 4
 F#2 tom 5
 C2 kick 6
 
+# gameplay bridge: moonlit half-time breathing room before the hook returns
+sfx 47 speed=6
+A2 mutantbass 4
+---
+E3 mutantbass 3
+---
+A2 mutantbass 4
+---
+C3 mutantbass 4
+---
+D3 mutantbass 4
+---
+A2 mutantbass 3
+---
+F2 mutantbass 4
+---
+C3 mutantbass 3
+---
+E2 mutantbass 4
+---
+B2 mutantbass 3
+---
+E2 mutantbass 4
+G#2 mutantbass 3
+B2 mutantbass 4
+---
+D3 mutantbass 4
+C3 mutantbass 3
+B2 mutantbass 3
+G#2 mutantbass 4
+E2 mutantbass 5
+---
+E3 mutantbass 3 sl-12
+E2 mutantbass 4
+
+sfx 48 speed=6
+---
+---
+A4 croaklead 3
+C5 croaklead 4
+E5 croaklead 5
+---
+G5 croaklead 4
+E5 croaklead 3
+---
+D5 croaklead 4
+C5 croaklead 3
+---
+A4 croaklead 4
+---
+E5 croaklead 3
+G5 croaklead 4
+A5 croaklead 5
+---
+C6 croaklead 4 sl-7
+A5 croaklead 4
+G5 croaklead 3
+---
+E5 croaklead 4
+D5 croaklead 3
+C5 croaklead 4
+---
+B4 croaklead 3
+G#4 croaklead 4
+B4 croaklead 3
+E5 croaklead 5
+---
+---
+
+sfx 49 speed=6
+A3 moonpad 3 arp3,7
+---
+---
+---
+F3 moonpad 3 arp4,7
+---
+---
+---
+D3 moonpad 3 arp3,7
+---
+---
+---
+E3 moonpad 3 arp4,7
+---
+---
+---
+A3 moonpad 3 arp3,7
+---
+---
+---
+C4 moonpad 3 arp4,7
+---
+---
+---
+E3 moonpad 3 arp4,7
+---
+B3 moonpad 3
+---
+G#3 moonpad 3 arp4,8
+---
+---
+---
+
+sfx 50 speed=6
+C2 kick 5
+---
+F4 hat 2
+---
+---
+F4 hat 2
+C2 kick 4
+---
+D3 snare 5
+---
+F4 hat 2
+---
+C2 kick 4
+---
+F4 hat 2
+---
+C2 kick 5
+---
+F4 hat 2
+C2 kick 4
+---
+F4 hat 2
+---
+---
+D3 snare 5
+---
+F4 hat 2
+---
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+
+# gameplay return: the croak hook comes back faster and resolves the bridge
+sfx 51 speed=6
+A2 mutantbass 5
+A2 mutantbass 3
+---
+C3 mutantbass 4
+E3 mutantbass 4
+---
+G2 mutantbass 4
+A2 mutantbass 4
+C3 mutantbass 4
+---
+B2 mutantbass 4
+G2 mutantbass 4
+E2 mutantbass 4
+---
+G2 mutantbass 3
+A2 mutantbass 4
+F2 mutantbass 5
+---
+A2 mutantbass 4
+C3 mutantbass 4
+---
+E3 mutantbass 4
+D3 mutantbass 3
+C3 mutantbass 4
+B2 mutantbass 3
+A2 mutantbass 4
+G#2 mutantbass 4
+B2 mutantbass 4
+E3 mutantbass 4
+D3 mutantbass 3
+B2 mutantbass 4
+E2 mutantbass 5
+
+sfx 52 speed=6
+A4 nervepluck 3
+C5 nervepluck 4
+E5 croaklead 4
+A5 croaklead 5
+---
+G5 croaklead 4
+E5 croaklead 4
+C5 nervepluck 3
+D5 croaklead 4
+F5 croaklead 4
+A5 croaklead 5
+C6 croaklead 5
+---
+A5 croaklead 4
+G5 croaklead 4
+E5 croaklead 4
+F5 croaklead 4
+A5 croaklead 5
+C6 croaklead 5
+E6 croaklead 5
+D6 croaklead 4 sl-7
+B5 croaklead 4
+G5 croaklead 4
+E5 croaklead 4
+C5 nervepluck 3
+E5 croaklead 4
+G#5 croaklead 4
+B5 croaklead 5
+A5 croaklead 4
+G#5 croaklead 4
+E5 croaklead 5
+---
+
+sfx 53 speed=6
+A3 sewerkeys 3 arp3,7
+---
+E4 sewerkeys 3
+---
+G3 sewerkeys 3 arp5,9
+---
+E4 sewerkeys 3
+---
+F3 sewerkeys 3 arp4,7
+---
+C4 sewerkeys 3
+---
+E3 sewerkeys 3 arp4,8
+---
+B3 sewerkeys 3
+---
+D3 sewerkeys 3 arp3,7
+---
+A3 sewerkeys 3
+---
+C4 sewerkeys 3 arp4,7
+---
+G3 sewerkeys 3
+---
+E3 sewerkeys 3 arp4,7
+---
+B3 sewerkeys 3
+---
+E4 sewerkeys 3 arp4,8
+D4 sewerkeys 3
+B3 sewerkeys 3
+G#3 sewerkeys 3
+
+sfx 54 speed=6
+C2 kick 5
+F4 hat 2
+---
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 4
+C2 kick 4
+---
+F4 hat 2
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+C2 kick 4
+F4 hat 2
+D3 snare 5
+F4 hat 2
+C2 kick 4
+F4 hat 2
+C2 kick 5
+C2 kick 4
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F4 hat 2
+D3 snare 4
+D3 snare 4
+C2 kick 5
+D3 snare 5
+F4 hat 3
+D3 snare 6
+
+# boss breakdown: sparse tritone pulse makes room before the final command rush
+sfx 55 speed=4
+C#2 bossbass 5
+---
+C#2 bossbass 4
+G2 bossbass 4
+---
+C#3 bossbass 5
+C2 bossbass 4
+---
+G2 bossbass 5
+---
+C#2 bossbass 4
+D2 bossbass 4
+D#2 bossbass 4
+E2 bossbass 4
+F2 bossbass 4
+F#2 bossbass 5
+C2 bossbass 5
+---
+G2 bossbass 4
+C#3 bossbass 5
+---
+C3 bossbass 4
+B2 bossbass 4
+A#2 bossbass 4
+A2 bossbass 4
+G#2 bossbass 4
+G2 bossbass 4
+F#2 bossbass 5
+C#3 bossbass 4 sl-12
+G2 bossbass 4
+C#2 bossbass 5
+C#2 bossbass 6
+
+sfx 56 speed=4
+---
+---
+C#5 siren 3 sl+12
+---
+---
+G5 siren 4
+---
+---
+C6 siren 5 sl-6
+---
+G5 siren 4
+---
+C#5 siren 4 arp6,11
+---
+---
+---
+D5 nervepluck 3
+---
+G#5 siren 4
+---
+D6 siren 5
+---
+C#6 siren 4
+B5 siren 4
+G#5 siren 4
+F#5 siren 4
+E5 siren 4
+D5 siren 4
+C#5 siren 5
+G4 siren 4
+C#5 siren 5
+---
+
+sfx 57 speed=4
+C#4 warbrass 4
+---
+---
+G4 warbrass 4
+---
+---
+C#5 warbrass 5
+---
+C4 warbrass 4
+---
+---
+F#4 warbrass 4
+---
+---
+B4 warbrass 5
+---
+D4 warbrass 4
+---
+---
+G#4 warbrass 4
+---
+---
+D5 warbrass 5
+---
+C#5 warbrass 4
+B4 warbrass 4
+G#4 warbrass 4
+F#4 warbrass 4
+E4 warbrass 4
+D4 warbrass 4
+C#4 warbrass 6
+---
+
+sfx 58 speed=2
+C2 kick 5
+---
+F#2 tom 4
+---
+D3 snare 5
+---
+F#2 tom 4
+---
+C2 kick 5
+---
+F#2 tom 4
+---
+D3 snare 5
+F4 hat 2
+F#2 tom 4
+---
+C2 kick 5
+F4 hat 2
+F#2 tom 4
+F4 hat 2
+D3 snare 5
+F4 hat 2
+C2 kick 4
+F4 hat 2
+F#2 tom 5
+F4 hat 2
+D3 snare 5
+F4 hat 2
+F#2 tom 5
+D3 snare 4
+F#2 tom 5
+C2 kick 6
+
+# boss final command: full chromatic chase with a brass/siren call and response
+sfx 59 speed=4
+B2 bossbass 5
+B2 bossbass 4
+F3 bossbass 5
+B2 bossbass 4
+C3 bossbass 4
+C#3 bossbass 4
+D3 bossbass 4
+D#3 bossbass 4
+E3 bossbass 5
+B2 bossbass 4
+F3 bossbass 5
+B2 bossbass 4
+G3 bossbass 4 sl-12
+F#3 bossbass 4
+F3 bossbass 4
+E3 bossbass 4
+D#3 bossbass 5
+D3 bossbass 4
+C#3 bossbass 4
+C3 bossbass 4
+B2 bossbass 5
+F3 bossbass 4
+B3 bossbass 5 sl-12
+B2 bossbass 4
+F3 bossbass 5
+E3 bossbass 4
+D#3 bossbass 4
+D3 bossbass 4
+C#3 bossbass 4
+C3 bossbass 4
+B2 bossbass 5
+B1 bossbass 6
+
+sfx 60 speed=4
+B4 nervepluck 3
+D5 siren 4
+F5 siren 4
+B5 siren 5
+---
+F5 siren 4
+D5 siren 4
+B4 siren 4
+C5 nervepluck 3
+E5 siren 4
+G5 siren 4
+C6 siren 5
+---
+G5 siren 4
+E5 siren 4
+C5 siren 4
+D5 nervepluck 3
+F5 siren 4
+A5 siren 4
+D6 siren 5
+C#6 siren 4 sl-7
+A5 siren 4
+F5 siren 4
+D5 siren 4
+C#5 siren 4
+E5 siren 4
+G#5 siren 4
+C#6 siren 5
+B5 siren 4
+G#5 siren 4
+F#5 siren 5
+---
+
+sfx 61 speed=4
+B3 warbrass 4
+---
+F4 warbrass 4
+---
+B4 warbrass 5
+---
+D5 warbrass 4
+F5 warbrass 4
+C4 warbrass 4
+---
+G4 warbrass 4
+---
+C5 warbrass 5
+---
+E5 warbrass 4
+G5 warbrass 4
+D4 warbrass 4
+---
+A4 warbrass 4
+---
+D5 warbrass 5
+---
+F5 warbrass 4
+A5 warbrass 4
+C#5 warbrass 4
+B4 warbrass 4
+G#4 warbrass 4
+F#4 warbrass 4
+E4 warbrass 4
+D4 warbrass 4
+C#4 warbrass 6
+---
+
+sfx 62 speed=2
+C2 kick 6
+F4 hat 2
+D3 snare 4
+F#2 tom 4
+C2 kick 5
+F4 hat 2
+D3 snare 4
+F4 hat 2
+F#2 tom 5
+C2 kick 5
+D3 snare 4
+F4 hat 2
+C2 kick 5
+F#2 tom 4
+D3 snare 5
+F4 hat 2
+C2 kick 6
+F4 hat 2
+D3 snare 4
+C2 kick 4
+F#2 tom 5
+F4 hat 2
+D3 snare 4
+F#2 tom 4
+C2 kick 5
+C2 kick 4
+D3 snare 4
+F4 hat 2
+F#2 tom 5
+D3 snare 5
+F#2 tom 5
+C2 kick 6
+
+# movement effect kept on action channel 4; compact and bright, never a smoke loop
+sfx 63 speed=1
+G3 hop 4
+C4 hop 5 sl+3
+E4 hop 3
+
 __music__
 bpm=150 rows_per_beat=4
 pat 0 : 0 1 2 3
 pat 1 : 4 5 6 7
 pat 2 : 31 32 33 34
-pat 3 loop=0 : 35 36 37 38
+pat 3 : 35 36 37 38
+pat 4 : 47 48 49 50
+pat 5 loop=0 : 51 52 53 54
 pat 8 : 8 9 10 11
 pat 9 : 12 13 14 15
 pat 10 : 39 40 41 42
-pat 11 loop=8 : 43 44 45 46
+pat 11 : 43 44 45 46
+pat 12 : 55 56 57 58
+pat 13 loop=8 : 59 60 61 62
 pat 16 stop : 30 - - -
 __sprites__
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000

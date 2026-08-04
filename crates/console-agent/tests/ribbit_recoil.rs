@@ -46,8 +46,8 @@ fn controller_only_replay_traverses_the_authored_level() {
         .expect("repeat controller-only traversal");
 
     assert_eq!(first.scenario.status, "passed");
-    assert_eq!(first.scenario.frame_count, 1_442);
-    assert_eq!(first.scenario.stage_count, 45);
+    assert_eq!(first.scenario.frame_count, 1_487);
+    assert_eq!(first.scenario.stage_count, 50);
     assert_eq!(
         serde_json::to_value(first).unwrap(),
         serde_json::to_value(second).unwrap(),
@@ -60,8 +60,8 @@ fn controller_only_replay_traverses_the_authored_level() {
     let secret_second = console_agent::playtest::run_scenario(&cart, &secret_scenario, None, None)
         .expect("repeat controller-only secret route");
     assert_eq!(secret_first.scenario.status, "passed");
-    assert_eq!(secret_first.scenario.frame_count, 631);
-    assert_eq!(secret_first.scenario.stage_count, 22);
+    assert_eq!(secret_first.scenario.frame_count, 615);
+    assert_eq!(secret_first.scenario.stage_count, 25);
     assert_eq!(
         serde_json::to_value(secret_first).unwrap(),
         serde_json::to_value(secret_second).unwrap(),
@@ -76,7 +76,7 @@ fn tongue_latches_reels_and_releases_with_momentum() {
     start_game(&mut session);
 
     session
-        .step(14, console_core::input::UP | console_core::input::A)
+        .step(14, console_core::input::UP | console_core::input::B)
         .unwrap();
     let latched_response = request(
         &mut session,
@@ -92,10 +92,10 @@ fn tongue_latches_reels_and_releases_with_momentum() {
     assert_eq!(latched["tongue"], "latched");
 
     session
-        .step(46, console_core::input::UP | console_core::input::A)
+        .step(46, console_core::input::UP | console_core::input::B)
         .unwrap();
     session
-        .step(20, console_core::input::RIGHT | console_core::input::A)
+        .step(20, console_core::input::RIGHT | console_core::input::B)
         .unwrap();
     session.step(1, 0).unwrap();
     session.step(18, console_core::input::RIGHT).unwrap();
@@ -135,7 +135,7 @@ fn tongue_latches_every_solid_material_and_retracts_from_destroyed_terrain() {
                 "dev_warp(88,400); for x=10,13 do mset(x,48,{tile}) end"
             )}),
         );
-        let input = console_core::input::UP | console_core::input::A;
+        let input = console_core::input::UP | console_core::input::B;
         session.step(18, input).unwrap();
         let latched = request(
             &mut session,
@@ -168,6 +168,99 @@ fn tongue_latches_every_solid_material_and_retracts_from_destroyed_terrain() {
 }
 
 #[test]
+fn hop_has_momentum_idle_ground_is_stable_and_runoff_is_immediately_fatal() {
+    let mut session = Session::new();
+    session.load_cart(&cart_text(), 8_675_309).unwrap();
+    start_game(&mut session);
+    session.step(180, 0).unwrap();
+    let idle = request(
+        &mut session,
+        1,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    assert_eq!(idle["result"]["grounded"], true);
+    assert_eq!(idle["result"]["particles"], 0);
+    assert_eq!(idle["result"]["movement_fx"], 0);
+    assert_eq!(idle["result"]["landings"], 0);
+
+    session
+        .step(9, console_core::input::RIGHT | console_core::input::A)
+        .unwrap();
+    let hop = request(
+        &mut session,
+        2,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    assert_eq!(hop["result"]["hops"], 1);
+    assert!(hop["result"]["y"].as_f64().unwrap() < 450.0, "{hop}");
+    assert!(hop["result"]["vx"].as_f64().unwrap() > 1.8, "{hop}");
+    assert!(hop["result"]["vy"].as_f64().unwrap() < -3.0, "{hop}");
+
+    let mut fatal = Session::new();
+    fatal.load_cart(&cart_text(), 8_675_309).unwrap();
+    start_game(&mut fatal);
+    fatal.step(5, 0).unwrap();
+    let staged = request(
+        &mut fatal,
+        3,
+        "eval",
+        json!({"code": "dev_warp(230,490); return dev_status()"}),
+    );
+    fatal.step(1, 0).unwrap();
+    let drowned = request(
+        &mut fatal,
+        4,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    assert_eq!(drowned["result"]["hp"], 0);
+    assert_eq!(drowned["result"]["deaths"], 1);
+    assert!(drowned["result"]["respawn"].as_u64().unwrap() > 0);
+    assert_eq!(
+        drowned["result"]["camera_x"], staged["result"]["camera_x"],
+        "fatal runoff must freeze camera tracking"
+    );
+    assert_eq!(
+        drowned["result"]["camera_y"], staged["result"]["camera_y"],
+        "fatal runoff must freeze camera tracking"
+    );
+    // Fatal impact contributes hit-stop frames before the respawn countdown.
+    fatal.step(70, 0).unwrap();
+    let respawned = request(
+        &mut fatal,
+        5,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    assert_eq!(respawned["result"]["hp"], 5);
+    assert_eq!(respawned["result"]["respawn"], 0);
+    assert!(respawned["result"]["x"].as_f64().unwrap() < 50.0);
+
+    let mut post_boss = Session::new();
+    post_boss.load_cart(&cart_text(), 8_675_309).unwrap();
+    start_game(&mut post_boss);
+    request(
+        &mut post_boss,
+        6,
+        "eval",
+        json!({"code": "dev_start_boss(); dev_damage_boss(99); dev_warp(230,490)"}),
+    );
+    post_boss.step(1, 0).unwrap();
+    let post_boss_drowned = request(
+        &mut post_boss,
+        7,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    assert_eq!(post_boss_drowned["result"]["boss_defeated"], true);
+    assert_eq!(post_boss_drowned["result"]["hp"], 0);
+    assert_eq!(post_boss_drowned["result"]["deaths"], 1);
+    assert!(post_boss_drowned["result"]["respawn"].as_u64().unwrap() > 0);
+}
+
+#[test]
 fn both_mutations_kill_insects_and_can_be_swapped() {
     let mut session = Session::new();
     session.load_cart(&cart_text(), 8_675_309).unwrap();
@@ -181,7 +274,12 @@ fn both_mutations_kill_insects_and_can_be_swapped() {
     )["result"]
         .as_u64()
         .unwrap();
-    session.step(1, console_core::input::B).unwrap();
+    session
+        .step(
+            1,
+            console_core::input::DOWN | console_core::input::RIGHT | console_core::input::A,
+        )
+        .unwrap();
     let laser_hp = request(
         &mut session,
         2,
@@ -199,7 +297,9 @@ fn both_mutations_kill_insects_and_can_be_swapped() {
     )["result"]
         .as_u64()
         .unwrap();
-    session.step(24, console_core::input::B).unwrap();
+    session
+        .step(24, console_core::input::DOWN | console_core::input::A)
+        .unwrap();
     let fire_hp = request(
         &mut session,
         4,
@@ -451,11 +551,12 @@ fn polish_contracts_cover_surface_grapple_branch_stats_and_separate_songs() {
         "the full-width lower-screen wave distortion must stay removed"
     );
     for contract in [
-        "pat 3 loop=0 : 35 36 37 38",
-        "pat 11 loop=8 : 43 44 45 46",
+        "pat 5 loop=0 : 51 52 53 54",
+        "pat 13 loop=8 : 59 60 61 62",
+        "sfx 63 speed=1",
         "inst siren",
         "inst warbrass",
-        "secrets={{430,302,1500}}",
+        "secrets={{354,402,1500}}",
     ] {
         assert!(
             cart.contains(contract),
@@ -470,16 +571,24 @@ fn polish_contracts_cover_surface_grapple_branch_stats_and_separate_songs() {
         &mut session,
         1,
         "eval",
-        json!({"code": "dev_warp(424,294)"}),
+        json!({"code": "for y=54,57 do for x=44,46 do mset(x,y,0) end end; dev_warp(388,424)"}),
     );
-    session.step(1, 0).unwrap();
+    session
+        .step(
+            40,
+            console_core::input::UP | console_core::input::LEFT | console_core::input::B,
+        )
+        .unwrap();
     let stats = request(
         &mut session,
         2,
         "eval",
         json!({"code": "return dev_status()"}),
     );
-    assert_eq!(stats["result"]["secrets"], 1);
+    assert_eq!(
+        stats["result"]["secrets"], 1,
+        "the isolated latched-tongue secret route must collect the fly: {stats}"
+    );
     assert!(stats["result"]["score"].as_i64().unwrap() >= 1_500);
     assert!(stats["result"]["elapsed"].as_i64().unwrap() > 0);
     assert!(stats["result"]["rank"].as_str().is_some());
@@ -511,9 +620,9 @@ fn scripted_run_is_framebuffer_and_audio_deterministic() {
         (1, 0),
         (1, console_core::input::A),
         (1, 0),
-        (14, console_core::input::UP | console_core::input::A),
-        (46, console_core::input::UP | console_core::input::A),
-        (20, console_core::input::RIGHT | console_core::input::A),
+        (14, console_core::input::UP | console_core::input::B),
+        (46, console_core::input::UP | console_core::input::B),
+        (20, console_core::input::RIGHT | console_core::input::B),
         (1, 0),
         (18, console_core::input::RIGHT),
         (90, 0),

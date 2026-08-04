@@ -6,27 +6,37 @@
     {"name":"deploy_frog","op":"input","frames":1,"buttons":"A"},
     {"name":"release_start","op":"input","frames":1,"buttons":""},
 
-    {"name":"grapple_opening_girder","op":"input","frames":60,"buttons":"UA"},
-    {"name":"swing_from_girder","op":"input","frames":20,"buttons":"RA"},
+    {"name":"grapple_opening_girder","op":"input","frames":60,"buttons":"UB"},
+    {"name":"swing_from_girder","op":"input","frames":20,"buttons":"RB"},
     {"name":"release_first_surface","op":"input","frames":1,"buttons":""},
     {"name":"carry_to_second_surface","op":"input","frames":18,"buttons":"R"},
-    {"name":"grapple_second_surface","op":"input","frames":84,"buttons":"UA"},
-    {"name":"pump_second_swing","op":"input","frames":30,"buttons":"RA"},
+    {"name":"grapple_second_surface","op":"input","frames":84,"buttons":"UB"},
+    {"name":"pump_second_swing","op":"input","frames":30,"buttons":"RB"},
     {"name":"release_second_surface","op":"input","frames":1,"buttons":""},
     {"name":"line_up_third_surface","op":"input","frames":32,"buttons":"R"},
-    {"name":"grapple_third_surface","op":"input","frames":86,"buttons":"UA"},
-    {"name":"pump_third_swing","op":"input","frames":30,"buttons":"RA"},
+    {"name":"grapple_third_surface","op":"input","frames":86,"buttons":"UB"},
+    {"name":"pump_third_swing","op":"input","frames":30,"buttons":"RB"},
     {"name":"release_third_surface","op":"input","frames":1,"buttons":""},
-    {"name":"land_with_laser_eyes","op":"input","frames":150,"buttons":"R"},
+    {"name":"land_at_first_croakpoint","op":"input","frames":150,"buttons":"R"},
     {
-      "name":"checkpoint_one_and_laser",
+      "name":"checkpoint_one_grants_laser_eyes",
       "op":"assert",
-      "code":"local s=dev_status(); return s.checkpoint >= 1 and s.laser and s.x > 390",
+      "code":"local s=dev_status(); return s.checkpoint >= 1 and s.laser and s.x > 330 and s.x < 350",
+      "equals":true
+    },
+    {"name":"cut_frog_sized_gate","op":"input","frames":1,"buttons":"DA"},
+    {"name":"let_gate_slag_clear","op":"input","frames":13,"buttons":""},
+    {"name":"hop_through_cut_gate","op":"input","frames":30,"buttons":"RA"},
+    {"name":"release_hop","op":"input","frames":1,"buttons":""},
+    {
+      "name":"main_route_opened",
+      "op":"assert",
+      "code":"local s=dev_status(); return s.hops >= 1 and s.x > 380 and s.secrets == 0",
       "equals":true
     },
 
-    {"name":"grapple_across_refinery_gap","op":"input","frames":10,"buttons":"URA"},
-    {"name":"swing_across_refinery_gap","op":"input","frames":30,"buttons":"RA"},
+    {"name":"grapple_across_refinery_gap","op":"input","frames":10,"buttons":"URB"},
+    {"name":"swing_across_refinery_gap","op":"input","frames":30,"buttons":"RB"},
     {"name":"release_refinery_swing","op":"input","frames":1,"buttons":""},
     {"name":"cross_mutation_bridge","op":"input","frames":120,"buttons":"R"},
     {
@@ -35,7 +45,7 @@
       "code":"local s=dev_status(); return s.laser and s.fire and s.mutation == 'FIRE BREATH'",
       "equals":true
     },
-    {"name":"detonate_gate_egg","op":"input","frames":24,"buttons":"B"},
+    {"name":"detonate_gate_egg","op":"input","frames":24,"buttons":"DA"},
     {"name":"let_gate_explosion_clear","op":"input","frames":6,"buttons":""},
     {"name":"cross_demolished_gate","op":"input","frames":40,"buttons":"R"},
     {
@@ -44,7 +54,7 @@
       "code":"local s=dev_status(); return s.checkpoint == 2 and s.x > 650",
       "equals":true
     },
-    {"name":"roast_bridge_beetle","op":"input","frames":24,"buttons":"B"},
+    {"name":"roast_bridge_beetle","op":"input","frames":24,"buttons":"DA"},
     {"name":"let_beetle_explode","op":"input","frames":6,"buttons":""},
     {"name":"enter_buzzkill_arena","op":"input","frames":60,"buttons":"R"},
     {
@@ -62,15 +72,15 @@
       "code":"local s=dev_status(); return s.boss_phase == 1 and s.boss_vulnerable and s.boss_salvo1 >= 1",
       "equals":true
     },
-    {"name":"laser_weak_point_one","op":"input","frames":1,"buttons":"RB"},
-    {"name":"survive_phase_two_bomb_fan","op":"input","frames":30,"buttons":"L"},
+    {"name":"laser_weak_point_one","op":"input","frames":1,"buttons":"DRA"},
+    {"name":"survive_phase_two_bomb_fan","op":"input","frames":30,"buttons":"R"},
     {
       "name":"phase_two_pattern_executed",
       "op":"assert",
       "code":"local s=dev_status(); return s.boss_phase == 2 and s.boss_vulnerable and s.boss_salvo2 >= 1",
       "equals":true
     },
-    {"name":"laser_weak_point_two","op":"input","frames":1,"buttons":"RB"},
+    {"name":"laser_weak_point_two","op":"input","frames":1,"buttons":"DRA"},
     {"name":"survive_phase_three_wide_fan","op":"input","frames":30,"buttons":"R"},
     {
       "name":"phase_three_pattern_executed",
@@ -78,7 +88,7 @@
       "code":"local s=dev_status(); return s.boss_phase == 3 and s.boss_vulnerable and s.boss_salvo3 >= 1",
       "equals":true
     },
-    {"name":"laser_weak_point_three","op":"input","frames":1,"buttons":"RB"},
+    {"name":"laser_weak_point_three","op":"input","frames":1,"buttons":"DRA"},
     {"name":"clear_final_attack","op":"input","frames":13,"buttons":"L"},
     {
       "name":"boss_defeated_by_controller",

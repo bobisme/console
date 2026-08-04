@@ -1,9 +1,17 @@
 # RIBBIT RECOIL campaign direction
 
 `ribbit-recoil.cart` is the complete first-level vertical slice: a controller-playable
-title-to-victory run through **The Mosquito Complex**, built around movement by tongue
-grapple, insect combat, Laser Eyes, Fire Breath, checkpoints, explosive egg bombs, and
-the Colonel Buzzkill boss.
+title-to-victory run through **The Mosquito Complex**, built around momentum hops,
+terrain tongue grapples, insect combat, Laser Eyes, Fire Breath, checkpoints,
+explosive egg bombs, and the Colonel Buzzkill boss.
+
+The controller is intentionally two-button readable. **A** hops, and holding it gives
+the hop more height. **B** fires and holds the tongue; directions aim, Up/Down reel a
+latch, and releasing B converts the swing into launch velocity. **Down+A** uses the
+selected mutation and **Down+B** swaps mutations after both are unlocked. Seven-frame
+hop buffering and coyote time, preserved air momentum, a higher air-speed cap, and an
+18-pixel close-reel limit make hop-to-swing and swing-to-hop routes practical rather
+than decorative.
 
 The cart keeps tongueable stage geometry, enemy placements, mutation vats, explosives,
 the optional Executive Ventilation Shaft, checkpoints, boss spawn/arena-gate data,
@@ -17,27 +25,40 @@ transition, just as level one does now.
 
 `ribbit-recoil-traversal.playtest.json` is the controller-only route contract. It uses
 no warps or state-changing developer hooks: the replay sticks to authored surfaces,
-swings through the opening gaps, collects both mutations, reaches both checkpoints,
-detonates the refinery gate, survives one distinct salvo in each of Colonel Buzzkill's
-three phases, hits three telegraphed Laser Eyes weak-point windows, survives the
-post-defeat sequence, and walks into evac. The companion
-`ribbit-recoil-secret-traversal.playtest.json` proves the ventilation shaft and Golden
-Fly are physically reachable with controller input and no state-changing developer
-hooks. The faster effects scenario captures the weapons, boss spectacle, audio, and
-results screen for diagnosis.
+swings through the opening gaps, hops through a Laser-Eyes-cut aperture, collects both
+mutations, reaches both checkpoints, detonates the refinery gate, survives one distinct
+salvo in each of Colonel Buzzkill's three phases, hits three telegraphed Laser Eyes
+weak-point windows, survives the post-defeat sequence, and walks into evac. The
+companion `ribbit-recoil-secret-traversal.playtest.json` proves the hidden maintenance
+lip and Golden Fly are physically reachable by hop and tongue with no state-changing
+developer hooks. The faster effects scenario captures the hop, weapons, boss spectacle,
+audio, and results screen for diagnosis.
 
 The level now contains three deliberate solution shapes:
 
-- Main-route ledges teach hold, reel, pump, and release without a bespoke hook object.
-- The high ventilation shaft is an optional vertical mastery branch with a Golden Fly,
-  score reward, and a victory-screen secret tally.
-- Red refinery walls can be cut cell-by-cell with Laser Eyes or demolished by igniting
-  or tongue-striking an egg bomb; the weapons therefore change routing, not only DPS.
+- Main-route ledges teach hop, hold, reel, pump, and release without a bespoke hook
+  object. The mandatory first mutation now sits directly on the first checkpoint line,
+  so a good landing accelerates progression instead of skipping it.
+- The ventilation intake and higher shaft form an optional mastery branch; the hidden
+  maintenance lip contains a Golden Fly that must be tongue-snatched while latched,
+  preventing a fast main-route hop from collecting it accidentally. It grants a score
+  reward and victory-screen secret tally.
+- Red refinery walls can be cut with a frog-sized Laser Eyes aperture or demolished by
+  igniting or tongue-striking an egg bomb; the weapons therefore change routing, not
+  only DPS.
 
-Music has independent forms and timbres: the 9.70-second four-pattern traversal loop is
-swamp-funk with croak lead and sewer keys, while the 6.53-second four-pattern boss loop
-uses chromatic siren FM, war brass, toms, and a different bass language. Both reserve two
-channels for action SFX and lint with zero warnings or clipping.
+Music has independent six-pattern forms and timbres. The 16.10-second traversal loop
+develops swamp-funk croak lead, sewer keys, and mutant bass through a moon-pad half-time
+bridge before a denser nerve-pluck return. The separate 10.80-second boss loop uses
+chromatic siren FM, war brass, toms, a tritone breakdown, and a more urgent bass
+language. Both use four tracker channels, reserve two channels for action SFX, and lint
+with zero warnings or clipping.
+
+Runoff and bottomless pits are binary hazards: contact sets HP to zero and begins a
+single death/respawn state immediately. The update returns before camera tracking, so
+the view cannot drift downward while the frog is already dead. Ground contact uses a
+one-pixel stability probe; idle movement therefore emits no particles, while only real
+hops and meaningful landings create short motion streaks.
 
 Colonel Buzzkill's phase transitions reset and shield the next attack cycle, clear the
 previous pattern, and require its new fan/bomb formation to fire before the next weak
