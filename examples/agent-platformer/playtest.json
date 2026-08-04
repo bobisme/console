@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "seed": 7,
+  "stages": [
+    {"op": "assert", "name": "spawn", "code": "return dev_status().x", "equals": 32},
+    {"op": "input", "name": "walk", "frames": 10, "buttons": "R"},
+    {"op": "assert", "name": "moved", "code": "return dev_status().x", "equals": 47},
+    {"op": "input", "name": "jump", "frames": 1, "buttons": "A"},
+    {"op": "assert", "name": "jumped", "code": "return dev_status().jumps", "equals": 1},
+    {"op": "capture", "name": "evidence", "screenshot": "jump.png", "zoom": 2, "screen_text": "jump.txt", "wav": "audio.wav", "audio_stats": "audio.json"}
+  ]
+}

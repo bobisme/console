@@ -1,0 +1,2 @@
+bpm=120 rows_per_beat=4
+pat 0 loop=0 : 0 - - -

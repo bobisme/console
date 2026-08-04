@@ -502,6 +502,10 @@ deterministic content ID.
 CLI misuse exits 2; discovery, compilation, validation, check, and I/O failures
 exit 1.
 
+See [docs/project-workflow.md](docs/project-workflow.md) for an operational
+authoring and migration guide; this section remains the normative schema and
+compiler contract.
+
 `__map__` follows the sprite grid's row conventions but keeps its own hex
 alphabet: `#` starts a comment line, blank lines and comments do not consume a row, and rows shorter
 than 128 cells pad with tile 0 (missing rows are all tile 0). Unlike

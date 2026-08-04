@@ -1,0 +1,19 @@
+sfx 0 speed=12
+C4 melody 3
+E4 melody 3
+G4 melody 3
+C5 melody 3
+G4 melody 3
+E4 melody 3
+---
+---
+
+sfx 1 speed=3
+C4 jump 5
+E4 jump 4
+G4 jump 3
+
+sfx 2 speed=4
+E5 chime 5
+G5 chime 5
+C6 chime 4

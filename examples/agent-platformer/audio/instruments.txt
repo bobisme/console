@@ -1,0 +1,5 @@
+inst melody wave=2 env=0,8,2 vib=8,2,1
+inst jump wave=1 env=0,5,0 sweep=9,5
+inst chime wave=6 fm=2,6,5 env=0,12,1 echo=3
+master drive=1 tone=1 hiss=0
+echo delay=10 feedback=3 level=2

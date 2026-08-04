@@ -107,7 +107,10 @@ nearest or budgeted quantization must be requested in the manifest.
 `console run`, `playtest`, `pack`, and `serve` also accept `my-game/` or its
 explicit `console.toml` directly. They compile in memory, so ordinary iteration
 does not require or modify `build/game.cart`; `serve` recompiles on every GET
-and HEAD refresh.
+and HEAD refresh. The complete setup and single-cart migration walkthrough is
+[docs/project-workflow.md](docs/project-workflow.md); a working project that
+uses every native cart section is in
+[examples/agent-platformer](examples/agent-platformer).
 
 Run a cart headlessly for 90 frames (idle 30, hold right 30, idle 30) and
 take a 4x screenshot — this is exactly how an agent iterates on a cart:

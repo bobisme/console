@@ -1,13 +1,14 @@
 ---
 name: build-cart
-description: Build, modify, inspect, test, and package games for the console fantasy-console platform. Use when creating or editing a .cart file; writing gameplay in the console Lua API; authoring sprites, declared animations, tile maps, metatiles, instruments, SFX, or music; using console CLI or JSON-RPC tooling; debugging deterministic behavior, pixels, input, or audio; or producing and validating a single-file HTML game with console pack.
+description: Build, modify, inspect, test, migrate, and package games for the console fantasy-console platform. Use when creating or editing a .cart file or console.toml multi-file project; using console build; writing gameplay in the console Lua API; authoring sprites, declared animations, tile maps, metatiles, instruments, SFX, or music; using console CLI or JSON-RPC tooling; debugging deterministic behavior, pixels, input, or audio; or producing and validating a single-file HTML game with console pack.
 ---
 
 # Build console carts
 
-Create one text-native `.cart` containing Lua, pixel art, maps, animation metadata,
-instruments, SFX, and music. Work through `console`; do not infer visual or
-audio results from source alone. Render, inspect, assert, and replay them.
+Author either a small text-native `.cart` or a `console.toml` project with
+separate Lua, art, map, and audio sources. A project compiles into the same one
+portable `.cart` artifact. Work through `console`; do not infer visual or audio
+results from source alone. Render, inspect, assert, and replay them.
 
 ## Route into the references
 
@@ -17,6 +18,7 @@ directly from this file; do not recursively hunt through the skill.
 | Need | Read |
 |---|---|
 | Platform limits, palette, buttons, cart sections, data alphabets | [references/platform-and-cart-format.md](references/platform-and-cart-format.md) |
+| Set up a multi-file project or migrate a monolithic cart | [references/project-workflow.md](references/project-workflow.md) |
 | Any console Lua function or sandbox behavior | [references/lua-api.md](references/lua-api.md) |
 | Exact syntax for every `console` command or JSON-RPC method | [references/command-reference.md](references/command-reference.md) |
 | Draw, revise, animate, and validate pixel art | [references/sprites-and-animation.md](references/sprites-and-animation.md) |
@@ -24,9 +26,10 @@ directly from this file; do not recursively hunt through the skill.
 | Compose instruments, SFX, songs, mixes, and inspect audio | [references/music-and-sfx.md](references/music-and-sfx.md) |
 | Deterministic tests, playtest scenarios, browser checks, and HTML delivery | [references/testing-and-shipping.md](references/testing-and-shipping.md) |
 
-For a new game, read platform/cart format, Lua API, the relevant art/audio guides,
-and testing/shipping. For a focused edit, load only its domain guide plus the
-command reference when exact flags or RPC fields matter.
+For a new multi-file game, read the project workflow first, then Lua API, the
+relevant art/audio guides, and testing/shipping. For a focused edit, load only
+its domain guide plus the command reference when exact flags or RPC fields
+matter.
 
 ## Respect the platform contract
 

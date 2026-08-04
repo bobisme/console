@@ -1,0 +1,57 @@
+manifest_version = 1
+
+[cart]
+title = "Source Hopper"
+author = "console agents"
+version = "1"
+preview_palette = [0, 1, 8, 9, 16, 17, 24, 25, 32, 40, 48, 56, 63]
+
+[cart.meta]
+genre = "platformer"
+source = "multi-file-example"
+
+[lua]
+entry = "lua/main.lua"
+root = "lua"
+
+[build]
+output = "build/source-hopper.cart"
+
+[[sprites]]
+name = "player"
+source = "art/player.png"
+tile = [1, 0]
+anchor = [4, 7]
+mapping = "exact"
+max_colors = 6
+
+[[sprites]]
+name = "player_step"
+source = "art/player-step.png"
+tile = [2, 0]
+anchor = [4, 7]
+mapping = "exact"
+max_colors = 6
+
+[[sprites]]
+name = "grass"
+source = "art/grass.png"
+tile = [3, 0]
+anchor = [4, 7]
+mapping = "exact"
+max_colors = 6
+
+[[sprites]]
+name = "moth"
+source = "art/moth.png"
+tile = [4, 0]
+anchor = [8, 8]
+mapping = "quantize"
+max_colors = 4
+
+[sections]
+map = "data/map.txt"
+gfx_meta = "data/gfx-meta.txt"
+instruments = "audio/instruments.txt"
+sfx = "audio/sfx.txt"
+music = "audio/music.txt"
