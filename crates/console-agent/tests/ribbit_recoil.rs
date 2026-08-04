@@ -1,8 +1,10 @@
 //! Regression coverage for the RIBBIT RECOIL showcase cart.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use console_agent::rpc::handle;
 use console_agent::session::Session;
@@ -14,6 +16,63 @@ fn cart_text() -> String {
         env!("CARGO_MANIFEST_DIR")
     );
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
+}
+
+fn frog_atlas_source() -> String {
+    let path = format!(
+        "{}/../../carts/ribbit-recoil-art/frog-atlas.pixels",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
+}
+
+fn decode_palette_char(ch: char) -> u8 {
+    const ALPHABET: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_";
+    ALPHABET
+        .find(ch)
+        .unwrap_or_else(|| panic!("invalid atlas palette character {ch:?}")) as u8
+}
+
+fn frog_atlas_sections() -> BTreeMap<String, Vec<Vec<u8>>> {
+    let mut sections = BTreeMap::<String, Vec<Vec<u8>>>::new();
+    let mut current = None::<String>;
+    for line in frog_atlas_source().lines() {
+        if let Some(name) = line.strip_prefix('@') {
+            current = Some(name.to_owned());
+            sections.entry(name.to_owned()).or_default();
+        } else if !line.is_empty() && !line.starts_with('#') {
+            let name = current
+                .as_ref()
+                .expect("atlas pixels must follow a @section");
+            sections
+                .get_mut(name)
+                .unwrap()
+                .push(line.chars().map(decode_palette_char).collect());
+        }
+    }
+    sections
+}
+
+fn isolated_same_role_pixels(frame: &[Vec<u8>]) -> usize {
+    let height = frame.len();
+    let width = frame.first().map_or(0, Vec::len);
+    let mut isolated = 0;
+    for y in 0..height {
+        for x in 0..width {
+            let color = frame[y][x];
+            if color == 0 {
+                continue;
+            }
+            let y0 = y.saturating_sub(1);
+            let y1 = (y + 1).min(height - 1);
+            let x0 = x.saturating_sub(1);
+            let x1 = (x + 1).min(width - 1);
+            let has_same_neighbor = (y0..=y1)
+                .any(|ny| (x0..=x1).any(|nx| (nx != x || ny != y) && frame[ny][nx] == color));
+            isolated += usize::from(!has_same_neighbor);
+        }
+    }
+    isolated
 }
 
 fn request(session: &mut Session, id: u32, method: &str, params: Value) -> Value {
@@ -535,6 +594,8 @@ fn authored_level_and_animation_contracts_are_present() {
               floor=mget(0,61), girder=mget(8,55), mud=mget(28,43),
               acid=mget(28,62), breakable=mget(44,54), bridge=mget(58,59),
               frog_run=anim_len('frog.run'), frog_swing=anim_len('frog.swing'),
+              frog_rise=anim_len('frog.rise'), frog_fall=anim_len('frog.fall'),
+              frog_laser=anim_len('frog.laser'), frog_fire=anim_len('frog.fire'),
               gnat=anim_len('gnat.fly'), beetle=anim_len('beetle.walk'),
               wasp=anim_len('wasp.fly'), boss=anim_len('buzzkill.rage')
             }
@@ -547,13 +608,20 @@ fn authored_level_and_animation_contracts_are_present() {
     assert_eq!(result["acid"], 195);
     assert_eq!(result["breakable"], 196);
     assert_eq!(result["bridge"], 193);
-    assert_eq!(result["frog_run"], 4);
+    assert_eq!(result["frog_run"], 2);
     assert_eq!(result["frog_swing"], 4);
+    assert_eq!(result["frog_rise"], 1);
+    assert_eq!(result["frog_fall"], 1);
+    assert_eq!(result["frog_laser"], 1);
+    assert_eq!(result["frog_fire"], 1);
     assert_eq!(result["gnat"], 3);
     assert_eq!(result["beetle"], 3);
     assert_eq!(result["wasp"], 2);
     assert_eq!(result["boss"], 3);
 
+    // Let the deployment mosaic clear before asserting the authored frame's
+    // sparse highlight clusters are present in the framebuffer.
+    session.step(12, 0).unwrap();
     let colors: BTreeSet<u8> = session
         .console()
         .unwrap()
@@ -574,6 +642,202 @@ fn authored_level_and_animation_contracts_are_present() {
         assert!(
             colors.contains(&index),
             "missing {role} (palette {index}) in {colors:?}"
+        );
+    }
+}
+
+#[test]
+fn frog_atlas_matches_source_and_obeys_semantic_pixel_contracts() {
+    let cart = console_core::Cart::parse(&cart_text()).unwrap();
+    let sections = frog_atlas_sections();
+    let hero_inks = BTreeSet::from([8, 12, 14, 31, 38, 48, 63]);
+    let full_frames = [
+        ("idle", 0, 0),
+        ("run_a", 3, 0),
+        ("run_b", 6, 0),
+        ("rise", 9, 0),
+        ("fall", 12, 0),
+        ("swing_tuck", 0, 3),
+        ("swing_extend", 3, 3),
+        ("laser_brace", 6, 3),
+        ("fire_breath", 9, 3),
+        ("hurt", 12, 3),
+    ];
+    let mut run_palettes = Vec::new();
+    for (name, tx, ty) in full_frames {
+        let frame = sections
+            .get(name)
+            .unwrap_or_else(|| panic!("missing atlas section @{name}"));
+        assert_eq!(frame.len(), 24, "@{name} height");
+        assert!(frame.iter().all(|row| row.len() == 24), "@{name} width");
+        let colors: BTreeSet<u8> = frame
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|&c| c != 0)
+            .collect();
+        assert!(
+            (4..=7).contains(&colors.len()),
+            "@{name} uses {} nontransparent indices: {colors:?}",
+            colors.len()
+        );
+        assert!(
+            colors.is_subset(&hero_inks),
+            "@{name} escapes the semantic frog ramp: {colors:?}"
+        );
+        assert!(
+            isolated_same_role_pixels(frame) <= 2,
+            "@{name} exceeds the two-pixel isolated-accent budget"
+        );
+        if name == "run_a" || name == "run_b" {
+            run_palettes.push(colors);
+        }
+        for (y, row) in frame.iter().enumerate() {
+            for (x, expected) in row.iter().enumerate() {
+                let sheet_index = (ty * 8 + y) * console_core::SHEET_W + tx * 8 + x;
+                assert_eq!(
+                    cart.sprites()[sheet_index],
+                    *expected,
+                    "@{name} differs from the allocated cart cell at ({x},{y})"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        run_palettes[0], run_palettes[1],
+        "the run loop must not flicker between material ramps"
+    );
+
+    let overlays: [(&str, usize, usize, &[u8]); 6] = [
+        ("blink", 15, 0, &[8, 14, 48]),
+        ("victory", 15, 1, &[38, 48, 63]),
+        ("laser_eye", 15, 2, &[6, 7, 48, 63]),
+        ("fire_throat", 15, 3, &[31, 38, 39, 48, 63]),
+        ("laser_pickup", 15, 4, &[7, 48, 63]),
+        ("fire_pickup", 15, 5, &[31, 38, 39, 48, 63]),
+    ];
+    for (name, tx, ty, allowed) in overlays {
+        let frame = sections
+            .get(name)
+            .unwrap_or_else(|| panic!("missing atlas section @{name}"));
+        assert_eq!(frame.len(), 8, "@{name} height");
+        assert!(frame.iter().all(|row| row.len() == 8), "@{name} width");
+        let allowed = BTreeSet::from_iter(allowed.iter().copied());
+        let colors: BTreeSet<u8> = frame
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|&c| c != 0)
+            .collect();
+        assert!(
+            colors.is_subset(&allowed),
+            "@{name} escapes its semantic overlay ramp: {colors:?}"
+        );
+        for (y, row) in frame.iter().enumerate() {
+            for (x, expected) in row.iter().enumerate() {
+                let sheet_index = (ty * 8 + y) * console_core::SHEET_W + tx * 8 + x;
+                assert_eq!(
+                    cart.sprites()[sheet_index],
+                    *expected,
+                    "@{name} differs from the allocated cart cell at ({x},{y})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn frog_atlas_builder_is_a_byte_exact_rebuild() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let scratch = std::env::temp_dir().join(format!(
+        "ribbit-recoil-atlas-{}-{nonce}.cart",
+        std::process::id()
+    ));
+    let original = cart_text();
+    fs::write(&scratch, &original).unwrap();
+    let output = Command::new("bash")
+        .arg(root.join("carts/ribbit-recoil-art/build-frog-atlas.sh"))
+        .arg(&scratch)
+        .env("CONSOLE_BIN", env!("CARGO_BIN_EXE_console"))
+        .output()
+        .expect("run frog atlas builder");
+    let rebuilt = fs::read_to_string(&scratch).expect("read rebuilt scratch cart");
+    fs::remove_file(&scratch).expect("remove scratch cart");
+    assert!(
+        output.status.success(),
+        "atlas builder failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(rebuilt, original, "atlas builder must be byte-exact");
+}
+
+#[test]
+fn frog_palette_scope_covers_all_render_modes_and_restores_legacy_ink() {
+    let mut session = Session::new();
+    session.load_cart(&cart_text(), 8_675_309).unwrap();
+    let cases = [
+        (
+            "normal",
+            "return dev_render_frog_probe('idle',1,false,'NONE')",
+            "8,12,14,31,48,63",
+        ),
+        (
+            "invulnerable",
+            "return dev_render_frog_probe('idle',1,true,'NONE')",
+            "14,63",
+        ),
+        (
+            "persistent laser mutation",
+            "return dev_render_frog_probe('idle',1,false,'LASER EYES')",
+            "6,7,8,12,14,31,48,63",
+        ),
+        (
+            "persistent fire mutation",
+            "return dev_render_frog_probe('idle',1,false,'FIRE BREATH')",
+            "8,12,14,31,38,39,48,63",
+        ),
+        (
+            "laser recoil",
+            "return dev_render_frog_probe('recoil',1,false,'LASER EYES')",
+            "8,12,31,48,63",
+        ),
+        (
+            "fire breath",
+            "return dev_render_frog_probe('mutate',1,false,'FIRE BREATH')",
+            "8,12,14,31,48,63",
+        ),
+        (
+            "title scale",
+            "return dev_render_frog_probe('idle',2,false,'NONE')",
+            "8,12,14,31,48,63",
+        ),
+        (
+            "victory scale",
+            "return dev_render_frog_probe('victory',2,false,'NONE')",
+            "8,12,14,31,38,48,63",
+        ),
+    ];
+    for (index, (name, code, expected_colors)) in cases.into_iter().enumerate() {
+        let response = request(
+            &mut session,
+            100 + index as u32,
+            "eval",
+            json!({"code": code}),
+        );
+        let probe = &response["result"];
+        assert_eq!(probe["colors"], expected_colors, "wrong {name} palette");
+        assert_eq!(
+            probe["sentinel"], 14,
+            "{name} failed to restore legacy ink 6 -> Apollo index 14"
+        );
+        assert_eq!(
+            session.console().unwrap().draw_state().draw_palette()[6],
+            14,
+            "{name} left the draw palette in the wrong state"
         );
     }
 }

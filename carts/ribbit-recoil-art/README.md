@@ -22,6 +22,24 @@ compression, directional poses, mutation silhouettes, and animation timing.
 Those assets must follow the shared palette, cluster, lighting, material, and
 allocation contract in [`ART-BIBLE.md`](ART-BIBLE.md).
 
+## Production frog atlas
+
+`frog-atlas.pixels` is the compact exact-pixel source for the ten production
+frog poses and six overlays allocated by the art bible. It uses the cart's
+one-character Apollo64 index alphabet so it round-trips without color inference.
+Rebuild those cells in a cart with:
+
+```bash
+bash carts/ribbit-recoil-art/build-frog-atlas.sh carts/ribbit-recoil.cart
+```
+
+The builder validates every full frame as exactly `24x24`, every overlay as
+exactly `8x8`, and writes only the allocated sheet rectangles through
+`console sprite poke`. `--extract` performs the inverse operation and is used
+to refresh the checked-in source after an exact PNG import. The runtime scopes
+these exact-index sprites to the identity draw palette, then restores the legacy
+primitive palette for unmigrated art.
+
 ## Reproduce and inspect
 
 Run from the console repository root:

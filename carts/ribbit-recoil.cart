@@ -1780,6 +1780,21 @@ local function draw_tongue()
   if tongue_state=="latched" then circ(tx,ty,4,5) end
 end
 
+local function draw_tongue_mouth_joint()
+  if tongue_state=="idle" then return end
+  local mx,my=player_mouth()
+  local facing=face_left and -1 or 1
+  local lipx=mx+facing*3
+  local dx,dy=tongue_x-lipx,tongue_y-my
+  local d=max(1,math.sqrt(dx*dx+dy*dy))
+  local ex,ey=lipx+dx/d*2,my+dy/d*2
+  line(mx,my+1,lipx,my+1,45)
+  line(mx,my,lipx,my,47)
+  line(lipx,my+1,ex,ey+1,45)
+  line(lipx,my,ex,ey,47)
+  pset(mx,my,63)
+end
+
 local function draw_grapple_hint()
   if tongue_state~="idle" or respawn_timer>0 or paused then return end
   if not btn(2) and not btn(3) then return end
@@ -1794,154 +1809,98 @@ local function draw_grapple_hint()
   pset(x,y,63)
 end
 
-local function draw_frog_pose(cx,feet,pose,left,hero_scale)
-  local scale=hero_scale or 1
-  local dir=left and -1 or 1
-  if pose=="recoil" then cx=cx-dir*2*scale end
-  if pose=="air" then feet=feet-1*scale end
-  local bob=pose=="idle" and flr((sin(t()*0.9)+1)*0.5) or 0
-  local head_y=feet-17*scale+bob
-  local body_y=feet-8*scale+bob
-  local function rx(dx) return cx+dir*dx*scale end
-  if pose=="hurt" then
-    rectfill(cx-11*scale,feet-10*scale,cx+11*scale,feet-2*scale,1)
-    rectfill(cx-9*scale,feet-9*scale,cx+9*scale,feet-3*scale,7)
-    circfill(cx-6*scale,feet-11*scale,4*scale,1)
-    circfill(cx+6*scale,feet-11*scale,4*scale,1)
-    line(cx-8*scale,feet-13*scale,cx-4*scale,feet-9*scale,11)
-    line(cx-4*scale,feet-13*scale,cx-8*scale,feet-9*scale,11)
-    line(cx+4*scale,feet-13*scale,cx+8*scale,feet-9*scale,11)
-    line(cx+8*scale,feet-13*scale,cx+4*scale,feet-9*scale,11)
-    line(cx-10*scale,feet,cx-4*scale,feet,13)
-    line(cx+4*scale,feet,cx+10*scale,feet,13)
-    return
-  end
+local function restore_legacy_palette()
+  pal()
+  for ink=0,15 do pal(ink,INK_MAP[ink+1]) end
+  palt()
+end
 
-  -- Pose-specific limbs first, then a chunky outlined body and expressive head.
-  if pose=="victory" then
-    line(rx(-5),feet-10*scale,rx(-13),feet-21*scale,1)
-    line(rx(-13),feet-21*scale,rx(-10),feet-27*scale,7)
-    line(rx(5),feet-10*scale,rx(13),feet-21*scale,1)
-    line(rx(13),feet-21*scale,rx(10),feet-27*scale,7)
-    line(rx(-5),feet-10*scale,rx(-13),feet-21*scale,6)
-    line(rx(5),feet-10*scale,rx(13),feet-21*scale,6)
-    circfill(rx(-10),feet-27*scale,2*scale,1)
-    circfill(rx(10),feet-27*scale,2*scale,1)
-    circfill(rx(-10),feet-27*scale,scale,6)
-    circfill(rx(10),feet-27*scale,scale,6)
-    line(cx-5*scale,feet-5*scale,cx-12*scale,feet,1)
-    line(cx+5*scale,feet-5*scale,cx+12*scale,feet,1)
-    rectfill(cx-15*scale,feet-2*scale,cx-7*scale,feet,7)
-    rectfill(cx+7*scale,feet-2*scale,cx+15*scale,feet,7)
-  elseif pose=="recoil" then
-    line(rx(-4),feet-8*scale,rx(-13),feet-13*scale,1)
-    line(rx(-13),feet-13*scale,rx(-16),feet-8*scale,7)
-    line(rx(4),feet-7*scale,rx(10),feet-1*scale,1)
-    line(rx(10),feet-1*scale,rx(16),feet,7)
-    line(rx(-5),feet-4*scale,rx(-13),feet,1)
-    line(rx(5),feet-4*scale,rx(14),feet+1*scale,1)
-  elseif pose=="mutate" then
-    line(rx(-5),feet-9*scale,rx(-11),feet-15*scale,1)
-    line(rx(-11),feet-15*scale,rx(-15),feet-10*scale,7)
-    line(rx(5),feet-9*scale,rx(10),feet-15*scale,1)
-    line(rx(10),feet-15*scale,rx(15),feet-11*scale,7)
-    line(cx-5*scale,feet-4*scale,cx-11*scale,feet,1)
-    line(cx+5*scale,feet-4*scale,cx+11*scale,feet,1)
+local function draw_frog_pose(cx,feet,pose,left,hero_scale,flicker)
+  -- Gameplay uses native pixels. Title and victory scale the same live assets
+  -- by exact nearest-neighbor multiples instead of redrawing a smooth mascot.
+  local anim="idle"
+  if pose=="hurt" then anim="hurt"
+  elseif pose=="recoil" then anim="laser"
+  elseif pose=="mutate" then anim="fire"
   elseif pose=="swing" then
-    line(rx(-5),feet-8*scale,rx(-10),feet-17*scale,1)
-    line(rx(-10),feet-17*scale,rx(-7),feet-21*scale,7)
-    line(rx(5),feet-7*scale,rx(10),feet-14*scale,1)
-    line(rx(10),feet-14*scale,rx(8),feet-19*scale,6)
-    line(rx(-4),feet-4*scale,rx(-10),feet-1*scale,1)
-    line(rx(4),feet-3*scale,rx(9),feet+2*scale,1)
-  elseif pose=="air" then
-    line(rx(-5),feet-7*scale,rx(-10),feet-2*scale,1)
-    line(rx(-10),feet-2*scale,rx(-7),feet+2*scale,7)
-    line(rx(5),feet-6*scale,rx(11),feet-1*scale,1)
-    line(rx(11),feet-1*scale,rx(8),feet+2*scale,7)
-    line(rx(-5),feet-12*scale,rx(-10),feet-8*scale,6)
-    line(rx(5),feet-12*scale,rx(10),feet-9*scale,6)
-  elseif pose=="run" then
-    local step=frame_now%12<6 and 1 or -1
-    line(cx-4*scale,feet-5*scale,cx-9*scale*step,feet,1)
-    line(cx+4*scale,feet-5*scale,cx+9*scale*step,feet,1)
-    line(cx-10*scale*step,feet,cx-4*scale*step,feet,13)
-    line(cx+3*scale*step,feet,cx+10*scale*step,feet,13)
+    anim=(abs(vx)+abs(vy)>2.4 or tongue_len-rope_len>6) and "swing_extend" or "swing_tuck"
+  elseif pose=="fall" then anim="fall"
+  elseif pose=="air" or pose=="rise" or pose=="victory" then anim="rise"
+  elseif pose=="run" then anim="run" end
+
+  local scale=hero_scale or 1
+  local sheet_x,sheet_y=0,0
+  if anim=="run" then sheet_x=(frame_now%12<6 and 3 or 6)*8
+  elseif anim=="rise" then sheet_x=9*8
+  elseif anim=="fall" then sheet_x=12*8
+  elseif anim=="swing_tuck" then sheet_y=3*8
+  elseif anim=="swing_extend" then sheet_x=3*8; sheet_y=3*8
+  elseif anim=="laser" then sheet_x=6*8; sheet_y=3*8
+  elseif anim=="fire" then sheet_x=9*8; sheet_y=3*8
+  elseif anim=="hurt" then sheet_x=12*8; sheet_y=3*8 end
+
+  pal()
+  palt()
+  palt(0,true)
+  if flicker then
+    for ink=1,63 do pal(ink,ink%2==0 and 63 or 14) end
+  end
+  if scale==1 then
+    aspr("frog."..anim,cx,feet,0,left,false)
   else
-    rectfill(cx-11*scale,feet-3*scale,cx-3*scale,feet,1)
-    rectfill(cx+3*scale,feet-3*scale,cx+11*scale,feet,1)
-    rectfill(cx-9*scale,feet-2*scale,cx-3*scale,feet-1*scale,7)
-    rectfill(cx+3*scale,feet-2*scale,cx+9*scale,feet-1*scale,7)
+    sspr(sheet_x,sheet_y,24,24,cx-12*scale,feet-23*scale,
+      24*scale,24*scale,left,false)
   end
 
-  circfill(cx,body_y,9*scale,1)
-  circfill(cx,body_y-1*scale,7*scale,7)
-  rectfill(cx-6*scale,body_y-3*scale,cx+6*scale,body_y+2*scale,6)
-  circfill(cx,body_y+2*scale,5*scale,6)
-  -- Consistent moon-side rim and belly shadow give every pose a two-tone volume.
-  line(cx-7*scale,body_y-4*scale,cx-5*scale,body_y+3*scale,10)
-  line(cx-5*scale,body_y-5*scale,cx+2*scale,body_y-6*scale,6)
-  rectfill(cx+4*scale,body_y-1*scale,cx+6*scale,body_y+3*scale,7)
-  line(cx-4*scale,body_y+4*scale,cx+4*scale,body_y+4*scale,7)
-  pset(cx-4*scale,body_y,14) pset(cx+3*scale,body_y+2*scale,14)
-  line(cx-3*scale,body_y+4*scale,cx+3*scale,body_y+4*scale,14)
-
-  rectfill(cx-9*scale,head_y-3*scale,cx+9*scale,head_y+5*scale,1)
-  circfill(cx,head_y+1*scale,9*scale,7)
-  rectfill(cx-7*scale,head_y,cx+7*scale,head_y+5*scale,6)
-  line(cx-8*scale,head_y-1*scale,cx-7*scale,head_y+4*scale,10)
-  line(cx-6*scale,head_y-1*scale,cx+2*scale,head_y-2*scale,6)
-  rectfill(cx+5*scale,head_y+1*scale,cx+7*scale,head_y+4*scale,7)
-  line(cx-5*scale,head_y+5*scale,cx+6*scale,head_y+5*scale,7)
-  pset(cx-5*scale,head_y+1*scale,14)
-  -- Brow and eyes are oversized so the face survives phone scale.
-  circfill(cx-6*scale,head_y-5*scale,5*scale,1)
-  circfill(cx+6*scale,head_y-5*scale,5*scale,1)
-  local laser=mutation=="LASER EYES"
-  circfill(cx-6*scale,head_y-5*scale,(laser and 4 or 3)*scale,laser and 10 or 11)
-  circfill(cx+6*scale,head_y-5*scale,(laser and 4 or 3)*scale,laser and 10 or 11)
-  line(cx-8*scale,head_y-3*scale,cx-4*scale,head_y-3*scale,59)
-  line(cx+4*scale,head_y-3*scale,cx+8*scale,head_y-3*scale,59)
-  local pupil_y=head_y-5*scale
-  if pose=="air" or pose=="swing" then pupil_y=pupil_y+scale end
-  if pose=="victory" then pupil_y=pupil_y-scale end
-  pset(cx-6*scale+dir*scale,pupil_y,laser and 63 or 48)
-  pset(cx+6*scale+dir*scale,pupil_y,laser and 63 or 48)
-  if pose=="recoil" then
-    line(cx-10*scale,head_y-10*scale,cx-4*scale,head_y-8*scale,31)
-    line(cx+10*scale,head_y-10*scale,cx+4*scale,head_y-8*scale,31)
-  elseif pose=="victory" then
-    pset(cx-7*scale,head_y-7*scale,63) pset(cx+5*scale,head_y-7*scale,63)
-  end
-  if laser and laser_timer>0 then
-    circ(cx-6*scale,head_y-5*scale,6*scale,63)
-    circ(cx+6*scale,head_y-5*scale,6*scale,63)
-    line(cx-10*scale,head_y-10*scale,cx-6*scale,head_y-8*scale,31)
-    line(cx+10*scale,head_y-10*scale,cx+6*scale,head_y-8*scale,31)
-  end
-  local open=tongue_state~="idle" or fire_timer>0
-  if open then
-    local mouth0,mouth1=rx(1),rx(8)
-    rectfill(min(mouth0,mouth1),head_y+3*scale,max(mouth0,mouth1),head_y+7*scale,1)
-    local inner0,inner1=rx(3),rx(8)
-    rectfill(min(inner0,inner1),head_y+4*scale,max(inner0,inner1),head_y+6*scale,
-      fire_timer>0 and 5 or 15)
-  else
-    if pose=="victory" then
-      line(rx(-5),head_y+3*scale,rx(5),head_y+5*scale,1)
-      line(rx(-4),head_y+4*scale,rx(4),head_y+5*scale,63)
+  local function overlay(id,ox,oy,flip)
+    if scale==1 then
+      spr(id,ox-4,oy-4,1,1,flip,false)
     else
-      line(rx(-2),head_y+4*scale,rx(6),head_y+4*scale,1)
-      pset(rx(7),head_y+3*scale,14)
+      sspr((id%16)*8,flr(id/16)*8,8,8,ox-4*scale,oy-4*scale,
+        8*scale,8*scale,flip,false)
     end
   end
-  if mutation=="FIRE BREATH" then
-    local throat=fire_timer>0 and 7*scale or 4*scale
-    circfill(cx+dir*2*scale,body_y-1*scale,throat+scale,1)
-    circfill(cx+dir*2*scale,body_y-1*scale,throat,5)
-    circ(cx+dir*2*scale,body_y-1*scale,max(scale,throat-2*scale),4)
+
+  local blink=pose=="idle" and frame_now%211>=202 and frame_now%211<=208
+  if mutation=="LASER EYES" and pose~="recoil" then
+    overlay(47,cx-6*scale,feet-22*scale)
+    overlay(47,cx+6*scale,feet-22*scale)
+  elseif blink then
+    overlay(15,cx-6*scale,feet-22*scale)
+    overlay(15,cx+6*scale,feet-22*scale)
   end
-  pset(cx-dir*7*scale,head_y+1*scale,14)
+  if mutation=="FIRE BREATH" and pose~="mutate" then
+    overlay(63,cx+(left and -2 or 2)*scale,feet-8*scale,left)
+  end
+  if pose=="victory" then overlay(31,cx,feet-16*scale) end
+  restore_legacy_palette()
+end
+
+-- Deterministic art probe for regression tests and external review tooling.
+-- It isolates the authored frog from scenery, reports the exact drawn indices,
+-- and leaves one legacy-ink sentinel proving the palette scope was restored.
+function dev_render_frog_probe(pose,scale,flicker,mutation_name)
+  local prior_mutation=mutation
+  mutation=mutation_name or "NONE"
+  reset_draw_state()
+  cls(0)
+  local feet=(scale or 1)==1 and 40 or 56
+  draw_frog_pose(40,feet,pose or "idle",false,scale or 1,flicker or false)
+  local seen={}
+  for y=0,80 do
+    for x=0,80 do
+      local ink=pget(x,y)
+      if ink>0 then seen[ink]=true end
+    end
+  end
+  local colors={}
+  for ink=1,63 do
+    if seen[ink] then table.insert(colors,string.format("%d",ink)) end
+  end
+  pset(0,0,6)
+  local sentinel=pget(0,0)
+  mutation=prior_mutation
+  return {colors=table.concat(colors,","),sentinel=sentinel}
 end
 
 local function draw_fire_fx()
@@ -1986,13 +1945,13 @@ local function draw_laser_fx()
   -- Cyan aura, white core, and a broken fringe read as energy instead of a flat bar.
   line(ex0,ey-2,laser_x2,laser_y2-2,10)
   line(ex1,ey+2,laser_x2,laser_y2+2,10)
-  line(ex0,ey+2,laser_x2,laser_y2+2,7)
-  line(ex1,ey-2,laser_x2,laser_y2-2,7)
+  line(ex0,ey+2,laser_x2,laser_y2+2,9)
+  line(ex1,ey-2,laser_x2,laser_y2-2,9)
   line(ex0,ey,laser_x2,laser_y2,63)
   line(ex1,ey,laser_x2,laser_y2,63)
   if frame_now%4<2 then
-    line(ex0,ey+1,laser_x2,laser_y2+1,31)
-    line(ex1,ey-1,laser_x2,laser_y2-1,31)
+    line(ex0,ey+1,laser_x2,laser_y2+1,10)
+    line(ex1,ey-1,laser_x2,laser_y2-1,10)
   end
   circ(ex0,ey,5+pulse,10) circ(ex1,ey,5+pulse,10)
   circfill(ex0,ey,2,63) circfill(ex1,ey,2,63)
@@ -2016,7 +1975,7 @@ local function draw_player()
   elseif laser_timer>0 then pose="recoil"
   elseif fire_timer>0 then pose="mutate"
   elseif tongue_state=="latched" then pose="swing"
-  elseif not grounded then pose="air"
+  elseif not grounded then pose=vy<0 and "rise" or "fall"
   elseif abs(vx)>0.22 then pose="run" end
   if tongue_state=="latched" and abs(vx)+abs(vy)>1.2 then
     for i=1,3 do
@@ -2024,8 +1983,7 @@ local function draw_player()
         player_x+7-vx*(i+1)*3,player_y+8-vy*(i+1)*3,i==1 and 10 or 8)
     end
   end
-  draw_frog_pose(player_x+7,player_y+15,pose,face_left)
-  if flicker then for ink=0,15 do pal(ink,INK_MAP[ink+1]) end end
+  draw_frog_pose(player_x+7,player_y+15,pose,face_left,nil,flicker)
 end
 
 local function draw_exit()
@@ -2380,6 +2338,7 @@ local function draw_world()
   draw_fire_fx()
   draw_laser_fx()
   draw_player()
+  draw_tongue_mouth_joint()
   camera()
   clip()
 end
@@ -2526,7 +2485,7 @@ local function draw_title()
     local a=ray/7
     line(73,132,73+cos(a)*58,132+sin(a)*48,ray%2==0 and 10 or 52)
   end
-  draw_frog_pose(72,171,"air",false,2)
+  draw_frog_pose(72,171,"rise",false,2)
   line(91,135,142,106,46) line(91,136,142,107,47)
   circfill(143,106,3,46)
   draw_gnat(156,102,true,false)
@@ -2709,12 +2668,18 @@ function dev_enemy_hp(index)
 end
 
 __gfx_meta__
-sprite frog rect=0,0 size=2x2 anchor=7,15
-anim frog.idle frames=0,1,2 fps=4 loop
-anim frog.run frames=0,1,2,3 frames_rect=6,0 fps=11 loop
-anim frog.air frames=0,1 frames_rect=0,2 fps=6 loop
-anim frog.swing frames=0,1,4,5 frames_rect=4,2 fps=10 loop
-anim frog.hurt frames=0,1 frames_rect=8,2 fps=12
+sprite frog rect=0,0 size=3x3 anchor=12,23
+anim frog.idle frames=0:0 fps=1 loop
+anim frog.run frames=3:0,6:0 fps=10 loop
+anim frog.rise frames=9:0 fps=1 loop
+anim frog.fall frames=12:0 fps=1 loop
+anim frog.swing_tuck frames=0:3 fps=1 loop
+anim frog.swing_extend frames=3:3 fps=1 loop
+anim frog.swing frames=0:3,3:3,0:3,3:3 fps=8 loop
+anim frog.laser frames=6:3 fps=1 loop
+anim frog.fire frames=9:3 fps=1 loop
+anim frog.hurt frames=12:3 fps=1
+anim frog.victory frames=9:0 fps=1 loop
 
 sprite gnat rect=0,4 size=2x2 anchor=8,8
 anim gnat.fly frames=0,1,2 fps=14 loop
@@ -4293,54 +4258,54 @@ pat 13 loop=8 : 59 60 61 62
 pat 16 stop : 30 - - -
 __sprites__
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00111100001111000000000000000000001111000011110000111100001111000011110000111100001111000011110000111100001111000000000000000000
-001b1111111b11000011110000111100001b1111111b1100001b1111111b1100001b1111111b1100001b1111111b1100001b1111111b11000000000000000000
-0016616666166100001b1111111b1100001661666616610000166166661661000016616666166100001661666616610000166166661661000000000000000000
-00166166661661000016616666166100001661666616610000166166661661000016616666166100001661666616610000166166661661000000000000000000
-00111e6666e11100001661666616610000111e6666e1110000111e6666e1110000111e6666e1110000111e6666e1110000111e6666e111000000000000000000
-001666666666610000111e6666e11100001666666666610000166666666661000016666666666100001666666666610000166666666661000000000000000000
-00116111111611000016666666666100001161111116110000116111111611000011611111161100001161111116110000116111111611000000000000000000
-0017111ff111710000116111111611000017111ff11171000017111ff11171000017111ff11171000017111ff11171000017111ff11171000000000000000000
-00177767767771000017111ff1117100001777677677710000177767767771000017776776777100001777677677710000177767767771000000000000000000
-00017777777710000017776776777100000177777777100000017777777710000001777777771000000177777777100000017777777710000000000000000000
-00017777777710000001777777771000000177777777100000017777777710000001777777771000000177777777100000017777777710000000000000000000
-01111777777111100111777777771110011117777771111011101777777111100001117771110000111017777771111000011177711100000000000000000000
-66666111111777776666617777177777666661111117777766661111111777770166666177777100666611111117777701666661777771000000000000000000
-11111100001111111111111111111111111111000011111111111000001111110111111551111100111110000011111101111115511111000000000000000000
-01110000000011100111000000001110011100000000111011100000000011100001110001110000111000000000111000011100011100000000000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000MMM0000000000000000000000MM0000000000000000000MMM000000000000000000000000000000000000MMMMMM0
+0000000000000MM00000000000000000000McMMM00MM000000000000000MMMMM00MM0000000000000MM_MMcc00000000000000000000000000000000M888888M
+00000000000M8MMcM00000000000000000McM__MMMcMM0000000000000M88___M88MM00000000000Mc__Mcc_0000MM000000000000000000000000000MeeeeM0
+0000000000M88___cM8cc000000000MMMMcc__MMcMc__0000000000MM08cc_MMc88_M00000000MM0cc__MccMM00MccM00000000000000MMM0000000000MMMM00
+0000000000Mc___McM88MM000000MM88Mccc__MMceeM_00000000Mc888ccc_MMccccM0000000MM8McccMccccc0MccMc0000000000MM0MMMMM0MM000000000000
+0000MM88M8ccc__McceeMM00000MMMM8Mcccc__cceMMM0000000McMMMc8cccMcccMMcM00000MMMM8MccMMMccccccMc000000008888M8c__Mc88M000000000000
+0000888MM8ccc__ccccccM00000MM888MccceeceeeeeeM000000MMM8cMcccMccMMMMMM0000MMccc8cMccccccccc80000000000c88M8cc__MccM_000000000000
+000MMMM8Mc8cccccccccccM0000M8888cMccMMccMMMMMM00000MMee88c8cccMMMeeeM00000MccccM8MMMMMMMcc80000000000cc8888ccc__cccce0000_0000_0
+000M88M8cM8ccMcccMMMMcM00008McccM8Mcccceeeeec00000Mceccc88v88cceeeec00000MccMccMM8MvvvvMM000000000000MMMMc88cccceeeee00000M00M00
+00M88MMM8c8cccMMMMeeeMM000cccceecM8Mcceceeccc00000ccc88c88vvv8cccccM000000cccMMMMM88vvv000000000000MMceecMc8ccccMMMMe0000MMMMMM0
+00M8MM88M8M88cceeeeeeM0000ceccccccMvvvccccc0000000cccMM8888vvvvvvvM0000000ccccMMcccM8800000000000_cccc8ccM8M8ccceeec0000MCCCCCCM
+00M8MccecM8cMMccccccM0000MceecccM8McvvvvvvM00000008cccM88888MvvvvMM0cc00000ccccMMMeeM000000000000MMccMM888M8MvccccMMcc800M____M0
+00M8M8cec8M8cvvMMMMM00000MceeccM88cccMvvvM0MM00000M8cMM8M88ccMvvM8MMMcM00000MMccMMccM000000000000MMcccMM8M8M88vvvvMMc88000MMMM00
+000MM88cc8MM8MvvvvvMM00000cccMc8MMMccMMvMcMcMM00000MM00M8MMMMccMM88MMcM0000MccccMM8M00000000000000M88MMMMMccM8vvvMMcMcM000000000
 
-000000000000000000000000000000000000000f0000000000000000f00000000000000000000000000000000000000000000000000000000000000000000000
-001111000011110000111100001111000011110f001111000011110f0011110000111100001111000011110000111100000000f0000000000011110f00111100
-001b1111111b1100001b1111111b1100001b1111111b1100001b1111111b110000366311113663000036631111366300011110f001111000001b1111111b1100
-00166166661661000016616666166100001661666616610000166166661661000013316666133100001331666613310001b1111111b110000016616666166100
-00166166661661000016616666166100001661666616610000166166661661000013316666133100501331666613310501661666616610000016616666166100
-00111e6666e1110000111e6666e1110000111e6666e1110000111e6666e1110050311366663113055031136666311305016616666166100000111e6666e11100
-0016666666666100001666666666610000166666666661000016666666666100501666666666610550166666666661050111e6666e1110000016666666666100
-00116111111611000011611111161100001161111116110000116111111611000511666ff66611500511666ff666115001666666666610000011611111161100
-0017111ff11171000017111ff11171000017111ff11171000017111ff11171000017111111117100001711111111710001161111116110000017111ff1117100
-001777677677710000177767767771000017776776777100001777677677710000177777777771000017777777777100017111ff111710000017776776777100
-00017777777710000001777777771000000177777777100000017777777710000001777777771000000177777777100001777677677710000001777777771000
-00011777777110000001177777711000000117777771100000011777777110000001777777771000000177777777100000177777777100000001177777711000
-00111777777111000001177777711000000117777771100000011777777110001111177777711111111117777771111100117777771100000001177777711000
-16666111111666610001011111101000001001111110010000010111111010001111111111111111111111111111111100117777771100000001011111101000
-00000000000000000010000000000100001000000000010000100000000001001111100000011111111110000001111101001111110010000010000000000100
-00000000000000006666000000006666666660000006666606666600006666600000000000000000000000000000000001000000000010000666660000666660
-00001000000100000011110000111100000010000001000000000000000000000000000000000000000000000000000000010000000110000001000000001000
-001111000011110001aaa110011aaa10000001000010000000000000000000000000000000000000000000000000000001aa110001a1a1000000100000010000
-01aaa110011aaa101aaaa1a11a1aaaa100000100001000000000000000000000000000000000000000000000000000001aaa1a4444a1aa100000104444010000
-1aaaaa1111aaaaa101aaaa1111aaaa10001111111111110000111111111111000000000000000000001111111111110001aaa144441aa1000001014444110000
-01aaaa1ff1aaaa100011111ff111110001aaaa1ff1aaaa10001b11919911b1000011111111111100001b11919911b100000104144141000001aaa414414aa100
-0011111ff11111000000111ff11100001aaa111ff111aaa10011119aa9111100001b11919911b1000011119aa911110000000444444000001aaaa444444aaa10
-00001b1ff1b1000000001b1ff1b1000001aa1b1ff1b1aa1001111191991111100011119aa91111000111119199111110000014444441000001aa14444441a100
-000011144111000000001114411100000011111441111100012ddd9199ddd2100111119199111110012ddd9199ddd21000001114411100000001111441110000
-000001444410000000000144441000000000014444100000012ddd9199ddd210012ddd9199ddd210012ddd9199ddd21000001555555100000000155555510000
-000001ffff100000000001ffff100000000001ffff100000012ddd9199ddd210012ddd9199ddd210012ddd9199ddd21000001111111100000000111111110000
-0000015555100000000001555510000000000155551000000112999199992110012ddd9199ddd210011299919999211000001111111100000000111111110000
-00000155551000000000015555100000000001555510000001129991999921000112999199992110001299919999210000000155551000000000015555100000
-00000011110000000000001111000000000000111100000001012291992210000112999199992100000122919922100000000115511000000000011551100000
-00000001100000000000000110000000000000011000000010011111111100000101229199221000000011111111010000000011110000000000001111000000
-000000000000000000000000000000000000000000000000c00c00c00c000000c00c1111111100000000c00c00c00c0000000001000000000000000100000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003000000000000000300000000
+00MM8M8cecM8M8MvvvM8MM0000MccMMM8ccMMccMMccMcM0000000000MMM88cMM0M88MM00000cccccMcc8000000000000000000McccMMMccM8M0MMM0000000000
+0MccccMcceM88M8M8M888MM0000MM00McMMMMcMMM0MMc00000088000M88ccMM0000000000008ccc8cc0000000000000000000M8ceeM8MMc8Mcc00000000M0000
+0M88cc88cecMMcc8MM8M88M00000000cccccMMMcM0000000008cc8c8888cccMM00000000000c8M8cc00000000000000000000M8cc8M88MM8cccc000000M6M000
+0M88cc8McceMMcMcMMMM88M00000MMMccccccccccM00000000c88ccc88M888cc0000000000ccMcc000000000000000000000M8888000000M88c800000M67_M00
+00M888MM8cccMMMMM88MMM00000ccccccc0000eccMMMM0000Mc808c88M0MMcccMMM000000ccccc00000000000000000000008888M00000M8888000000M6M6M00
+000M8MMMM8cc8MMM88MM000000cccMMMM00000eccccMM0000M800088M0000ccccee000000ccccc000000000000000000000MMccM000000088880000000M6M000
+00MMMMMMMM8M8M0M88MMMM0000ccMMM00000000Mccc000000000000000000Mcccce00000000c8c00000000000000000000000McM0000000088880000000M0000
+00MMMMMM0MMMM000MMMMMM0000MMMMM000000000M000000000000000000000MM000000000088c000000000000000000000000000000000008880000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000MM000
+000000000000MMM00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000MCCM00
+0000000000MMMcccM00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000MCvDCM0
+000000000Mccc__McMccM0000000000000000000000000000000000000000MMMM00000000000000000000000000000000000000000000000000000000MC_vCM0
+000000MMMcccM__McMcMM000000000000000000000000000000000000000Mc___M0MM00000000000000000cMM000000000000000000000000000000000MDDM00
+0000MCCMMMccM___ccM_M0000000000000000000000000000000000__00Mc____cc___000000000000000cc_M0MM0000000000000000000000000000000MM000
+000M88M8MecMc___ccccM000000000000000Mcc000000000000000MMMMMcc____cc___00000000000000Mc__McM_000000000000000000000000000000000000
+00088M8McecMcMMccccccM0000000000000MM_cMcM0000000000cc8MMMcccc__ccccM_000000000M880Mcc__MccMM000000000000000000000000000000MM000
+00M88McceecMcMcccMMMMM0000000000MM0cM_McM_00Mc000000cc8MMccccc__cccMMMM000000M88MMcccccceeeee00000000000000000000000000000M77M00
+00MMMMccccccccMMMceeMM000000000M8M8cc_McMMMMcMM0000Mcc8McMccccccccccccM0000008MMMMccccccMMM8M0000000000000000000000000000M7__7M0
+00MMMMccccMMcceeeeeeM0000000000M888ccccccccccMM0000MMMccMcMcccMMMMMMMcM00000MMMM8MccccMMMM8M0000000000000000000000000000M7_MM_7M
+00MMMMcccM8CCMcccccMM000000000M8MM88ccccccMMc0000000MccccMcMccccccccMM000000MMecM8cccvvMM8MvM000000000000000000000000000M7_MM_7M
+000MMcMMM8MMMCCCCCMM0000000000MMccc8MMcccM0M0000000MMccccMMcMMcccccM00000000MceecM8cvvvvvvvvv0000000000000000000000000000M7__7M0
+000MM8c8MMMM88CCCMM000000000000Mccc88vvvv0MMM000000MMMcccMMM8vvvvvvcMM000000cccccMcMvvvvvvvvvM0000000000000000000000000000M77M00
+000MMM8MceeeeMMMMM000000000000008cccM8vv8ccMM0000000MMccccc88MvvvvMccM00000cccMcMMM88vvvvvvvvM00000000000000000000000000000MM000
+0000MMMcccceeecMMcM000000000000cM8ccMccM8cMMM0000000MMcccccc88MMvMccccM000cccccMMcM8MvvvvvvvvM00000000000cccM000000000000000M000
+00000McccMccccc8McM00000000000cc8MM888M88M000000000cccMMccccMcccMMcMccM0000cccccMMcM8MvvvvvMMMc00000000M88cM8MM000000000000MDM00
+00000cccMccccM8MccM0000000000ccc8MMMMM88ccM0000000MccccMMcMM8cMcMcMMMM000000McccM8McMMMvvvMMMMc0000000M8888Mc8cMc800000000MDCM00
+000000cMccccMccccM000000000Mccc8_000M8888M00000000McccccMMMM8MMMcccMM0000000cMcMMM8McMcMMMM0MM000000008ccM8c8__c8MM000000MDvCDM0
+0000000ccccMccccM000000000Mccc8000000MccM0000000000ccccMM00MMMMccccc0000000cccccMMMMMMMccccM000000cc0MMcMMM8c8cccccM0000MDv_vvDM
+0000000cccccMc000000000000ccc000000000MMM0000000000c88M000000000McccM000000ccccMM0MMM0MMMcc000000cccccMMccMMcc8MMM8cccc00MDvvDM0
+0000000MMccMcMM0000000000cMc0000000000000000000000ccccc00000000McccMccM000cccM000000000McMM000000c88cccccccMMMMMCCM8ccc000MCCM00
+000000000MM0Mc000000000000MMM00000000000000000000MMMMMM00000000MMMMMMMM00MMMMMM00000000MMMMMM0000000000__MMM0000CC000000000MM000
 00001000000050000000100000001100000050000001100000001000000050000000100000000000000000000000000000000000000000000000000000000000
 0000010001111111000100000011a111011111110111a11000000100011111110001000000000000000000000000000000000000000000000000000000000000
 00001111144414441111100001aaaa1114441444111aaaa100000011144414441110000000000000000000000000000000000000000000000000000000000000
