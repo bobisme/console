@@ -26,6 +26,7 @@ fn top_level_help_is_complete_and_successful() {
         assert!(text.contains("music <score|lint|piano-roll|render|edit|import-abc>"));
         assert!(text.contains("playtest <cart> --scenario <scenario.json>"));
         assert!(text.contains("rpc"));
+        assert!(text.contains("build <project|console.toml>"));
         assert!(text.contains("pack <cart>"));
         assert!(text.contains("serve <cart>"));
     }
@@ -36,6 +37,10 @@ fn command_family_and_leaf_help_use_stdout_and_exit_zero() {
     for (args, expected) in [
         (&["run", "--help"][..], "console run <cart>"),
         (&["rpc", "--help"][..], "console rpc"),
+        (
+            &["build", "--help"][..],
+            "console build <project|console.toml>",
+        ),
         (&["pack", "--help"][..], "console pack"),
         (&["serve", "--help"][..], "console serve"),
         (&["playtest", "--help"][..], "Scenario format (version 1)"),

@@ -359,6 +359,75 @@ preview mapping is nonzero. The metadata itself has no effect on runtime
 drawing, `pal()`, framebuffer or `screen_text` output, nor on raw sprite/map
 dump, lint, poke, or edit operations.
 
+### Multi-file project compiler (`console build`)
+
+The editable source of a larger game may be a directory containing a required
+`console.toml`. The compiler produces the same text `.cart` described above;
+the runtime never reads the manifest or source tree. Both a directory and an
+explicit `console.toml` path are accepted:
+
+```text
+console build <project|console.toml>
+  [-o|--out out.cart]
+  [--check]
+  [--format text|pretty|json]
+```
+
+Manifest version 1:
+
+```toml
+manifest_version = 1
+
+[cart]
+title = "My Game"                 # required, non-empty
+author = "Agent"                  # optional
+version = "1"                     # optional cart version string
+preview_palette = [0, 1, 2, 3]    # optional Apollo64 indices, 0-63
+
+[cart.meta]                       # optional additional key/value metadata
+genre = "platformer"
+
+[lua]
+entry = "lua/main.lua"            # UTF-8 section body
+root = "lua"                      # module root; used by module bundling
+
+[build]
+output = "build/game.cart"        # optional; this is the default
+
+[sections]
+sprites = "sprites.txt"
+map = "map.txt"
+gfx_meta = "gfx-meta.txt"
+instruments = "instruments.txt"
+sfx = "sfx.txt"
+music = "music.txt"
+design_notes = "notes.txt"        # unknown cart sections remain allowed
+```
+
+All manifest source and default-output paths are non-empty, relative paths.
+Inputs are canonicalized and must remain under the canonical project root, so
+`..` and escaping symlinks fail. `meta` and `lua` cannot be supplied through
+`[sections]`; their typed tables own those sections. Section names use lowercase
+ASCII letters, digits, and underscores. A source file contains only a section
+body: a line that is itself a `__section__` marker is rejected with its source
+line rather than changing the generated cart structure.
+
+Compilation normalizes CRLF/lone-CR to LF, removes trailing line endings from
+each input, and emits exactly one final LF per section. Sections use the
+canonical order `meta`, `lua`, `sprites`, `map`, `gfx_meta`, `instruments`,
+`sfx`, `music`, followed by unknown sections sorted by name. The complete output
+must parse as a `Cart` before it can replace the destination. Replacement uses
+a temporary file beside the output plus an atomic rename, so a failed build
+does not publish a partial cart.
+
+Without `-o`, output is resolved from `[build].output` under the project root.
+An explicit `-o` is interpreted as the CLI output path. `--check` performs no
+write: it exits 0 and reports `current` only when the existing output is
+byte-identical; missing or stale output exits 1. Reports include the manifest,
+all canonical input paths, output, byte count, and a deterministic content ID.
+CLI misuse exits 2; discovery, compilation, validation, check, and I/O failures
+exit 1.
+
 `__map__` follows the sprite grid's row conventions but keeps its own hex
 alphabet: `#` starts a comment line, blank lines and comments do not consume a row, and rows shorter
 than 128 cells pad with tile 0 (missing rows are all tile 0). Unlike

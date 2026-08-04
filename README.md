@@ -38,7 +38,7 @@ orientation, not the spec.
 | Input | 7 buttons: d-pad, A, B, menu |
 | Audio | 6 channels, waveforms: pulse 12.5%/25%, square, triangle, saw, noise, plus 8 cart-defined 32×4-bit wavetables |
 | Script | Lua 5.4 (mlua, vendored), sandboxed — no `io`/`os`/`debug`/`require` |
-| Cart | one plain-text file: Lua + sprites (64-character grid) + tile map + sfx/music (tracker text) |
+| Cart | projects compile normal source files into one plain-text `.cart`: Lua + sprites (64-character grid) + tile map + sfx/music (tracker text) |
 
 192×320 is the retained platform resolution, not a transitional or optional
 high-resolution mode. Carts should compose for the full canvas. The 8×8 sprite
@@ -75,6 +75,29 @@ Build everything:
 ```bash
 cargo build --release
 ```
+
+For a multi-file game, keep Lua and native cart sections in a project directory
+and compile the deterministic distribution cart:
+
+```text
+my-game/
+├── console.toml
+├── lua/main.lua
+├── sprites.txt
+├── map.txt
+├── gfx-meta.txt
+├── instruments.txt
+├── sfx.txt
+└── music.txt
+```
+
+```bash
+console build my-game
+console build my-game --check
+```
+
+The default output is `my-game/build/game.cart`; `[build].output` or `-o`
+selects another path. See the project-manifest contract in [SPEC.md](SPEC.md).
 
 Run a cart headlessly for 90 frames (idle 30, hold right 30, idle 30) and
 take a 4x screenshot — this is exactly how an agent iterates on a cart:

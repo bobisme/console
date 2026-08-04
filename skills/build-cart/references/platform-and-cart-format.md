@@ -8,6 +8,7 @@ palette indices, or editing any cart data section.
 - [Platform constants](#platform-constants)
 - [Input](#input)
 - [Apollo64 palette](#apollo64-palette)
+- [Multi-file projects](#multi-file-projects)
 - [Minimal cart](#minimal-cart)
 - [Section order and grammar](#section-order-and-grammar)
 - [Metadata](#metadata)
@@ -87,6 +88,52 @@ The case-sensitive palette alphabet is:
 
 Character position equals palette index: `0` is 0, `a` is 10, `A` is 36,
 `-` is 62, and `_` is 63.
+
+## Multi-file projects
+
+Use a `console.toml` project when the cart is large enough that Lua and data
+should be reviewed independently. The command compiles normal source files into
+the same portable cart format:
+
+```toml
+manifest_version = 1
+
+[cart]
+title = "My Game"
+author = "Agent"
+version = "1"
+
+[cart.meta]
+genre = "platformer"
+
+[lua]
+entry = "lua/main.lua"
+root = "lua"
+
+[build]
+output = "build/game.cart"
+
+[sections]
+sprites = "sprites.txt"
+map = "map.txt"
+gfx_meta = "gfx-meta.txt"
+instruments = "instruments.txt"
+sfx = "sfx.txt"
+music = "music.txt"
+```
+
+Run `console build my-game` to atomically write the configured output, or
+`console build my-game --check` in CI to require byte-identical generated
+content without writing. `-o`/`--out` overrides the destination. Build reports
+support `--format text|pretty|json`.
+
+Paths in the manifest are relative and cannot escape the project root through
+`..` or symlinks. Every section source is UTF-8 and contains only the section
+body, never its `__name__` header. `meta` and `lua` come from their typed tables;
+other lowercase section names may be added under `[sections]`. The compiler
+normalizes line endings, emits canonical section order, and reparses the whole
+cart before replacing an output. The authoritative schema and error/ordering
+contract are in the repository `SPEC.md`.
 
 ## Minimal cart
 

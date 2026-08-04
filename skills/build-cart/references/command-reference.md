@@ -10,6 +10,7 @@ may be newer than this skill.
 - [`run`](#run)
 - [`playtest`](#playtest)
 - [`rpc`](#rpc)
+- [`build`](#build)
 - [`pack`](#pack)
 - [`serve`](#serve)
 - [`palette` commands](#palette-commands)
@@ -30,6 +31,7 @@ console --help
 console run ...
 console playtest ...
 console rpc
+console build <project|console.toml> ...
 console pack <cart> -o <out.html> ...
 console serve <cart> ...
 console palette <show|quantize> ...
@@ -46,6 +48,27 @@ output-path forms.
 
 Top-level/family help exits 0. Invalid CLI syntax generally exits 2; cart load,
 runtime, assertion, or artifact failures generally exit 1.
+
+## `build`
+
+```text
+console build <project|console.toml>
+  [-o|--out out.cart]
+  [--check]
+  [--format text|pretty|json | --json]
+```
+
+Compile a version-1 `console.toml` project into the normal text cart format.
+The argument may be the project directory or its explicit manifest. With no
+`-o`, the output is `[build].output`, defaulting to `build/game.cart` under the
+project. An explicit output is interpreted as the supplied CLI path.
+
+`--check` never writes and succeeds only if that output already matches the
+deterministic compiled bytes. Normal builds validate the complete cart and
+atomically replace the output. Manifest inputs must be relative UTF-8 files
+confined to the project root, including after symlink resolution. See
+[platform and cart format](platform-and-cart-format.md#multi-file-projects) for
+the manifest schema and separated-section rules.
 
 ## `run`
 

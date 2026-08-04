@@ -27,6 +27,7 @@ pub mod oneshot;
 pub mod pack;
 pub mod palette;
 pub mod playtest;
+pub mod project;
 pub mod rpc;
 pub mod serve;
 pub mod session;
@@ -44,7 +45,11 @@ pub const RPC_USAGE: &str = "usage:\n  console rpc";
 /// inventory so a newly-added leaf cannot silently disappear from discovery.
 pub fn usage() -> String {
     format!(
-        "{RUN_USAGE}\n  console playtest <cart> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console rpc\n  console pack <cart> -o <out.html> [--engine FILE] [--template FILE]\n  console serve <cart> [--host HOST] [--port PORT] [--engine FILE] [--template FILE]\n  console palette <{}> ...\n  console sprite <{}> ...\n  console map <{}> ...\n  console music <{}> ...",
+        "{RUN_USAGE}\n  console playtest <cart> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console rpc\n  {}\n  console pack <cart> -o <out.html> [--engine FILE] [--template FILE]\n  console serve <cart> [--host HOST] [--port PORT] [--engine FILE] [--template FILE]\n  console palette <{}> ...\n  console sprite <{}> ...\n  console map <{}> ...\n  console music <{}> ...",
+        project::BUILD_USAGE
+            .lines()
+            .next()
+            .unwrap_or("console build"),
         palette::COMMANDS.join("|"),
         sprite::COMMANDS.join("|"),
         map::COMMANDS.join("|"),
@@ -78,6 +83,7 @@ pub fn cli_main(args: &[String]) -> i32 {
             }
         },
         Some("playtest") => playtest::cli_playtest(&args[2..]),
+        Some("build") => project::cli_build(&args[2..]),
         Some("palette") => palette::cli_palette(&args[2..]),
         Some("sprite") => sprite::cli_sprite(&args[2..]),
         Some("map") => map::cli_map(&args[2..]),
