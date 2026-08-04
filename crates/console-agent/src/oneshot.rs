@@ -1,4 +1,6 @@
-//! `console run <cart> [...]` — one-shot headless execution.
+//! `console run <cart|project> [...]` — one-shot headless execution.
+
+use std::path::Path;
 
 use crate::input_spec::{self, Segment};
 use crate::session::Session;
@@ -99,7 +101,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
     }
 
     Ok(RunArgs {
-        cart_path: cart_path.ok_or("missing <cart> argument")?,
+        cart_path: cart_path.ok_or("missing <cart|project> argument")?,
         frames,
         input_spec,
         screenshot,
@@ -120,11 +122,15 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
 /// code (0 on success, nonzero if the cart errored/halted or the eval
 /// expression itself failed).
 pub fn run(args: &RunArgs) -> i32 {
-    let cart_text = match std::fs::read_to_string(&args.cart_path) {
+    let cart_text = match crate::project::load_cart_text(Path::new(&args.cart_path)) {
         Ok(t) => t,
-        Err(e) => {
-            eprintln!("error: cannot read {:?}: {e}", args.cart_path);
+        Err(crate::project::CartInputError::Read(error)) => {
+            eprintln!("error: {error}");
             return 2;
+        }
+        Err(crate::project::CartInputError::Project(error)) => {
+            eprintln!("error: {error}");
+            return 1;
         }
     };
 

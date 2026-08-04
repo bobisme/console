@@ -1,9 +1,13 @@
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::{Value, json};
+
+use common::TestProject;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -131,6 +135,37 @@ fn assertion_failure_is_a_structured_exit_one() {
         String::from_utf8_lossy(&output.stderr).contains("stage 2 failed"),
         "failure should be actionable on stderr"
     );
+}
+
+#[test]
+fn playtest_accepts_project_directories_and_explicit_manifests() {
+    let project = TestProject::new("playtest", "Playtest Project", 23);
+    let scenario = project.root().join("scenario.json");
+    fs::write(
+        &scenario,
+        r#"{"version":1,"stages":[{"op":"assert","code":"return project_value","equals":23}]}"#,
+    )
+    .unwrap();
+
+    for input in [project.root().to_path_buf(), project.manifest()] {
+        let output = run(&[
+            "playtest",
+            as_str(&input),
+            "--scenario",
+            as_str(&scenario),
+            "--format",
+            "json",
+        ]);
+        assert!(
+            output.status.success(),
+            "project playtest failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["scenario"]["status"], "passed");
+        assert_eq!(report["scenario"]["cart"], as_str(&input));
+    }
+    assert!(!project.root().join("build/game.cart").exists());
 }
 
 #[test]

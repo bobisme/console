@@ -2,8 +2,12 @@
 //! subprocess, covering both `rpc` (JSON-RPC over stdio) and the
 //! `run` oneshot subcommand end to end.
 
+mod common;
+
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
+
+use common::TestProject;
 
 fn demo_cart_path() -> String {
     format!("{}/../../carts/demo.cart", env!("CARGO_MANIFEST_DIR"))
@@ -106,6 +110,75 @@ fn oneshot_run_with_input_spec_and_screenshot() {
     assert_eq!(&data[1..4], b"PNG", "output file should be a PNG");
     assert_eq!(png_dimensions(&data), (192, 320), "1:1 scale by default");
     let _ = std::fs::remove_dir_all(out_root);
+}
+
+#[test]
+fn oneshot_run_accepts_project_directories_and_explicit_manifests() {
+    let project = TestProject::new("run", "Run Project", 17);
+    for input in [project.root().to_path_buf(), project.manifest()] {
+        let output = Command::new(env!("CARGO_BIN_EXE_console"))
+            .arg("run")
+            .arg(input)
+            .arg("--frames")
+            .arg("0")
+            .arg("--eval")
+            .arg("return project_value")
+            .output()
+            .expect("run source project");
+        assert!(
+            output.status.success(),
+            "project run failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "17");
+    }
+    assert!(!project.root().join("build/game.cart").exists());
+}
+
+#[test]
+fn oneshot_distinguishes_missing_inputs_from_cart_and_project_load_failures() {
+    let root = std::env::temp_dir().join(format!(
+        "console-oneshot-input-errors-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let malformed = root.join("malformed.cart");
+    std::fs::write(&malformed, "__meta__\ntitle=No Lua\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_console"))
+        .arg("run")
+        .arg(&malformed)
+        .arg("--frames")
+        .arg("0")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("__lua__"));
+
+    let project = TestProject::new("invalid-run", "Invalid Project", 1);
+    project.break_module();
+    let output = Command::new(env!("CARGO_BIN_EXE_console"))
+        .arg("run")
+        .arg(project.root())
+        .arg("--frames")
+        .arg("0")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Lua syntax error"), "{stderr}");
+    assert!(stderr.contains("lua/game/value.lua"), "{stderr}");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_console"))
+        .arg("run")
+        .arg(root.join("missing.cart"))
+        .arg("--frames")
+        .arg("0")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("reading cart"));
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]

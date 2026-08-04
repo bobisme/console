@@ -62,6 +62,10 @@ console run game.cart --frames 120 --input '30:,20:R,10:RA,60:' \
   --eval 'return {x=player.x,y=player.y}'
 ```
 
+For a multi-file game, pass its directory or `console.toml` in place of
+`game.cart`; `run`, `playtest`, `pack`, and `serve` compile it in memory. Keep
+low-level sprite/map/music read-write commands pointed at standalone carts.
+
 Input segments are `COUNT:BUTTONS`; buttons are `L R U D A B M`, and an empty
 button field means idle. Inspect the PNG rather than merely checking that it was
 created.

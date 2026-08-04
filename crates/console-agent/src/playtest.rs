@@ -26,7 +26,7 @@ pub const USAGE: &str = "\
 Run an ordered, deterministic cart playtest scenario
 
 Usage:
-  console playtest <cart> --scenario <scenario.json> [OPTIONS]
+  console playtest <cart|project> --scenario <scenario.json> [OPTIONS]
 
 Options:
   --artifacts <DIR>  Root for capture paths (required when capturing files)
@@ -311,7 +311,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
         index += 1;
     }
     Ok(Args {
-        cart: cart.ok_or("missing <cart> argument")?,
+        cart: cart.ok_or("missing <cart|project> argument")?,
         scenario: scenario.ok_or("missing --scenario <scenario.json>")?,
         artifacts,
         seed,
@@ -350,8 +350,7 @@ pub fn run_scenario(
         .map_err(|error| format!("parsing {}: {error}", scenario_path.display()))?;
     validate_scenario(&scenario, artifacts)?;
 
-    let cart_text = fs::read_to_string(cart_path)
-        .map_err(|error| format!("reading {}: {error}", cart_path.display()))?;
+    let cart_text = crate::project::load_cart_text(cart_path).map_err(|error| error.to_string())?;
     let seed = seed_override.unwrap_or(scenario.seed);
     let mut session = Session::new();
     session

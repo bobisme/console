@@ -36,7 +36,7 @@ pub mod value;
 
 pub const RUN_USAGE: &str = "\
 usage:
-  console run <cart> [--frames N] [--input SPEC] [--screenshot out.png] [--screen-text] [--eval CODE] [--seed N]
+  console run <cart|project> [--frames N] [--input SPEC] [--screenshot out.png] [--screen-text] [--eval CODE] [--seed N]
                     [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats] [--text-events]";
 
 pub const RPC_USAGE: &str = "usage:\n  console rpc";
@@ -45,7 +45,7 @@ pub const RPC_USAGE: &str = "usage:\n  console rpc";
 /// inventory so a newly-added leaf cannot silently disappear from discovery.
 pub fn usage() -> String {
     format!(
-        "{RUN_USAGE}\n  console playtest <cart> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console rpc\n  {}\n  console pack <cart> -o <out.html> [--engine FILE] [--template FILE]\n  console serve <cart> [--host HOST] [--port PORT] [--engine FILE] [--template FILE]\n  console palette <{}> ...\n  console sprite <{}> ...\n  console map <{}> ...\n  console music <{}> ...",
+        "{RUN_USAGE}\n  console playtest <cart|project> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console rpc\n  {}\n  console pack <cart|project> -o <out.html> [--engine FILE] [--template FILE]\n  console serve <cart|project> [--host HOST] [--port PORT] [--engine FILE] [--template FILE]\n  console palette <{}> ...\n  console sprite <{}> ...\n  console map <{}> ...\n  console music <{}> ...",
         project::BUILD_USAGE
             .lines()
             .next()

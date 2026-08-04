@@ -533,7 +533,7 @@ as regression tests: `(cart, input log) → expected framebuffer hash`.
 
 ## Agent harness (`console`)
 
-Oneshot: `console run <cart> [--frames N] [--input SPEC] [--screenshot out.png]
+Oneshot: `console run <cart|project> [--frames N] [--input SPEC] [--screenshot out.png]
 [--screenshot-zoom N] [--screen-text] [--text-events] [--eval CODE] [--seed N]`
 where SPEC is comma-separated `COUNT:BUTTONS`, e.g. `30:,10:R,5:RA,60:` (empty
 buttons = no input).
@@ -565,13 +565,15 @@ and `music_*` (`music_score`, `music_lint`, `music_piano_roll`).
 Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback in
 `data`, and the console stays alive.
 
-Subcommands beyond `run`/`rpc`, all of them operating on a cart file
-directly (no stepping): `console sprite
+`run`, `playtest`, `pack`, and `serve` accept a standalone `.cart`, a
+`console.toml`, or its project directory. Projects compile and validate in
+memory without writing `[build].output`. Low-level inspection and mutation
+commands continue to operate on a cart file directly (no stepping): `console sprite
 <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke>`, `console map
 <render|dump|lint|edit|poke>`, `console music
 <score|lint|piano-roll|render|edit|import-abc>`.
 
-For a repeatable multi-stage session, `console playtest <cart>
+For a repeatable multi-stage session, `console playtest <cart|project>
 --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format
 text|pretty|json]` executes strict, versioned JSON in order. Version 1 stages
 are:
@@ -610,7 +612,7 @@ CLI/schema/setup input. JSON output is an object envelope with `scenario`,
 
 ## Single-file HTML (`console pack`)
 
-`console pack <cart> -o game.html [--engine <path>] [--template <path>]`
+`console pack <cart|project> -o game.html [--engine <path>] [--template <path>]`
 
 - Engine = emscripten `-sSINGLE_FILE=1 -sMODULARIZE=1` build of `console-web`
   (wasm base64-inlined into JS). The committed engine and template are embedded
@@ -670,13 +672,15 @@ CLI/schema/setup input. JSON output is an object envelope with `scenario`,
 
 ## Local browser server (`console serve`)
 
-`console serve <cart> [--host 127.0.0.1] [--port 8000] [--engine <path>]
+`console serve <cart|project> [--host 127.0.0.1] [--port 8000] [--engine <path>]
 [--template <path>] [--once]` performs the same in-memory bundle and cart
 validation as `console pack`, binds loopback by default, and prints the actual
 URL to stdout. Port 0 requests an OS-selected free port. It serves only `/` and
 `/index.html`, sends `Cache-Control: no-store`, and re-reads/revalidates the
-cart and any override assets for every page request, so refresh picks up saved
-edits. It rejects mismatched HTTP `Host` authorities before returning the
+cart/project and any override assets for every GET or HEAD request, so refresh
+picks up saved source edits. A failed recompile returns an error response and
+never reuses a previously valid page as fresh output. It rejects mismatched
+HTTP `Host` authorities before returning the
 source-bearing page (wildcard binds accept IP-literal hosts only), preventing a
 public hostname from DNS-rebinding into the loopback server. `--once` exits
 after one connection for deterministic automation.

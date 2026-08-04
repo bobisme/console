@@ -135,6 +135,12 @@ Run `console build my-game` to atomically write the configured output, or
 content without writing. `-o`/`--out` overrides the destination. Build reports
 support `--format text|pretty|json`.
 
+For iteration and delivery, `console run`, `playtest`, `pack`, and `serve`
+accept `my-game/` or `my-game/console.toml` directly and compile in memory.
+They do not write `[build].output`. `serve` recompiles for every GET and HEAD;
+an invalid edit returns an error response rather than stale playable HTML.
+Low-level sprite, map, and music mutation commands remain cart-only.
+
 Split Lua with literal imports:
 
 ```lua

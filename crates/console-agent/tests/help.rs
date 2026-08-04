@@ -24,18 +24,18 @@ fn top_level_help_is_complete_and_successful() {
         ));
         assert!(text.contains("map <render|dump|lint|edit|poke>"));
         assert!(text.contains("music <score|lint|piano-roll|render|edit|import-abc>"));
-        assert!(text.contains("playtest <cart> --scenario <scenario.json>"));
+        assert!(text.contains("playtest <cart|project> --scenario <scenario.json>"));
         assert!(text.contains("rpc"));
         assert!(text.contains("build <project|console.toml>"));
-        assert!(text.contains("pack <cart>"));
-        assert!(text.contains("serve <cart>"));
+        assert!(text.contains("pack <cart|project>"));
+        assert!(text.contains("serve <cart|project>"));
     }
 }
 
 #[test]
 fn command_family_and_leaf_help_use_stdout_and_exit_zero() {
     for (args, expected) in [
-        (&["run", "--help"][..], "console run <cart>"),
+        (&["run", "--help"][..], "console run <cart|project>"),
         (&["rpc", "--help"][..], "console rpc"),
         (
             &["build", "--help"][..],

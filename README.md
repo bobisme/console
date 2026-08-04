@@ -104,6 +104,11 @@ maps them through Apollo64 and generates both `__sprites__` and matching
 `__gfx_meta__` declarations. Exact conversion is the default, while lossy
 nearest or budgeted quantization must be requested in the manifest.
 
+`console run`, `playtest`, `pack`, and `serve` also accept `my-game/` or its
+explicit `console.toml` directly. They compile in memory, so ordinary iteration
+does not require or modify `build/game.cart`; `serve` recompiles on every GET
+and HEAD refresh.
+
 Run a cart headlessly for 90 frames (idle 30, hold right 30, idle 30) and
 take a 4x screenshot — this is exactly how an agent iterates on a cart:
 
@@ -127,10 +132,11 @@ so packing works from any directory. Rebuilding the embedded wasm engine from
 For a live edit-and-refresh loop, bundle and serve a cart locally:
 
 ```bash
-console serve carts/demo.cart
+console serve my-game
 ```
 
-The command prints the URL and re-bundles the cart on each page refresh.
+The command prints the URL and recompiles/re-bundles the project on each page
+refresh. A standalone `.cart` remains accepted everywhere.
 
 With `agent-browser` and Chromium provisioned, the repository's real-browser
 acceptance gate packs and drives Lantern Leap end to end:

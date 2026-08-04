@@ -32,8 +32,8 @@ console run ...
 console playtest ...
 console rpc
 console build <project|console.toml> ...
-console pack <cart> -o <out.html> ...
-console serve <cart> ...
+console pack <cart|project> -o <out.html> ...
+console serve <cart|project> ...
 console palette <show|quantize> ...
 console sprite <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke|export|import> ...
 console map <render|dump|lint|edit|poke> ...
@@ -82,7 +82,7 @@ budget and final palette indices; text emits one `sprite_asset=` line each.
 ## `run`
 
 ```text
-console run <cart>
+console run <cart|project>
   [--frames N]
   [--input SPEC]
   [--screenshot out.png] [--screenshot-zoom N]
@@ -117,13 +117,17 @@ are idle. An empty spec plus `--frames N` is an idle run.
 | `--audio-stats` | Print JSON mix windows using 6 frames/window. |
 | `--text-events` | Print one JSON text-draw event per line, including resolved bounds. |
 
-`printh` lines go to stderr as `[log] ...`. A halted cart or failed eval exits
-1 after reporting the error.
+`printh` lines go to stderr as `[log] ...`. A readable cart that fails to load,
+a project that fails to compile, a halted runtime, or a failed eval exits 1
+after reporting the error. An unreadable/missing input path exits 2, as does
+invalid CLI syntax.
+`<project>` may be a directory containing `console.toml` or the manifest path;
+it is compiled and validated in memory without writing `[build].output`.
 
 ## `playtest`
 
 ```text
-console playtest <cart> --scenario <scenario.json>
+console playtest <cart|project> --scenario <scenario.json>
   [--artifacts DIR]
   [--seed N]
   [--format text|pretty|json | --json]
@@ -399,7 +403,7 @@ prints grid/tempo decisions, split points, warnings, and suggested pattern lines
 ## `pack`
 
 ```text
-console pack <cart> -o <out.html>
+console pack <cart|project> -o <out.html>
   [--engine FILE]
   [--template FILE]
 ```
@@ -411,14 +415,15 @@ console pack <cart> -o <out.html>
 | `--template FILE` | Override the HTML template embedded in the executable. It must contain `{{TITLE}}`, `{{CART_TEXT}}`, and `{{ENGINE_JS}}`. |
 | `-h`, `--help` | Print full help. |
 
-The packer validates the cart before writing and produces a zero-request HTML
+The packer compiles project inputs in memory, validates the resulting cart, and
+produces a zero-request HTML
 file that works from `file://`. Because the default engine and template are
 compiled into `console`, packing works from any current directory.
 
 ## `serve`
 
 ```text
-console serve <cart>
+console serve <cart|project>
   [--host HOST]
   [--port PORT]
   [--engine FILE]
@@ -429,8 +434,10 @@ console serve <cart>
 `serve` performs the same validation and in-memory bundle as `pack`, then
 serves it at `/` and `/index.html`. It defaults to
 `http://127.0.0.1:8000/`, prints the actual URL on stdout, sends
-`Cache-Control: no-store`, and re-bundles on each page refresh so saved cart
-edits appear immediately. `--port 0` asks the OS for a free port. `--once`
+`Cache-Control: no-store`, and recompiles/re-bundles on each GET or HEAD so
+saved cart or project-source edits appear immediately. A failed project build
+returns an error response and never serves the previous page as fresh.
+`--port 0` asks the OS for a free port. `--once`
 exits after one connection and is useful for scripts and tests. Use `--host`
 only when another device must reach the development server; the default is
 intentionally loopback-only. Requests must use a `Host` authority matching the

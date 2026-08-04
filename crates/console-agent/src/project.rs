@@ -134,6 +134,35 @@ pub struct CompiledProject {
     pub content_id: String,
 }
 
+#[derive(Debug)]
+pub enum CartInputError {
+    Read(String),
+    Project(String),
+}
+
+impl std::fmt::Display for CartInputError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Read(message) | Self::Project(message) => formatter.write_str(message),
+        }
+    }
+}
+
+/// Resolve either a standalone cart or a multi-file project to cart text
+/// without writing the project's configured build output. Project text is
+/// compiled and validated here; standalone text retains each consumer's
+/// existing parse/load semantics.
+pub fn load_cart_text(input: &Path) -> Result<String, CartInputError> {
+    if input.is_dir() || input.file_name().and_then(|name| name.to_str()) == Some(MANIFEST_NAME) {
+        return compile_project(input)
+            .map(|compiled| compiled.cart_text)
+            .map_err(CartInputError::Project);
+    }
+
+    std::fs::read_to_string(input)
+        .map_err(|error| CartInputError::Read(format!("reading cart {}: {error}", input.display())))
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SpriteAssetReport {
     pub name: String,

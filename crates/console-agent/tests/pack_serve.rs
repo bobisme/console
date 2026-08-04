@@ -1,8 +1,12 @@
+mod common;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use common::TestProject;
 
 static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
 
@@ -27,10 +31,14 @@ fn fetch(authority: &str) -> String {
 }
 
 fn fetch_with_host(authority: &str, host_header: &str) -> String {
+    fetch_method_with_host(authority, host_header, "GET")
+}
+
+fn fetch_method_with_host(authority: &str, host_header: &str, method: &str) -> String {
     let mut stream = TcpStream::connect(authority).expect("connect to console serve");
     write!(
         stream,
-        "GET /index.html HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n"
+        "{method} /index.html HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n"
     )
     .unwrap();
     let mut response = String::new();
@@ -64,6 +72,36 @@ fn pack_uses_embedded_assets_outside_the_repository() {
     assert!(!html.contains("{{ENGINE_JS}}"));
     assert!(!html.contains("{{CART_TEXT}}"));
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn pack_accepts_project_directories_and_explicit_manifests_without_intermediate_output() {
+    let project = TestProject::new("pack", "Packed Project", 21);
+    let compiled = console_agent::project::compile_project(project.root()).unwrap();
+    let embedded_cart = compiled.cart_text.replace("</", "<\\/");
+
+    for (index, input) in [project.root().to_path_buf(), project.manifest()]
+        .into_iter()
+        .enumerate()
+    {
+        let output_path = project.root().join(format!("packed-{index}.html"));
+        let output = Command::new(console_bin())
+            .arg("pack")
+            .arg(input)
+            .arg("-o")
+            .arg(&output_path)
+            .output()
+            .expect("pack source project");
+        assert!(
+            output.status.success(),
+            "project pack failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let html = std::fs::read_to_string(output_path).unwrap();
+        assert!(html.contains("<title>Packed Project</title>"));
+        assert!(html.contains(&embedded_cart));
+    }
+    assert!(!project.root().join("build/game.cart").exists());
 }
 
 #[test]
@@ -144,6 +182,71 @@ fn serve_rebundles_the_cart_on_refresh() {
     child.kill().expect("stop development server");
     child.wait().expect("reap development server");
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn serve_recompiles_projects_on_get_and_head_without_serving_stale_invalid_output() {
+    let project = TestProject::new("serve", "First Project", 31);
+    let mut child = Command::new(console_bin())
+        .arg("serve")
+        .arg(project.root())
+        .arg("--port=0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn project server");
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut url = String::new();
+    stdout.read_line(&mut url).unwrap();
+    let authority = url
+        .trim()
+        .strip_prefix("http://")
+        .and_then(|value| value.strip_suffix('/'))
+        .unwrap();
+
+    project.set_title("Second Project");
+    project.set_value(32);
+    let refreshed = fetch(authority);
+    assert!(refreshed.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(refreshed.contains("<title>Second Project</title>"));
+    assert!(refreshed.contains("return 32"));
+
+    project.break_module();
+    let invalid = fetch_method_with_host(authority, authority, "HEAD");
+    assert!(invalid.starts_with("HTTP/1.1 500 Internal Server Error\r\n"));
+    assert!(!invalid.contains("Second Project"));
+    assert!(!invalid.contains("return 32"));
+
+    project.set_title("Third Project");
+    project.set_value(33);
+    let repaired = fetch(authority);
+    assert!(repaired.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(repaired.contains("<title>Third Project</title>"));
+    assert!(repaired.contains("return 33"));
+
+    child.kill().expect("stop project server");
+    child.wait().expect("reap project server");
+
+    let mut explicit = Command::new(console_bin())
+        .arg("serve")
+        .arg(project.manifest())
+        .arg("--port=0")
+        .arg("--once")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn explicit-manifest server");
+    let mut stdout = BufReader::new(explicit.stdout.take().unwrap());
+    let mut url = String::new();
+    stdout.read_line(&mut url).unwrap();
+    let authority = url
+        .trim()
+        .strip_prefix("http://")
+        .and_then(|value| value.strip_suffix('/'))
+        .unwrap();
+    assert!(fetch(authority).contains("<title>Third Project</title>"));
+    assert!(explicit.wait().unwrap().success());
+    assert!(!project.root().join("build/game.cart").exists());
 }
 
 #[test]

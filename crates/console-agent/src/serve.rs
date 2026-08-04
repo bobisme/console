@@ -7,13 +7,13 @@ use std::time::Duration;
 
 use crate::pack::{self, Bundle, BundleOptions};
 
-pub const USAGE: &str = r#"console serve — bundle and locally serve a cart
+pub const USAGE: &str = r#"console serve — bundle and locally serve a cart or project
 
 USAGE:
-    console serve <cart> [OPTIONS]
+    console serve <cart|project> [OPTIONS]
 
 ARGS:
-    <cart>                  Path to the .cart file (UTF-8 text)
+    <cart|project>          Path to a .cart, console.toml, or project directory
 
 OPTIONS:
         --host <HOST>       Interface to bind [default: 127.0.0.1]
@@ -23,8 +23,9 @@ OPTIONS:
         --once              Serve one HTTP connection, then exit
     -h, --help              Print this help
 
-The cart is bundled again on every page refresh, so saved cart edits appear
-without restarting the server. Only / and /index.html are served. HTTP Host
+The cart or project is compiled and bundled again on every page refresh, so
+saved source edits appear without restarting the server. Only / and
+/index.html are served. HTTP Host
 must match --host; wildcard binds accept IP-literal Host values only.
 "#;
 
@@ -163,7 +164,7 @@ fn parse_args(args: &[String]) -> Result<Option<ServeArgs>, String> {
     }
     Ok(Some(ServeArgs {
         bundle: BundleOptions {
-            cart: cart.ok_or("missing <cart> argument (try --help)")?,
+            cart: cart.ok_or("missing <cart|project> argument (try --help)")?,
             engine,
             template,
         },

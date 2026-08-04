@@ -2,6 +2,9 @@
 
 Use this guide to turn a cart from a plausible source file into a deterministic,
 visually inspected, audio-checked, browser-verified single-file game.
+Every `run`, `playtest`, `pack`, and `serve` example may replace `game.cart`
+with a project directory or explicit `console.toml`; projects compile in
+memory, and live serving recompiles on each GET/HEAD refresh.
 
 ## Contents
 
@@ -254,14 +257,15 @@ From any directory after installing `console`:
 console pack game.cart -o dist/game.html
 ```
 
-The packer validates the cart and embeds engine/cart/template into one HTML
+The packer validates a cart, or compiles and validates a project, then embeds
+engine/cart/template into one HTML
 file. The result should have zero external requests and run directly from a
 `file://` URL. The cart text remains editable inside
 `<script type="text/cart">`. The default engine and template are embedded in
 the binary; pass `--engine` or `--template` only to test an override.
 
 For a live browser loop, run `console serve game.cart`. It prints the local URL
-and re-bundles saved changes on refresh. Keep its loopback default unless a
+and recompiles/re-bundles saved changes on refresh. Keep its loopback default unless a
 second device must connect; use `--port 0 --once` for deterministic scripts.
 
 Confirm the output exists, is nonempty, contains the cart title/source, and has

@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 
 use console_core::Cart;
 
-pub const USAGE: &str = r#"console pack — bundle a cart into a self-contained HTML file
+pub const USAGE: &str = r#"console pack — bundle a cart or project into a self-contained HTML file
 
 USAGE:
-    console pack <cart> -o <out.html> [OPTIONS]
+    console pack <cart|project> -o <out.html> [OPTIONS]
 
 ARGS:
-    <cart>                  Path to the .cart file (UTF-8 text)
+    <cart|project>          Path to a .cart, console.toml, or project directory
 
 OPTIONS:
     -o, --out <FILE>        Output HTML file (required)
@@ -100,7 +100,8 @@ pub fn cli_pack(args: &[String]) -> i32 {
 /// Build HTML in memory. `console pack` writes it to disk; `console serve`
 /// sends it directly to the browser and calls this again on each refresh.
 pub fn bundle(options: &BundleOptions) -> Result<Bundle, String> {
-    let cart_text = read_text(&options.cart)?;
+    let cart_text =
+        crate::project::load_cart_text(&options.cart).map_err(|error| error.to_string())?;
     let (engine_js, engine_label) = read_override_or_embedded(
         options.engine.as_deref(),
         DEFAULT_ENGINE,
@@ -190,7 +191,7 @@ fn parse_args(args: &[String]) -> Result<Option<PackArgs>, String> {
 
     Ok(Some(PackArgs {
         bundle: BundleOptions {
-            cart: cart.ok_or("missing <cart> argument (try --help)")?,
+            cart: cart.ok_or("missing <cart|project> argument (try --help)")?,
             engine,
             template,
         },
