@@ -9,7 +9,7 @@ use serde_json::{Map, Number, Value as Json};
 /// placeholder once the cap is hit instead of looping forever.
 const MAX_DEPTH: usize = 6;
 
-/// Serialize a Lua value to JSON, matching the console-agent RPC contract:
+/// Serialize a Lua value to JSON, matching the console RPC contract:
 /// `nil` -> `null`, booleans/integers/numbers/strings map directly, tables
 /// are arrays when they are a plain 1..n sequence and objects (string keys)
 /// otherwise, and anything else (functions, userdata, threads, ...) becomes

@@ -1,7 +1,5 @@
-//! Headless AI-agent harness for the fantasy console: a oneshot CLI and a
-//! JSON-RPC-over-stdio `serve` mode, both built on the same [`Session`] /
-//! dispatch layer so the RPC surface is unit-testable without spawning the
-//! binary.
+//! Unified CLI for the fantasy console: headless execution, authoring tools,
+//! JSON-RPC automation, single-file HTML packing, and local browser serving.
 //!
 //! - [`session`] — session state: the running console, its cart text/seed,
 //!   the per-frame input log, a parallel audio sample log and sequencer
@@ -26,24 +24,26 @@ pub mod input_spec;
 pub mod map;
 pub mod music;
 pub mod oneshot;
+pub mod pack;
 pub mod playtest;
 pub mod rpc;
+pub mod serve;
 pub mod session;
 pub mod sprite;
 pub mod value;
 
 pub const RUN_USAGE: &str = "\
 usage:
-  console-agent run <cart> [--frames N] [--input SPEC] [--screenshot out.png] [--screen-text] [--eval CODE] [--seed N]
+  console run <cart> [--frames N] [--input SPEC] [--screenshot out.png] [--screen-text] [--eval CODE] [--seed N]
                     [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats] [--text-events]";
 
-pub const SERVE_USAGE: &str = "usage:\n  console-agent serve";
+pub const RPC_USAGE: &str = "usage:\n  console rpc";
 
 /// Complete top-level help, generated from each command family's public
 /// inventory so a newly-added leaf cannot silently disappear from discovery.
 pub fn usage() -> String {
     format!(
-        "{RUN_USAGE}\n  console-agent playtest <cart> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console-agent serve\n  console-agent sprite <{}> ...\n  console-agent map <{}> ...\n  console-agent music <{}> ...",
+        "{RUN_USAGE}\n  console playtest <cart> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console rpc\n  console pack <cart> -o <out.html> [--engine FILE] [--template FILE]\n  console serve <cart> [--host HOST] [--port PORT] [--engine FILE] [--template FILE]\n  console sprite <{}> ...\n  console map <{}> ...\n  console music <{}> ...",
         sprite::COMMANDS.join("|"),
         map::COMMANDS.join("|"),
         music::COMMANDS.join("|")
@@ -79,14 +79,16 @@ pub fn cli_main(args: &[String]) -> i32 {
         Some("sprite") => sprite::cli_sprite(&args[2..]),
         Some("map") => map::cli_map(&args[2..]),
         Some("music") => music::cli_music(&args[2..]),
-        Some("serve") if help_requested(&args[2..]) => {
-            println!("{SERVE_USAGE}");
+        Some("pack") => pack::cli_pack(&args[2..]),
+        Some("serve") => serve::cli_serve(&args[2..]),
+        Some("rpc") if help_requested(&args[2..]) => {
+            println!("{RPC_USAGE}");
             0
         }
-        Some("serve") => {
+        Some("rpc") => {
             let stdin = std::io::stdin();
             let stdout = std::io::stdout();
-            match rpc::run_serve(session::Session::new(), stdin.lock(), stdout.lock()) {
+            match rpc::run_rpc(session::Session::new(), stdin.lock(), stdout.lock()) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("error: {e}");

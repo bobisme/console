@@ -3,7 +3,7 @@
 //! (PoC v1)", the inspection-tools table.
 //!
 //! Everything here reads a [`Cart`] directly; nothing steps the console. The
-//! same entry points back both the CLI (`console-agent sprite ...`, via
+//! same entry points back both the CLI (`console sprite ...`, via
 //! [`cli_view`]) and the RPC verbs in `rpc.rs`, so the two surfaces can never
 //! drift: [`render`], [`strip`], [`onion`], [`diff`], [`ghost`], [`lint`].
 //! [`gif`] is CLI-only (an animated preview has no single-frame RPC shape to

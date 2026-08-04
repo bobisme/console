@@ -72,7 +72,7 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 fn temp_cart() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "console-agent-sprite-lint-thresholds-{}-{n}.cart",
+        "console-sprite-lint-thresholds-{}-{n}.cart",
         std::process::id()
     ));
     std::fs::write(&path, CART).expect("write temp cart");
@@ -373,7 +373,7 @@ fn summary_combines_with_thresholds_and_still_reports_violations() {
 }
 
 // ---------------------------------------------------------------------------
-// CLI-level exit codes (`console-agent sprite lint`)
+// CLI-level exit codes (`console sprite lint`)
 // ---------------------------------------------------------------------------
 
 #[test]

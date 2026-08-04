@@ -75,7 +75,7 @@ fn args(v: &[&str]) -> Vec<String> {
 }
 
 fn temp_path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("console-agent-music-{}-{name}", std::process::id()))
+    std::env::temp_dir().join(format!("console-music-{}-{name}", std::process::id()))
 }
 
 /// Assemble a cart from optional audio sections plus a Lua body — the lint
@@ -605,12 +605,12 @@ fn lint_exit_code_is_zero_unless_strict() {
     let p = path.to_str().expect("utf-8 path");
 
     assert_eq!(
-        console_agent::cli_main(&args(&["console-agent", "music", "lint", p])),
+        console_agent::cli_main(&args(&["console", "music", "lint", p])),
         0,
         "lint is informational by default"
     );
     assert_eq!(
-        console_agent::cli_main(&args(&["console-agent", "music", "lint", p, "--strict"])),
+        console_agent::cli_main(&args(&["console", "music", "lint", p, "--strict"])),
         1,
         "--strict turns warnings into a failing exit code"
     );
@@ -785,7 +785,7 @@ fn render_song_flag_selects_the_song_and_writes_a_wav() {
     std::fs::write(&path, SONG_CART).expect("write fixture");
     let wav = temp_path("song.wav");
     let code = console_agent::cli_main(&args(&[
-        "console-agent",
+        "console",
         "music",
         "render",
         path.to_str().expect("utf-8"),
@@ -831,12 +831,12 @@ fn cli_dispatches_the_music_subcommands() {
     let png = temp_path("cli.png");
 
     assert_eq!(
-        console_agent::cli_main(&args(&["console-agent", "music", "score", p])),
+        console_agent::cli_main(&args(&["console", "music", "score", p])),
         0
     );
     assert_eq!(
         console_agent::cli_main(&args(&[
-            "console-agent",
+            "console",
             "music",
             "piano-roll",
             p,
@@ -849,22 +849,15 @@ fn cli_dispatches_the_music_subcommands() {
 
     // Unknown subcommand and missing output path are usage errors, not panics.
     assert_eq!(
-        console_agent::cli_main(&args(&["console-agent", "music", "nope", p])),
+        console_agent::cli_main(&args(&["console", "music", "nope", p])),
         2
     );
     assert_eq!(
-        console_agent::cli_main(&args(&["console-agent", "music", "piano-roll", p])),
+        console_agent::cli_main(&args(&["console", "music", "piano-roll", p])),
         2
     );
     assert_eq!(
-        console_agent::cli_main(&args(&[
-            "console-agent",
-            "music",
-            "score",
-            p,
-            "--song",
-            "9"
-        ])),
+        console_agent::cli_main(&args(&["console", "music", "score", p, "--song", "9"])),
         2
     );
 

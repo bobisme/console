@@ -57,7 +57,7 @@ pub use crate::gfx::{
 };
 pub use crate::gfx_meta::{AnimDef, FrameSpec, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
-/// Re-exported so hosts (`console-agent`, `console-web`) can talk to the VM
+/// Re-exported so hosts (`console`, `console-web`) can talk to the VM
 /// without pinning their own, possibly different, mlua version.
 pub use mlua;
 

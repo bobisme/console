@@ -136,7 +136,7 @@ ignored. Preserve UTF-8 text and keep carts diff-friendly.
 
 Use `key=value` lines. Recognized authoring keys include `title`, `author`,
 `version`, and `preview_palette`; other metadata remains available through cart
-metadata. `console-pack` uses `title` for the HTML title.
+metadata. `console pack` uses `title` for the HTML title.
 
 ### `__lua__`
 
@@ -271,5 +271,5 @@ SFX loop ranges are ignored during music playback.
   and masked to 0–255. Prefer valid explicit values rather than relying on wrap.
 - Coordinate inputs are floored. Off-screen drawing is clipped; off-map `mget`
   returns 0 and off-map `mset` does nothing.
-- `console-agent` write commands preserve unrelated cart text and reparse the
+- `console` write commands preserve unrelated cart text and reparse the
   result before writing. Use `--dry-run` for reviewable changes.

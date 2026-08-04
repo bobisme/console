@@ -1,4 +1,4 @@
-//! Integration tests for `console-agent sprite dump` and `sprite poke`
+//! Integration tests for `console sprite dump` and `sprite poke`
 //! (SPEC.md "Sprite & animation authoring (PoC v1)" > "Transforms" — the
 //! write half of the pair that lets an agent write pixels directly instead
 //! of hand-editing `__sprites__` palette text).
@@ -21,7 +21,7 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 fn temp_cart(tag: &str, text: &str) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "console-agent-sprite-poke-test-{}-{n}-{tag}.cart",
+        "console-sprite-poke-test-{}-{n}-{tag}.cart",
         std::process::id()
     ));
     std::fs::write(&path, text).expect("write temp cart");
@@ -447,7 +447,7 @@ fn poke_stdin_reads_rows_and_skips_comment_lines() {
     let text = cart("sprite player rect=0,0 size=1x1", &["00000000"; 8]);
     let path = temp_cart("poke-stdin", &text);
 
-    let bin = env!("CARGO_BIN_EXE_console-agent");
+    let bin = env!("CARGO_BIN_EXE_console");
     let mut child = std::process::Command::new(bin)
         .args([
             "sprite",
@@ -460,7 +460,7 @@ fn poke_stdin_reads_rows_and_skips_comment_lines() {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .expect("spawn console-agent");
+        .expect("spawn console");
 
     let stdin_rows = "# x=0 y=0 w=8 h=8\na1a1a1a1\nb2b2b2b2\nc3c3c3c3\nd4d4d4d4\ne5e5e5e5\nf6f6f6f6\n07070707\n18181818\n";
     child
@@ -469,7 +469,7 @@ fn poke_stdin_reads_rows_and_skips_comment_lines() {
         .unwrap()
         .write_all(stdin_rows.as_bytes())
         .unwrap();
-    let output = child.wait_with_output().expect("wait for console-agent");
+    let output = child.wait_with_output().expect("wait for console");
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -499,11 +499,11 @@ fn real_dump_piped_into_real_poke_is_a_noop() {
     let path = temp_cart("roundtrip-real-pipe", &text);
     let before = read(&path);
 
-    let bin = env!("CARGO_BIN_EXE_console-agent");
+    let bin = env!("CARGO_BIN_EXE_console");
     let dump_out = std::process::Command::new(bin)
         .args(["sprite", "dump", path.to_str().unwrap(), "player"])
         .output()
-        .expect("spawn console-agent dump");
+        .expect("spawn console dump");
     assert!(
         dump_out.status.success(),
         "stderr: {}",
@@ -522,15 +522,13 @@ fn real_dump_piped_into_real_poke_is_a_noop() {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .expect("spawn console-agent poke");
+        .expect("spawn console poke");
     poke.stdin
         .take()
         .unwrap()
         .write_all(&dump_out.stdout)
         .unwrap();
-    let poke_out = poke
-        .wait_with_output()
-        .expect("wait for console-agent poke");
+    let poke_out = poke.wait_with_output().expect("wait for console poke");
     assert!(
         poke_out.status.success(),
         "stderr: {}",

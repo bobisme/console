@@ -1,4 +1,4 @@
-//! `console-agent run <cart> [...]` — one-shot headless execution.
+//! `console run <cart> [...]` — one-shot headless execution.
 
 use crate::input_spec::{self, Segment};
 use crate::session::Session;

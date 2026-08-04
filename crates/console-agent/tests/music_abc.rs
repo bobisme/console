@@ -1,4 +1,4 @@
-//! Integration tests for `console-agent music import-abc` — SPEC.md "Music
+//! Integration tests for `console music import-abc` — SPEC.md "Music
 //! authoring (PoC v2)" > "ABC import".
 //!
 //! The fixtures are four public-domain tunes written inline, each chosen for
@@ -79,7 +79,7 @@ BB c d|d c B A|G G A B|B3/2A/2A2|
 fn temp_cart(tag: &str, text: &str) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "console-agent-music-abc-{}-{n}-{tag}.cart",
+        "console-music-abc-{}-{n}-{tag}.cart",
         std::process::id()
     ));
     std::fs::write(&path, text).expect("write temp cart");

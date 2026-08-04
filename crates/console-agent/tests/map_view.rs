@@ -67,10 +67,7 @@ fn args(v: &[&str]) -> Vec<String> {
 }
 
 fn temp_path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "console-agent-map-view-{}-{name}",
-        std::process::id()
-    ))
+    std::env::temp_dir().join(format!("console-map-view-{}-{name}", std::process::id()))
 }
 
 // ---------------------------------------------------------------------------

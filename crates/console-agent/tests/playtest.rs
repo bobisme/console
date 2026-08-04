@@ -20,10 +20,10 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn run(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_console-agent"))
+    Command::new(env!("CARGO_BIN_EXE_console"))
         .args(args)
         .output()
-        .expect("run console-agent")
+        .expect("run console")
 }
 
 fn as_str(path: &Path) -> &str {

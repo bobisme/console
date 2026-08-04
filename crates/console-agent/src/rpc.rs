@@ -3,7 +3,7 @@
 //! [`handle`] takes one already-parsed request (as a `serde_json::Value`)
 //! and a session, and returns the full response envelope as a `Value` —
 //! this is the layer the unit tests exercise directly. [`handle_line`] and
-//! [`run_serve`] are thin wrappers for the `serve` subcommand's stdin/stdout
+//! [`run_rpc`] are thin wrappers for the `rpc` subcommand's stdin/stdout
 //! line protocol.
 
 use std::io::{self, BufRead, Write};
@@ -111,9 +111,9 @@ pub fn handle_line(session: &mut Session, line: &str) -> String {
     serde_json::to_string(&response).expect("response value is always serializable")
 }
 
-/// Run the `serve` loop: one JSON-RPC request per line of `reader`, one
+/// Run the `rpc` loop: one JSON-RPC request per line of `reader`, one
 /// response per line of `writer`, flushed after every line.
-pub fn run_serve<R: BufRead, W: Write>(
+pub fn run_rpc<R: BufRead, W: Write>(
     mut session: Session,
     reader: R,
     mut writer: W,
@@ -382,7 +382,7 @@ fn m_spectrogram(session: &Session, params: &Value) -> Result<Value, RpcErr> {
 }
 
 // ---------------------------------------------------------------------------
-// Sprite inspection verbs — the RPC mirrors of `console-agent sprite ...`,
+// Sprite inspection verbs — the RPC mirrors of `console sprite ...`,
 // all against the session's currently loaded cart (no stepping involved).
 // ---------------------------------------------------------------------------
 
@@ -559,7 +559,7 @@ fn m_sprite_lint(session: &Session, params: &Value) -> Result<Value, RpcErr> {
 }
 
 // ---------------------------------------------------------------------------
-// Map inspection verbs — the RPC mirrors of `console-agent map render|dump|
+// Map inspection verbs — the RPC mirrors of `console map render|dump|
 // lint`, against the session's currently loaded cart (no stepping
 // involved). Like the sprite_* mirrors above, these are READ-ONLY: there is
 // no `map_poke`/`map_edit` RPC verb, matching the CLI-only, cart-file-
@@ -598,12 +598,12 @@ fn m_map_lint(session: &Session) -> Result<Value, RpcErr> {
 }
 
 // ---------------------------------------------------------------------------
-// Music inspection verbs — the RPC mirrors of `console-agent music score|
+// Music inspection verbs — the RPC mirrors of `console music score|
 // lint|piano-roll`, against the session's currently loaded cart. Read-only,
 // exactly like the sprite_*/map_* mirrors above.
 //
 // `music render` has deliberately NO mirror: it boots a *second* console and
-// steps it, which is precisely what a `serve` session already does for
+// steps it, which is precisely what an `rpc` session already does for
 // itself. From RPC the equivalent is `eval{"music(n)"}` + `step` + `wav`,
 // with the session's own console — the CLI command exists to spare a oneshot
 // caller that dance, not to add a second stepping engine to the RPC surface.
@@ -611,7 +611,7 @@ fn m_map_lint(session: &Session) -> Result<Value, RpcErr> {
 // `music edit` and `music import-abc` have no mirror either, and for the
 // established reason rather than a new one: **mutating a cart file is a
 // CLI-only operation by design** (see the `map_poke`/`map_edit` note above).
-// A `serve` session holds a console built from cart text it loaded; rewriting
+// An `rpc` session holds a console built from cart text it loaded; rewriting
 // the file underneath it would leave the two disagreeing until the next
 // `load_cart`, and the write verbs are batch operations an agent runs between
 // sessions, not during one. Run them from the CLI, then `load_cart` again.

@@ -1,4 +1,4 @@
-//! Integration tests for `console-agent map dump` and `map poke` — the
+//! Integration tests for `console map dump` and `map poke` — the
 //! `__map__` analog of `sprite_poke.rs`. Mirrors its structure: driven
 //! directly against [`console_agent::map::transform::cli_poke`] and
 //! [`console_agent::map::view::dump`] with scratch cart files under
@@ -17,7 +17,7 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 fn temp_cart(tag: &str, text: &str) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "console-agent-map-poke-test-{}-{n}-{tag}.cart",
+        "console-map-poke-test-{}-{n}-{tag}.cart",
         std::process::id()
     ));
     std::fs::write(&path, text).expect("write temp cart");
@@ -397,14 +397,14 @@ fn poke_stdin_reads_rows_and_skips_comment_lines() {
     let text = cart(&["00000000", "00000000"]);
     let path = temp_cart("poke-stdin", &text);
 
-    let bin = env!("CARGO_BIN_EXE_console-agent");
+    let bin = env!("CARGO_BIN_EXE_console");
     let mut child = std::process::Command::new(bin)
         .args(["map", "poke", path.to_str().unwrap(), "0,0,4,2", "--stdin"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .expect("spawn console-agent");
+        .expect("spawn console");
 
     let stdin_rows = "# cx=0 cy=0 cw=4 ch=2\na1b2c3d4\ne5f60708\n";
     child
@@ -413,7 +413,7 @@ fn poke_stdin_reads_rows_and_skips_comment_lines() {
         .unwrap()
         .write_all(stdin_rows.as_bytes())
         .unwrap();
-    let output = child.wait_with_output().expect("wait for console-agent");
+    let output = child.wait_with_output().expect("wait for console");
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -434,11 +434,11 @@ fn real_dump_piped_into_real_poke_is_a_noop() {
     let path = temp_cart("roundtrip-real-pipe", &text);
     let before = read(&path);
 
-    let bin = env!("CARGO_BIN_EXE_console-agent");
+    let bin = env!("CARGO_BIN_EXE_console");
     let dump_out = std::process::Command::new(bin)
         .args(["map", "dump", path.to_str().unwrap(), "0,0,4,2"])
         .output()
-        .expect("spawn console-agent dump");
+        .expect("spawn console dump");
     assert!(
         dump_out.status.success(),
         "stderr: {}",
@@ -451,15 +451,13 @@ fn real_dump_piped_into_real_poke_is_a_noop() {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .expect("spawn console-agent poke");
+        .expect("spawn console poke");
     poke.stdin
         .take()
         .unwrap()
         .write_all(&dump_out.stdout)
         .unwrap();
-    let poke_out = poke
-        .wait_with_output()
-        .expect("wait for console-agent poke");
+    let poke_out = poke.wait_with_output().expect("wait for console poke");
     assert!(
         poke_out.status.success(),
         "stderr: {}",

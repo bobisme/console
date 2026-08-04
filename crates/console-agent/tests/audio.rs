@@ -16,10 +16,7 @@ fn demo_cart_text() -> String {
 }
 
 fn temp_path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "console-agent-audio-test-{}-{name}",
-        std::process::id()
-    ))
+    std::env::temp_dir().join(format!("console-audio-test-{}-{name}", std::process::id()))
 }
 
 fn load(session: &mut Session, seed: u64) {

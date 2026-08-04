@@ -182,17 +182,17 @@ for representative solids, hazards, one-way platforms, and empty decoration.
 Begin by inspecting the used extent:
 
 ```bash
-console-agent map lint game.cart
-console-agent map render game.cart --zoom 4 --grid --ids -o /tmp/map.png
-console-agent map dump game.cart > /tmp/map.hex
+console map lint game.cart
+console map render game.cart --zoom 4 --grid --ids -o /tmp/map.png
+console map dump game.cart > /tmp/map.hex
 ```
 
 Use `map poke` for exact region rows. Each row contains two hex digits per cell:
 
 ```bash
-console-agent map poke game.cart 0,0,4,2 \
+console map poke game.cart 0,0,4,2 \
   --rows '44414145,42404043' --dry-run
-console-agent map poke game.cart 0,0,4,2 \
+console map poke game.cart 0,0,4,2 \
   --rows '44414145,42404043'
 ```
 

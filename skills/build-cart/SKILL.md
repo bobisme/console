@@ -1,12 +1,12 @@
 ---
 name: build-cart
-description: Build, modify, inspect, test, and package games for the console fantasy-console platform. Use when creating or editing a .cart file; writing gameplay in the console Lua API; authoring sprites, declared animations, tile maps, metatiles, instruments, SFX, or music; using console-agent CLI or JSON-RPC tooling; debugging deterministic behavior, pixels, input, or audio; or producing and validating a single-file HTML game with console-pack.
+description: Build, modify, inspect, test, and package games for the console fantasy-console platform. Use when creating or editing a .cart file; writing gameplay in the console Lua API; authoring sprites, declared animations, tile maps, metatiles, instruments, SFX, or music; using console CLI or JSON-RPC tooling; debugging deterministic behavior, pixels, input, or audio; or producing and validating a single-file HTML game with console pack.
 ---
 
 # Build console carts
 
 Create one text-native `.cart` containing Lua, pixel art, maps, animation metadata,
-instruments, SFX, and music. Work through `console-agent`; do not infer visual or
+instruments, SFX, and music. Work through `console`; do not infer visual or
 audio results from source alone. Render, inspect, assert, and replay them.
 
 ## Route into the references
@@ -18,7 +18,7 @@ directly from this file; do not recursively hunt through the skill.
 |---|---|
 | Platform limits, palette, buttons, cart sections, data alphabets | [references/platform-and-cart-format.md](references/platform-and-cart-format.md) |
 | Any console Lua function or sandbox behavior | [references/lua-api.md](references/lua-api.md) |
-| Exact syntax for every `console-agent`/`console-pack` command or JSON-RPC method | [references/command-reference.md](references/command-reference.md) |
+| Exact syntax for every `console` command or JSON-RPC method | [references/command-reference.md](references/command-reference.md) |
 | Draw, revise, animate, and validate pixel art | [references/sprites-and-animation.md](references/sprites-and-animation.md) |
 | Build tile sets, maps, collision, metatiles, variants, and scrolling rooms | [references/maps-and-metatiles.md](references/maps-and-metatiles.md) |
 | Compose instruments, SFX, songs, mixes, and inspect audio | [references/music-and-sfx.md](references/music-and-sfx.md) |
@@ -57,7 +57,7 @@ command reference when exact flags or RPC fields matter.
 Start with a short deterministic smoke run:
 
 ```bash
-console-agent run game.cart --frames 120 --input '30:,20:R,10:RA,60:' \
+console run game.cart --frames 120 --input '30:,20:R,10:RA,60:' \
   --screenshot /tmp/game-f120.png --screenshot-zoom 2 \
   --eval 'return {x=player.x,y=player.y}'
 ```
@@ -66,7 +66,7 @@ Input segments are `COUNT:BUTTONS`; buttons are `L R U D A B M`, and an empty
 button field means idle. Inspect the PNG rather than merely checking that it was
 created.
 
-Use `serve` when repeated reloads would dominate iteration:
+Use `console rpc` when repeated reloads would dominate iteration:
 
 ```text
 {"jsonrpc":"2.0","id":1,"method":"load_cart","params":{"path":"game.cart","seed":0}}

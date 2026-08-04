@@ -26,7 +26,7 @@ pub const USAGE: &str = "\
 Run an ordered, deterministic cart playtest scenario
 
 Usage:
-  console-agent playtest <cart> --scenario <scenario.json> [OPTIONS]
+  console playtest <cart> --scenario <scenario.json> [OPTIONS]
 
 Options:
   --artifacts <DIR>  Root for capture paths (required when capturing files)
@@ -48,7 +48,7 @@ Exit codes:
   2  invalid CLI arguments or scenario schema
 
 Agent workflow:
-  console-agent playtest carts/game.cart --scenario playtests/game.json \
+  console playtest carts/game.cart --scenario playtests/game.json \
     --artifacts /tmp/game-playtest --format json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

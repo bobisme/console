@@ -434,7 +434,7 @@ pub fn occupied_slots(cart: &Cart, id: u8) -> usize {
 // CLI
 // ---------------------------------------------------------------------------
 
-/// CLI dispatch for `console-agent music <cmd> ...`. Returns the process exit
+/// CLI dispatch for `console music <cmd> ...`. Returns the process exit
 /// code.
 pub fn cli_music(args: &[String]) -> i32 {
     if super::help_requested(args) {
@@ -468,12 +468,12 @@ pub fn cli_music(args: &[String]) -> i32 {
 
 pub const MUSIC_USAGE: &str = "\
 usage:
-  console-agent music score      <cart> [--song N]
-  console-agent music lint       <cart> [--strict]
-  console-agent music piano-roll <cart> [--song N | --patterns a,b,c] [--cell N] [--row-h N] -o out.png
-  console-agent music render     <cart> [--song N] [--loops K | --frames F] [--seed N] -o out.wav
-  console-agent music edit       <cart> <transpose|copy|shift-rows|set-vol|set-inst|stretch> ...
-  console-agent music import-abc <cart> <file.abc|-> --sfx <start-id> [--inst NAME] [--speed N]
+  console music score      <cart> [--song N]
+  console music lint       <cart> [--strict]
+  console music piano-roll <cart> [--song N | --patterns a,b,c] [--cell N] [--row-h N] -o out.png
+  console music render     <cart> [--song N] [--loops K | --frames F] [--seed N] -o out.wav
+  console music edit       <cart> <transpose|copy|shift-rows|set-vol|set-inst|stretch> ...
+  console music import-abc <cart> <file.abc|-> --sfx <start-id> [--inst NAME] [--speed N]
   (--song N means music(N): the chain is followed from pattern N, so `score`
    and `piano-roll` show the whole song, intro and loop body. --song defaults
    to the lowest defined pattern id. `edit` and `import-abc` rewrite the cart

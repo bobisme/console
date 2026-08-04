@@ -1,4 +1,4 @@
-//! Integration tests for `console-agent map edit` (`copy`/`shift`/`fill`/
+//! Integration tests for `console map edit` (`copy`/`shift`/`fill`/
 //! `clear`) — the `__map__` analog of `sprite_edit.rs`'s region transforms,
 //! driven directly against [`console_agent::map::transform::cli_edit`] with
 //! scratch cart files under `std::env::temp_dir()`.
@@ -14,7 +14,7 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 fn temp_cart(tag: &str, text: &str) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "console-agent-map-edit-test-{}-{n}-{tag}.cart",
+        "console-map-edit-test-{}-{n}-{tag}.cart",
         std::process::id()
     ));
     std::fs::write(&path, text).expect("write temp cart");

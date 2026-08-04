@@ -140,7 +140,7 @@ pub fn resolve_rect(
     frame_pixel_rect(cart, &target, frame)
 }
 
-/// CLI dispatch for `console-agent sprite <cmd> ...`. Returns process exit
+/// CLI dispatch for `console sprite <cmd> ...`. Returns process exit
 /// code. `view` commands (including `dump`) are wired by view.rs, `edit` and
 /// `poke` by transform.rs.
 pub fn cli_sprite(args: &[String]) -> i32 {
@@ -162,15 +162,15 @@ pub fn cli_sprite(args: &[String]) -> i32 {
 
 pub const SPRITE_USAGE: &str = "\
 usage:
-  console-agent sprite render <cart> <target> [--frame N] [--zoom Z] [--grid] [--indices] [--anchor] -o out.png
-  console-agent sprite strip  <cart> <anim> [--zoom Z] [--anchor] -o out.png
-  console-agent sprite onion  <cart> <anim> --frame N [--zoom Z] [--grid] [--anchor] -o out.png
-  console-agent sprite onion  <cart> <anim> --all [--zoom Z] [--grid] [--anchor] -o out.png
-  console-agent sprite diff   <cart> <anim> <frameA> <frameB> [--zoom Z] -o out.png
-  console-agent sprite ghost  <cart> <anim> [--zoom Z] [--grid] [--anchor] -o out.png
-  console-agent sprite gif    <cart> <anim> [--zoom Z] [--grid] [--anchor] -o out.gif
-  console-agent sprite lint   <cart> [anim ...] [--max-drift PX] [--max-area-var PCT] [--max-changed PX] [--no-unique-colors] [--summary]
-  console-agent sprite edit   <cart> <shift|flip|rotate|copy|clear> ... [--dry-run]
-  console-agent sprite dump   <cart> <target> [--frame N]
-  console-agent sprite poke   <cart> <target> [--frame N] (--rows <pixels,pixels,...> | --stdin) [--dry-run]
+  console sprite render <cart> <target> [--frame N] [--zoom Z] [--grid] [--indices] [--anchor] -o out.png
+  console sprite strip  <cart> <anim> [--zoom Z] [--anchor] -o out.png
+  console sprite onion  <cart> <anim> --frame N [--zoom Z] [--grid] [--anchor] -o out.png
+  console sprite onion  <cart> <anim> --all [--zoom Z] [--grid] [--anchor] -o out.png
+  console sprite diff   <cart> <anim> <frameA> <frameB> [--zoom Z] -o out.png
+  console sprite ghost  <cart> <anim> [--zoom Z] [--grid] [--anchor] -o out.png
+  console sprite gif    <cart> <anim> [--zoom Z] [--grid] [--anchor] -o out.gif
+  console sprite lint   <cart> [anim ...] [--max-drift PX] [--max-area-var PCT] [--max-changed PX] [--no-unique-colors] [--summary]
+  console sprite edit   <cart> <shift|flip|rotate|copy|clear> ... [--dry-run]
+  console sprite dump   <cart> <target> [--frame N]
+  console sprite poke   <cart> <target> [--frame N] (--rows <pixels,pixels,...> | --stdin) [--dry-run]
   (targets: sprite name, anim name, or tile rect tx,ty,w,h)";

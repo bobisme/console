@@ -1,4 +1,4 @@
-//! `console-agent music edit <cart> <verb> …` — score-level transforms that
+//! `console music edit <cart> <verb> …` — score-level transforms that
 //! rewrite `__sfx__` in place (SPEC.md "Music authoring (PoC v2)" >
 //! "Transforms"), the third member of the `sprite edit` / `map edit` family
 //! and the same contract: CLI only, atomic, `--dry-run` everywhere, and only
@@ -37,12 +37,12 @@ use super::sfxtext::{
 
 pub const EDIT_USAGE: &str = "\
 usage:
-  console-agent music edit <cart> transpose  <sfx-ids> <semitones> [--clamp] [--dry-run]
-  console-agent music edit <cart> copy       <src-sfx> <dst-sfx> [--force] [--dry-run]
-  console-agent music edit <cart> shift-rows <sfx-id> <n> [--dry-run]
-  console-agent music edit <cart> set-vol    <sfx-id> <0-7|+n|-n> [--dry-run]
-  console-agent music edit <cart> set-inst   <sfx-id> <inst|0-5|w0-w7> [--where <old>] [--dry-run]
-  console-agent music edit <cart> stretch    <sfx-id> <2|0.5> [--force] [--dry-run]
+  console music edit <cart> transpose  <sfx-ids> <semitones> [--clamp] [--dry-run]
+  console music edit <cart> copy       <src-sfx> <dst-sfx> [--force] [--dry-run]
+  console music edit <cart> shift-rows <sfx-id> <n> [--dry-run]
+  console music edit <cart> set-vol    <sfx-id> <0-7|+n|-n> [--dry-run]
+  console music edit <cart> set-inst   <sfx-id> <inst|0-5|w0-w7> [--where <old>] [--dry-run]
+  console music edit <cart> stretch    <sfx-id> <2|0.5> [--force] [--dry-run]
   (<sfx-ids> is an id `3`, a range `0-5`, or a comma list `0,2,5-7`;
    <semitones> and <n> are signed, e.g. `-12` or `+2`)";
 

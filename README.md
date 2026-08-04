@@ -4,13 +4,13 @@ A PICO-8-inspired fantasy console: a tiny virtual machine with a fixed
 display, palette, input, and audio spec, plus a Lua runtime. Two things
 make it unusual:
 
-1. **Games ship as one self-contained HTML file.** `console-pack` splices a
+1. **Games ship as one self-contained HTML file.** `console pack` splices a
    cart's Lua/sprite/sound text and the wasm engine into a single
    `game.html` with zero external requests — it works from `file://`, and
    the cart's source stays readable and editable inside the HTML.
 2. **AI agents are first-class developers, not an afterthought.** There is
    no visual editor. An agent (or a human) writes carts as plain text and
-   drives the console headlessly through `console-agent`: step frames with
+   drives the console headlessly through `console`: step frames with
    scripted input, take a screenshot, dump the framebuffer as text, inspect
    audio as data, eval Lua expressions — all without a GPU, a display, or
    ears.
@@ -21,8 +21,8 @@ and on wasm. That's what makes headless development trustworthy — an
 agent's screenshot is exactly what a player's screen shows — and what makes
 replays double as regression tests.
 
-The project doesn't have a final name yet; "console" is the working title,
-which is why the crates and binaries are all `console-*`.
+The project doesn't have a final name yet; `console` is the working title and
+the single command used for running, inspecting, packing, and serving carts.
 
 See [SPEC.md](SPEC.md) for the full, authoritative contract (every API
 function, cart section format, and determinism rule). This README is an
@@ -61,9 +61,8 @@ see SPEC.md for exact semantics.
 | path | what |
 |------|------|
 | `crates/console-core` | the console itself: Lua VM, framebuffer, drawing/audio, cart parser. Pure and deterministic — no windowing, GPU, audio device, wall clock, or filesystem access from Lua. Builds for native and `wasm32-unknown-emscripten`. |
-| `crates/console-agent` | headless dev CLI for agents: oneshot `run`, interactive `serve` (JSON-RPC over stdio), and `sprite` authoring/inspection tools |
+| `crates/console-agent` | the unified `console` CLI: headless runs, JSON-RPC, playtests, asset authoring, packing, and local serving |
 | `crates/console-web` | emscripten build exposing a small C ABI over the core |
-| `crates/console-pack` | packs a cart + the engine build into one self-contained `game.html` |
 | `web/` | the device-chassis HTML/JS shell and the engine build recipe ([web/BUILD.md](web/BUILD.md)) |
 | `carts/` | example carts: `demo.cart`, `soundtest.cart`, the `lantern-leap.cart` platformer, and the tongue-grappling mutant action showcase `ribbit-recoil.cart` |
 | `skills/build-cart` | a publishable skill for authoring carts — the thing to hand an agent |
@@ -81,7 +80,7 @@ Run a cart headlessly for 90 frames (idle 30, hold right 30, idle 30) and
 take a 4x screenshot — this is exactly how an agent iterates on a cart:
 
 ```bash
-./target/release/console-agent run carts/demo.cart \
+./target/release/console run carts/demo.cart \
   --frames 90 --input "30:,30:R,30:" \
   --screenshot /tmp/frame90.png --screenshot-zoom 4
 ```
@@ -89,13 +88,21 @@ take a 4x screenshot — this is exactly how an agent iterates on a cart:
 Pack the same cart into a single-file game:
 
 ```bash
-./target/release/console-pack carts/demo.cart -o dist/demo.html
+./target/release/console pack carts/demo.cart -o dist/demo.html
 ```
 
 Open `dist/demo.html` in any browser (double-click it — `file://` works, no
-server needed). `console-pack` uses the engine build already committed at
-`web/engine.js`; rebuilding that wasm engine from `crates/console-web`
-requires emsdk — see [web/BUILD.md](web/BUILD.md) for the recipe.
+server needed). The default engine and HTML shell are embedded in `console`,
+so packing works from any directory. Rebuilding the embedded wasm engine from
+`crates/console-web` requires emsdk — see [web/BUILD.md](web/BUILD.md).
+
+For a live edit-and-refresh loop, bundle and serve a cart locally:
+
+```bash
+console serve carts/demo.cart
+```
+
+The command prints the URL and re-bundles the cart on each page refresh.
 
 With `agent-browser` and Chromium provisioned, the repository's real-browser
 acceptance gate packs and drives Lantern Leap end to end:
@@ -114,7 +121,7 @@ Hand an agent [skills/build-cart/SKILL.md](skills/build-cart/SKILL.md) — it
 covers the cart format, the Lua API, determinism rules, and the full
 authoring loop (sprite/animation tools, music/sfx tooling, packaging).
 
-For programmatic control, `console-agent serve` speaks JSON-RPC 2.0 (one
+For programmatic control, `console rpc` speaks JSON-RPC 2.0 (one
 request per line on stdin/stdout): load a cart, step frames with input,
 pull a screenshot or the framebuffer as text (`screen_text`), `eval` Lua,
 and inspect audio without ears (`audio_state`, `audio_events`,
@@ -124,7 +131,7 @@ For repeatable multi-stage acceptance, use a versioned playtest scenario
 instead of hand-driving an RPC session:
 
 ```bash
-console-agent playtest carts/lantern-leap.cart \
+console playtest carts/lantern-leap.cart \
   --scenario carts/lantern-leap.playtest.json \
   --artifacts /tmp/lantern-playtest --format json
 ```
@@ -145,7 +152,7 @@ just check
 
 This checks formatting, runs warning-free clippy and the full Rust test suite,
 then cross-checks the committed wasm engine against native behavior. After a
-release, install the current local CLI binaries with `just install`.
+release, install the current local `console` CLI with `just install`.
 
 ## Status
 

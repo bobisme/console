@@ -38,7 +38,7 @@ not prove logic, collision, input, audio, or deterministic replay.
 Run short, focused scripts while editing:
 
 ```bash
-console-agent run game.cart \
+console run game.cart \
   --frames 180 \
   --input '30:,60:R,1:RA,30:R,59:' \
   --seed 0 \
@@ -68,7 +68,7 @@ headings and `print(text,right,y,c,"right")` for numeric HUD columns.
 
 ## Incremental JSON-RPC loop
 
-Start `console-agent serve` when several observations share one boot/session.
+Start `console rpc` when several observations share one boot/session.
 Send one JSON object per line:
 
 ```json
@@ -151,7 +151,7 @@ Run it:
 
 ```bash
 artifact_dir=$(mktemp -d)
-console-agent playtest game.cart --scenario playtests/game.json \
+console playtest game.cart --scenario playtests/game.json \
   --artifacts "$artifact_dir" --format json
 ```
 
@@ -176,10 +176,10 @@ Run the same cart, seed, and input twice and compare raw outputs:
 ```bash
 tmp_a=$(mktemp -d)
 tmp_b=$(mktemp -d)
-console-agent run game.cart --seed 9 --frames 300 \
+console run game.cart --seed 9 --frames 300 \
   --input '60:R,1:RA,120:R,119:' --screen-text --wav "$tmp_a/audio.wav" \
   > "$tmp_a/screen.txt"
-console-agent run game.cart --seed 9 --frames 300 \
+console run game.cart --seed 9 --frames 300 \
   --input '60:R,1:RA,120:R,119:' --screen-text --wav "$tmp_b/audio.wav" \
   > "$tmp_b/screen.txt"
 cmp "$tmp_a/screen.txt" "$tmp_b/screen.txt"
@@ -227,10 +227,10 @@ clearly than gameplay.
 Static cart checks:
 
 ```bash
-console-agent music score game.cart
-console-agent music lint game.cart --strict
-console-agent music piano-roll game.cart -o /tmp/music.png
-console-agent music render game.cart --loops 2 -o /tmp/music.wav
+console music score game.cart
+console music lint game.cart --strict
+console music piano-roll game.cart -o /tmp/music.png
+console music render game.cart --loops 2 -o /tmp/music.wav
 ```
 
 Running checks:
@@ -248,18 +248,21 @@ playback.
 
 ## Package to HTML
 
-From the console repository root:
+From any directory after installing `console`:
 
 ```bash
-console-pack game.cart -o dist/game.html \
-  --engine web/engine.js \
-  --template web/template.html
+console pack game.cart -o dist/game.html
 ```
 
 The packer validates the cart and embeds engine/cart/template into one HTML
 file. The result should have zero external requests and run directly from a
 `file://` URL. The cart text remains editable inside
-`<script type="text/cart">`.
+`<script type="text/cart">`. The default engine and template are embedded in
+the binary; pass `--engine` or `--template` only to test an override.
+
+For a live browser loop, run `console serve game.cart`. It prints the local URL
+and re-bundles saved changes on refresh. Keep its loopback default unless a
+second device must connect; use `--port 0 --once` for deterministic scripts.
 
 Confirm the output exists, is nonempty, contains the cart title/source, and has
 no accidental external asset dependency. Do not modify the embedded cart while

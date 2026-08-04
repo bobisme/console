@@ -36,8 +36,8 @@ use super::{parse_region, validate_region};
 
 pub const POKE_USAGE: &str = "\
 usage:
-  console-agent map poke <cart> [cx,cy,cw,ch] --rows <hex,hex,...> [--dry-run]
-  console-agent map poke <cart> [cx,cy,cw,ch] --stdin [--dry-run]
+  console map poke <cart> [cx,cy,cw,ch] --rows <hex,hex,...> [--dry-run]
+  console map poke <cart> [cx,cy,cw,ch] --stdin [--dry-run]
   (rows run top to bottom, one per region row, each exactly 2*cw hex digits;
    with --stdin, lines starting with '#' are skipped, so `map dump`'s own
    output pipes straight into `--stdin`; region defaults to the used extent
@@ -173,10 +173,10 @@ fn run_poke(text: &str, region_arg: Option<&str>, rows: &[String]) -> Result<Edi
 
 pub const EDIT_USAGE: &str = "\
 usage:
-  console-agent map edit <cart> copy  <cx,cy,cw,ch> <dest_cx,dest_cy> [--dry-run]
-  console-agent map edit <cart> shift <cx,cy,cw,ch> [--dx <n>] [--dy <n>] [--dry-run]
-  console-agent map edit <cart> fill  <cx,cy,cw,ch> <tile-hex> [--dry-run]
-  console-agent map edit <cart> clear <cx,cy,cw,ch> [--dry-run]
+  console map edit <cart> copy  <cx,cy,cw,ch> <dest_cx,dest_cy> [--dry-run]
+  console map edit <cart> shift <cx,cy,cw,ch> [--dx <n>] [--dy <n>] [--dry-run]
+  console map edit <cart> fill  <cx,cy,cw,ch> <tile-hex> [--dry-run]
+  console map edit <cart> clear <cx,cy,cw,ch> [--dry-run]
   (region is required and explicit -- unlike render/dump/poke it never
    defaults to the used extent; tile ids are 1-2 hex digits, 00-ff, the
    __map__ alphabet; shift drops cells that fall off the region and fills

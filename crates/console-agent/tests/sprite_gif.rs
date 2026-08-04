@@ -1,4 +1,4 @@
-//! Integration tests for `console-agent sprite gif` (SPEC.md "Sprite &
+//! Integration tests for `console sprite gif` (SPEC.md "Sprite &
 //! animation authoring (PoC v1)") — an animated preview of an anim, encoded
 //! as an infinite-looping GIF at its declared fps.
 //!
@@ -168,13 +168,11 @@ fn gif_rejects_a_non_anim_target() {
 
 #[test]
 fn cli_sprite_gif_writes_a_decodable_file() {
-    let out_path = std::env::temp_dir().join(format!(
-        "console-agent-sprite-gif-cli-{}.gif",
-        std::process::id()
-    ));
+    let out_path =
+        std::env::temp_dir().join(format!("console-sprite-gif-cli-{}.gif", std::process::id()));
     let cart_path = format!("{}/../../carts/demo.cart", env!("CARGO_MANIFEST_DIR"));
 
-    let bin = env!("CARGO_BIN_EXE_console-agent");
+    let bin = env!("CARGO_BIN_EXE_console");
     let output = std::process::Command::new(bin)
         .args([
             "sprite",
@@ -187,7 +185,7 @@ fn cli_sprite_gif_writes_a_decodable_file() {
             out_path.to_str().unwrap(),
         ])
         .output()
-        .expect("spawn console-agent");
+        .expect("spawn console");
     assert!(
         output.status.success(),
         "stderr: {}",

@@ -1,4 +1,4 @@
-//! `console-agent music import-abc` — ABC notation into `__sfx__` rows.
+//! `console music import-abc` — ABC notation into `__sfx__` rows.
 //!
 //! ABC is the lingua franca for exchanging melodies as plain text: thousands
 //! of public-domain tunes exist as ABC, humans write it fluently, and it is
@@ -1419,7 +1419,7 @@ fn validate_voice(cart: &Cart, token: &str) -> Result<(), String> {
 
 pub const IMPORT_USAGE: &str = "\
 usage:
-  console-agent music import-abc <cart> <file.abc|-> --sfx <start-id>
+  console music import-abc <cart> <file.abc|-> --sfx <start-id>
       [--inst <name|0-5|w0-w7>] [--vol <0-7>] [--speed <1-255>]
       [--transpose <n>] [--force] [--dry-run]
   (imports a MONOPHONIC ABC tune into consecutive sfx ids; `-` reads the tune

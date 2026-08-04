@@ -76,7 +76,7 @@ fn default_region(tiles: &TileMap) -> (u32, u32, u32, u32) {
     used_extent(tiles).unwrap_or((0, 0, 1, 1))
 }
 
-/// CLI dispatch for `console-agent map <cmd> ...`. Returns the process exit
+/// CLI dispatch for `console map <cmd> ...`. Returns the process exit
 /// code. `render`/`dump`/`lint` are wired by `view.rs`, `edit`/`poke` by
 /// `transform.rs`.
 pub fn cli_map(args: &[String]) -> i32 {
@@ -97,11 +97,11 @@ pub fn cli_map(args: &[String]) -> i32 {
 
 pub const MAP_USAGE: &str = "\
 usage:
-  console-agent map render <cart> [cx,cy,cw,ch] [--zoom Z] [--grid] [--ids] -o out.png
-  console-agent map dump   <cart> [cx,cy,cw,ch]
-  console-agent map poke   <cart> [cx,cy,cw,ch] (--rows <hex,hex,...> | --stdin) [--dry-run]
-  console-agent map lint   <cart>
-  console-agent map edit   <cart> <copy|shift|fill|clear> ... [--dry-run]
+  console map render <cart> [cx,cy,cw,ch] [--zoom Z] [--grid] [--ids] -o out.png
+  console map dump   <cart> [cx,cy,cw,ch]
+  console map poke   <cart> [cx,cy,cw,ch] (--rows <hex,hex,...> | --stdin) [--dry-run]
+  console map lint   <cart>
+  console map edit   <cart> <copy|shift|fill|clear> ... [--dry-run]
   (region cx,cy,cw,ch defaults to the used extent -- the bounding box of
    non-zero cells -- when omitted from render/dump/poke; map edit requires
    it explicitly. Rows are 2 hex chars per cell, matching __map__ itself.)";

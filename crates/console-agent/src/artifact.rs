@@ -28,7 +28,7 @@ mod tests {
     fn write_creates_nested_parent_directories() {
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir()
-            .join(format!("console-agent-artifact-{}-{n}", std::process::id()))
+            .join(format!("console-artifact-{}-{n}", std::process::id()))
             .join("deep")
             .join("frame.bin");
 

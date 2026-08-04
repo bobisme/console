@@ -1,4 +1,4 @@
-//! Integration tests for `console-agent music edit` — the six score-level
+//! Integration tests for `console music edit` — the six score-level
 //! `__sfx__` transforms (SPEC.md "Music authoring (PoC v2)" > "Transforms"),
 //! the music sibling of `sprite_edit.rs` / `map_edit.rs`.
 //!
@@ -49,7 +49,7 @@ pat 0 loop=0 : 0 1 - -
 fn temp_cart(tag: &str, text: &str) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "console-agent-music-edit-{}-{n}-{tag}.cart",
+        "console-music-edit-{}-{n}-{tag}.cart",
         std::process::id()
     ));
     std::fs::write(&path, text).expect("write temp cart");

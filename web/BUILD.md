@@ -64,7 +64,9 @@ Why each piece matters:
 Output lands at
 `target/wasm32-unknown-emscripten/release/console-web.js` (name follows the
 crate/bin name); `build-engine.sh` copies it to `web/engine.js`.
-`console-pack` splices it into `web/template.html` at `{{ENGINE_JS}}`.
+The `console` build embeds that file and `web/template.html`; Cargo tracks both
+inputs, so the next build/run refreshes the built-in packer assets. Run
+`just install` again to refresh an already-installed `console`.
 
 Gotcha: cargo may not notice RUSTFLAGS/EMCC_CFLAGS changes in its fingerprint —
 if flags change and output looks stale, `touch` a source file or
@@ -108,7 +110,7 @@ different engine build, or `node web/smoke.cjs --help` for the full syntax.
 Then pack the result:
 
 ```bash
-cargo run -p console-pack -- carts/demo.cart -o dist/demo.html
+cargo run -p console -- pack carts/demo.cart -o dist/demo.html
 ```
 
 Packed pages expose a frozen read-only diagnostic handle immediately, even

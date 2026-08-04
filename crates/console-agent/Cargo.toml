@@ -1,5 +1,5 @@
 [package]
-name = "console-agent"
+name = "console"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,8 +7,12 @@ license.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "console-agent"
+name = "console"
 path = "src/main.rs"
+
+[lib]
+name = "console_agent"
+path = "src/lib.rs"
 
 [dependencies]
 console-core.workspace = true

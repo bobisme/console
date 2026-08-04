@@ -111,10 +111,10 @@ Use `sprite dump` to extract exact palette rows and `sprite poke --stdin` to
 write them back. The dump header begins with `#`, so it can pass through stdin.
 
 ```bash
-console-agent sprite dump game.cart player --frame 0 > /tmp/player.rows
-console-agent sprite poke game.cart player --frame 0 --stdin --dry-run \
+console sprite dump game.cart player --frame 0 > /tmp/player.rows
+console sprite poke game.cart player --frame 0 --stdin --dry-run \
   < /tmp/player.rows
-console-agent sprite poke game.cart player --frame 0 --stdin \
+console sprite poke game.cart player --frame 0 --stdin \
   < /tmp/player.rows
 ```
 
@@ -231,16 +231,16 @@ Use all three evidence layers:
 Recommended loop:
 
 ```bash
-console-agent sprite render game.cart hero --frame 0 \
+console sprite render game.cart hero --frame 0 \
   --zoom 12 --grid --indices --anchor -o /tmp/hero.png
-console-agent sprite strip game.cart hero.run \
+console sprite strip game.cart hero.run \
   --zoom 12 --anchor -o /tmp/hero-run.png
-console-agent sprite onion game.cart hero.run --all \
+console sprite onion game.cart hero.run --all \
   --zoom 12 --grid --anchor -o /tmp/hero-onion.png
-console-agent sprite lint game.cart hero.run \
+console sprite lint game.cart hero.run \
   --max-drift 2 --max-area-var 20 --max-changed 100 \
   --no-unique-colors --summary
-console-agent sprite gif game.cart hero.run --zoom 8 --anchor \
+console sprite gif game.cart hero.run --zoom 8 --anchor \
   -o /tmp/hero-run.gif
 ```
 

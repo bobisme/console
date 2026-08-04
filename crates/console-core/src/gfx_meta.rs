@@ -1,7 +1,7 @@
 //! `__gfx_meta__`: sprite and animation declarations.
 //!
 //! This is pure indexing information over the `__sprites__` sheet — names,
-//! tile rects and frame lists for tooling (`console-agent`'s `sprite`
+//! tile rects and frame lists for tooling (`console`'s `sprite`
 //! subcommands) to render, lint and edit pixels without agents ever
 //! hand-shifting hex. See SPEC.md "Sprite & animation authoring (PoC v1)"
 //! for the grammar.

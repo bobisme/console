@@ -306,21 +306,21 @@ an intentional metallic sound.
 Read before changing:
 
 ```bash
-console-agent music score game.cart --song 0
-console-agent music lint game.cart --strict
-console-agent music piano-roll game.cart --song 0 -o /tmp/song.png
-console-agent music render game.cart --song 0 --loops 2 -o /tmp/song.wav
+console music score game.cart --song 0
+console music lint game.cart --strict
+console music piano-roll game.cart --song 0 -o /tmp/song.png
+console music render game.cart --song 0 --loops 2 -o /tmp/song.wav
 ```
 
 Use transforms instead of hand-editing many rows:
 
 ```bash
-console-agent music edit game.cart transpose 0-2 -12 --dry-run
-console-agent music edit game.cart copy 0 8 --dry-run
-console-agent music edit game.cart shift-rows 1 2 --dry-run
-console-agent music edit game.cart set-vol 2 -1 --dry-run
-console-agent music edit game.cart set-inst 2 fm_bass --where 2 --dry-run
-console-agent music edit game.cart stretch 1 2 --dry-run
+console music edit game.cart transpose 0-2 -12 --dry-run
+console music edit game.cart copy 0 8 --dry-run
+console music edit game.cart shift-rows 1 2 --dry-run
+console music edit game.cart set-vol 2 -1 --dry-run
+console music edit game.cart set-inst 2 fm_bass --where 2 --dry-run
+console music edit game.cart stretch 1 2 --dry-run
 ```
 
 Then run the chosen command without `--dry-run`, reread score, and lint again.
@@ -333,9 +333,9 @@ the single IDs in their syntax, so repeat the command for multiple SFX.
 Use ABC as a melodic starting point, not a finished arrangement:
 
 ```bash
-console-agent music import-abc game.cart tune.abc --sfx 16 \
+console music import-abc game.cart tune.abc --sfx 16 \
   --inst lead --vol 5 --dry-run
-console-agent music import-abc game.cart tune.abc --sfx 16 --inst lead --vol 5
+console music import-abc game.cart tune.abc --sfx 16 --inst lead --vol 5
 ```
 
 The importer:

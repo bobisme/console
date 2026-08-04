@@ -46,11 +46,11 @@ pub fn cli_edit(args: &[String]) -> i32 {
 
 pub const EDIT_USAGE: &str = "\
 usage:
-  console-agent sprite edit <cart> shift  <target> [--frame N] [--dx <n>] [--dy <n>] [--wrap] [--dry-run]
-  console-agent sprite edit <cart> flip   <target> [--frame N] --horizontal|--vertical [--dry-run]
-  console-agent sprite edit <cart> rotate <target> [--frame N] --cw|--ccw [--dry-run]
-  console-agent sprite edit <cart> copy   <src> <dst> [--dry-run]
-  console-agent sprite edit <cart> clear  <target> [--frame N] [--dry-run]
+  console sprite edit <cart> shift  <target> [--frame N] [--dx <n>] [--dy <n>] [--wrap] [--dry-run]
+  console sprite edit <cart> flip   <target> [--frame N] --horizontal|--vertical [--dry-run]
+  console sprite edit <cart> rotate <target> [--frame N] --cw|--ccw [--dry-run]
+  console sprite edit <cart> copy   <src> <dst> [--dry-run]
+  console sprite edit <cart> clear  <target> [--frame N] [--dry-run]
   (targets: sprite name, anim name, or tile rect tx,ty,w,h; copy endpoints:
    sprite[:frame] or tx,ty,w,h)";
 
@@ -90,8 +90,8 @@ fn apply_edit_result(cart_path: &str, result: Result<EditResult, String>, dry_ru
 
 pub const POKE_USAGE: &str = "\
 usage:
-  console-agent sprite poke <cart> <target> [--frame N] --rows <pixels,pixels,...> [--dry-run]
-  console-agent sprite poke <cart> <target> [--frame N] --stdin [--dry-run]
+  console sprite poke <cart> <target> [--frame N] --rows <pixels,pixels,...> [--dry-run]
+  console sprite poke <cart> <target> [--frame N] --stdin [--dry-run]
   (rows run top to bottom, one per source row, each exactly as many palette
    characters as the region is wide; with --stdin, lines starting with '#' are
    skipped, so `sprite dump`'s own output pipes straight into `--stdin`;

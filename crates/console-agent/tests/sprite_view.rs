@@ -77,10 +77,7 @@ fn cell(img: &Image, zoom: u32, sx: u32, sy: u32) -> [u8; 3] {
 }
 
 fn temp_path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "console-agent-sprite-{}-{name}",
-        std::process::id()
-    ))
+    std::env::temp_dir().join(format!("console-sprite-{}-{name}", std::process::id()))
 }
 
 /// `OverlayOpts` at `zoom`, grid/anchor off — the shape most `onion`/`ghost`

@@ -14,7 +14,7 @@ fn demo_cart_text() -> String {
 }
 
 fn temp_path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("console-agent-test-{}-{name}", std::process::id()))
+    std::env::temp_dir().join(format!("console-test-{}-{name}", std::process::id()))
 }
 
 #[test]

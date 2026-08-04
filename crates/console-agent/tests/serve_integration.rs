@@ -1,5 +1,5 @@
-//! Integration tests that exercise the real `console-agent` binary as a
-//! subprocess, covering both `serve` (JSON-RPC over stdio) and the
+//! Integration tests that exercise the real `console` binary as a
+//! subprocess, covering both `rpc` (JSON-RPC over stdio) and the
 //! `run` oneshot subcommand end to end.
 
 use std::io::{BufRead, BufReader, Write};
@@ -20,14 +20,14 @@ fn png_dimensions(data: &[u8]) -> (u32, u32) {
 }
 
 #[test]
-fn serve_mode_handles_a_few_requests_in_order() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_console-agent"))
-        .arg("serve")
+fn rpc_mode_handles_a_few_requests_in_order() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_console"))
+        .arg("rpc")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn `console-agent serve`");
+        .expect("spawn `console rpc`");
 
     let mut stdin = child.stdin.take().expect("child stdin");
     let mut reader = BufReader::new(child.stdout.take().expect("child stdout"));
@@ -56,11 +56,11 @@ fn serve_mode_handles_a_few_requests_in_order() {
         );
     }
 
-    drop(stdin); // EOF on the child's stdin ends the serve loop.
-    let status = child.wait().expect("wait for console-agent to exit");
+    drop(stdin); // EOF on the child's stdin ends the RPC loop.
+    let status = child.wait().expect("wait for console to exit");
     assert!(
         status.success(),
-        "serve loop should exit cleanly on stdin EOF"
+        "RPC loop should exit cleanly on stdin EOF"
     );
 
     assert_eq!(responses[0]["id"], 1);
@@ -81,14 +81,12 @@ fn serve_mode_handles_a_few_requests_in_order() {
 
 #[test]
 fn oneshot_run_with_input_spec_and_screenshot() {
-    let out_root = std::env::temp_dir().join(format!(
-        "console-agent-oneshot-nested-{}",
-        std::process::id()
-    ));
+    let out_root =
+        std::env::temp_dir().join(format!("console-oneshot-nested-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out_root);
     let out_path = out_root.join("screenshots").join("frame.png");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_console-agent"))
+    let output = Command::new(env!("CARGO_BIN_EXE_console"))
         .arg("run")
         .arg(demo_cart_path())
         .arg("--input")
@@ -96,7 +94,7 @@ fn oneshot_run_with_input_spec_and_screenshot() {
         .arg("--screenshot")
         .arg(out_path.to_str().unwrap())
         .output()
-        .expect("run `console-agent run`");
+        .expect("run `console run`");
 
     assert!(
         output.status.success(),
@@ -112,12 +110,10 @@ fn oneshot_run_with_input_spec_and_screenshot() {
 
 #[test]
 fn oneshot_run_screenshot_zoom_scales_png_dimensions() {
-    let out_path = std::env::temp_dir().join(format!(
-        "console-agent-oneshot-zoom-{}.png",
-        std::process::id()
-    ));
+    let out_path =
+        std::env::temp_dir().join(format!("console-oneshot-zoom-{}.png", std::process::id()));
 
-    let output = Command::new(env!("CARGO_BIN_EXE_console-agent"))
+    let output = Command::new(env!("CARGO_BIN_EXE_console"))
         .arg("run")
         .arg(demo_cart_path())
         .arg("--frames")
@@ -127,7 +123,7 @@ fn oneshot_run_screenshot_zoom_scales_png_dimensions() {
         .arg("--screenshot-zoom")
         .arg("4")
         .output()
-        .expect("run `console-agent run`");
+        .expect("run `console run`");
 
     assert!(
         output.status.success(),
@@ -147,17 +143,15 @@ fn oneshot_run_screenshot_zoom_scales_png_dimensions() {
 
 #[test]
 fn oneshot_text_events_are_json_lines_with_resolved_layout() {
-    let cart_path = std::env::temp_dir().join(format!(
-        "console-agent-text-events-{}.cart",
-        std::process::id()
-    ));
+    let cart_path =
+        std::env::temp_dir().join(format!("console-text-events-{}.cart", std::process::id()));
     std::fs::write(
         &cart_path,
         "__lua__\nfunction _draw() print('TITLE', 96, 20, 6, 'center') end\n",
     )
     .expect("write text-event cart");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_console-agent"))
+    let output = Command::new(env!("CARGO_BIN_EXE_console"))
         .arg("run")
         .arg(&cart_path)
         .arg("--frames")
@@ -186,19 +180,17 @@ fn oneshot_text_events_are_json_lines_with_resolved_layout() {
 }
 
 #[test]
-fn serve_screenshot_zoom_param_scales_output() {
-    let out_path = std::env::temp_dir().join(format!(
-        "console-agent-serve-zoom-{}.png",
-        std::process::id()
-    ));
+fn rpc_screenshot_zoom_param_scales_output() {
+    let out_path =
+        std::env::temp_dir().join(format!("console-rpc-zoom-{}.png", std::process::id()));
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_console-agent"))
-        .arg("serve")
+    let mut child = Command::new(env!("CARGO_BIN_EXE_console"))
+        .arg("rpc")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn `console-agent serve`");
+        .expect("spawn `console rpc`");
 
     let mut stdin = child.stdin.take().expect("child stdin");
     let mut reader = BufReader::new(child.stdout.take().expect("child stdout"));
@@ -218,7 +210,7 @@ fn serve_screenshot_zoom_param_scales_output() {
         responses.push(serde_json::from_str::<serde_json::Value>(&line).unwrap());
     }
     drop(stdin);
-    child.wait().expect("wait for console-agent to exit");
+    child.wait().expect("wait for console to exit");
 
     assert!(
         responses[1].get("error").is_none(),
@@ -236,20 +228,20 @@ fn serve_screenshot_zoom_param_scales_output() {
 #[test]
 fn oneshot_run_reports_halt_with_nonzero_exit() {
     let cart_dir = std::env::temp_dir();
-    let cart_path = cart_dir.join(format!("console-agent-broken-{}.cart", std::process::id()));
+    let cart_path = cart_dir.join(format!("console-broken-{}.cart", std::process::id()));
     std::fs::write(
         &cart_path,
         "__lua__\nfunction _update() error('boom') end\n",
     )
     .expect("write broken cart");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_console-agent"))
+    let output = Command::new(env!("CARGO_BIN_EXE_console"))
         .arg("run")
         .arg(&cart_path)
         .arg("--frames")
         .arg("3")
         .output()
-        .expect("run `console-agent run`");
+        .expect("run `console run`");
 
     let _ = std::fs::remove_file(&cart_path);
 

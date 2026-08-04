@@ -1,4 +1,4 @@
-//! Integration tests for `console-agent sprite edit` (SPEC.md "Sprite &
+//! Integration tests for `console sprite edit` (SPEC.md "Sprite &
 //! animation authoring (PoC v1)" > "Transforms"), driven directly against
 //! [`console_agent::sprite::transform::cli_edit`] (no process spawning,
 //! except for one test that checks real stdout formatting) with scratch
@@ -16,7 +16,7 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 fn temp_cart(tag: &str, text: &str) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "console-agent-sprite-edit-test-{}-{n}-{tag}.cart",
+        "console-sprite-edit-test-{}-{n}-{tag}.cart",
         std::process::id()
     ));
     std::fs::write(&path, text).expect("write temp cart");
@@ -689,7 +689,7 @@ fn dry_run_prints_the_expected_line_number_and_content_to_stdout() {
     let expected_lineno = text.lines().position(|l| l == "a0000000").unwrap() + 1;
     let expected_content = row128(&[(1, "a")]);
 
-    let bin = env!("CARGO_BIN_EXE_console-agent");
+    let bin = env!("CARGO_BIN_EXE_console");
     let output = std::process::Command::new(bin)
         .args([
             "sprite",
@@ -704,7 +704,7 @@ fn dry_run_prints_the_expected_line_number_and_content_to_stdout() {
             "--dry-run",
         ])
         .output()
-        .expect("spawn console-agent");
+        .expect("spawn console");
     assert!(
         output.status.success(),
         "stderr: {}",

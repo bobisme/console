@@ -48,7 +48,7 @@ cargo build --manifest-path "$repo_root/Cargo.toml" -p console-web --target "$ta
 built="$repo_root/target/$target/release/console-web.js"
 [[ -f "$built" ]] || { echo "build-engine: expected output missing: $built" >&2; exit 1; }
 
-# The engine gets inlined into a <script> element by console-pack; a literal
+# The engine gets inlined into a <script> element by console pack; a literal
 # </script anywhere in it would end the element early. Fail loud, early.
 if grep -qi '</script' "$built"; then
   echo "build-engine: built engine contains '</script' — cannot be inlined" >&2

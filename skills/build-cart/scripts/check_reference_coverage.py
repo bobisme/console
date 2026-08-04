@@ -84,8 +84,8 @@ def main() -> int:
         if not command.startswith("-")
     )
     for command in top_commands:
-        if f"console-agent {command}" not in docs:
-            fail(errors, f"top-level console-agent command is undocumented: {command}")
+        if f"console {command}" not in docs:
+            fail(errors, f"top-level console command is undocumented: {command}")
 
     agent_source = "\n".join(
         path.read_text(encoding="utf-8")
@@ -96,14 +96,14 @@ def main() -> int:
     )
     for flag, reason in IGNORED_AGENT_FLAGS.items():
         if flag not in source_agent_flags:
-            fail(errors, f"stale console-agent flag exclusion {flag}: {reason}")
+            fail(errors, f"stale console flag exclusion {flag}: {reason}")
     agent_flags = sorted(source_agent_flags - IGNORED_AGENT_FLAGS.keys())
     for flag in agent_flags:
         if not contains_cli_token(docs, flag):
-            fail(errors, f"console-agent flag is undocumented: {flag}")
+            fail(errors, f"console flag is undocumented: {flag}")
     for short_flag in ("-h", "-o"):
         if not contains_cli_token(docs, short_flag):
-            fail(errors, f"console-agent short flag is undocumented: {short_flag}")
+            fail(errors, f"console short flag is undocumented: {short_flag}")
 
     for family in ("sprite", "map", "music"):
         module = (REPO_ROOT / f"crates/console-agent/src/{family}/mod.rs").read_text(
@@ -116,9 +116,9 @@ def main() -> int:
             fail(errors, f"cannot read {family} command inventory")
             continue
         for command in re.findall(r'"([a-z-]+)"', inventory.group(1)):
-            phrase = f"console-agent {family} {command}"
+            phrase = f"console {family} {command}"
             if phrase not in docs:
-                fail(errors, f"console-agent leaf is undocumented: {family} {command}")
+                fail(errors, f"console leaf is undocumented: {family} {command}")
 
     required_edit_phrases = [
         "sprite edit <cart> shift",
@@ -153,7 +153,7 @@ def main() -> int:
 
     for flag in ("--out", "--output", "--engine", "--template", "--help"):
         if not contains_cli_token(docs, flag):
-            fail(errors, f"console-pack flag is undocumented: {flag}")
+            fail(errors, f"console pack flag is undocumented: {flag}")
 
     if errors:
         for error in errors:
@@ -163,7 +163,7 @@ def main() -> int:
     print(
         "build-cart reference coverage: PASS "
         f"({len(lua_names)} Lua globals, {len(top_commands)} top-level commands, "
-        f"{len(agent_flags)} console-agent flags, {len(rpc_methods)} RPC methods, "
+        f"{len(agent_flags)} console flags, {len(rpc_methods)} RPC methods, "
         f"{len(reference_files)} references)"
     )
     return 0

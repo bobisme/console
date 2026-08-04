@@ -1,10 +1,10 @@
 use std::process::{Command, Output};
 
 fn run(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_console-agent"))
+    Command::new(env!("CARGO_BIN_EXE_console"))
         .args(args)
         .output()
-        .expect("run console-agent")
+        .expect("run console")
 }
 
 fn stdout(output: &Output) -> String {
@@ -22,23 +22,25 @@ fn top_level_help_is_complete_and_successful() {
         assert!(text.contains("map <render|dump|lint|edit|poke>"));
         assert!(text.contains("music <score|lint|piano-roll|render|edit|import-abc>"));
         assert!(text.contains("playtest <cart> --scenario <scenario.json>"));
+        assert!(text.contains("rpc"));
+        assert!(text.contains("pack <cart>"));
+        assert!(text.contains("serve <cart>"));
     }
 }
 
 #[test]
 fn command_family_and_leaf_help_use_stdout_and_exit_zero() {
     for (args, expected) in [
-        (&["run", "--help"][..], "console-agent run <cart>"),
-        (&["serve", "--help"][..], "console-agent serve"),
+        (&["run", "--help"][..], "console run <cart>"),
+        (&["rpc", "--help"][..], "console rpc"),
+        (&["pack", "--help"][..], "console pack"),
+        (&["serve", "--help"][..], "console serve"),
         (&["playtest", "--help"][..], "Scenario format (version 1)"),
-        (&["sprite", "--help"][..], "console-agent sprite gif"),
-        (
-            &["sprite", "render", "--help"][..],
-            "console-agent sprite render",
-        ),
-        (&["map", "--help"][..], "console-agent map render"),
-        (&["music", "--help"][..], "console-agent music import-abc"),
-        (&["music", "edit", "--help"][..], "console-agent music edit"),
+        (&["sprite", "--help"][..], "console sprite gif"),
+        (&["sprite", "render", "--help"][..], "console sprite render"),
+        (&["map", "--help"][..], "console map render"),
+        (&["music", "--help"][..], "console music import-abc"),
+        (&["music", "edit", "--help"][..], "console music edit"),
     ] {
         let output = run(args);
         assert!(output.status.success(), "{args:?} should exit successfully");

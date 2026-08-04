@@ -1,19 +1,20 @@
 # Command and JSON-RPC reference
 
-Use this reference for exact `console-agent`, `console-pack`, or `serve` syntax.
+Use this reference for exact `console` CLI and JSON-RPC syntax.
 Run the relevant `--help` in the active checkout if a locally installed binary
 may be newer than this skill.
 
 ## Contents
 
-- [`console-agent` inventory](#console-agent-inventory)
+- [`console` inventory](#console-inventory)
 - [`run`](#run)
 - [`playtest`](#playtest)
+- [`rpc`](#rpc)
+- [`pack`](#pack)
 - [`serve`](#serve)
 - [`sprite` commands](#sprite-commands)
 - [`map` commands](#map-commands)
 - [`music` commands](#music-commands)
-- [`console-pack`](#console-pack)
 - [JSON-RPC protocol](#json-rpc-protocol)
 - [Session RPC methods](#session-rpc-methods)
 - [Sprite RPC methods](#sprite-rpc-methods)
@@ -21,16 +22,18 @@ may be newer than this skill.
 - [Music RPC methods](#music-rpc-methods)
 - [CLI-only operations](#cli-only-operations)
 
-## `console-agent` inventory
+## `console` inventory
 
 ```text
-console-agent --help
-console-agent run ...
-console-agent playtest ...
-console-agent serve
-console-agent sprite <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke> ...
-console-agent map <render|dump|lint|edit|poke> ...
-console-agent music <score|lint|piano-roll|render|edit|import-abc> ...
+console --help
+console run ...
+console playtest ...
+console rpc
+console pack <cart> -o <out.html> ...
+console serve <cart> ...
+console sprite <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke> ...
+console map <render|dump|lint|edit|poke> ...
+console music <score|lint|piano-roll|render|edit|import-abc> ...
 ```
 
 `-h` and `--help` are accepted at the top level or anywhere after a top-level
@@ -44,7 +47,7 @@ runtime, assertion, or artifact failures generally exit 1.
 ## `run`
 
 ```text
-console-agent run <cart>
+console run <cart>
   [--frames N]
   [--input SPEC]
   [--screenshot out.png] [--screenshot-zoom N]
@@ -85,7 +88,7 @@ are idle. An empty spec plus `--frames N` is an idle run.
 ## `playtest`
 
 ```text
-console-agent playtest <cart> --scenario <scenario.json>
+console playtest <cart> --scenario <scenario.json>
   [--artifacts DIR]
   [--seed N]
   [--format text|pretty|json | --json]
@@ -133,10 +136,10 @@ relative descendants of `--artifacts`, and cannot traverse `.`/`..`, absolute
 paths, or symlinks. Screenshot zoom is 1–16. Spectrogram cell is 1–8 and its
 range at most 3,600 frames. Audio-stat windows are 1–36,000 frames.
 
-## `serve`
+## `rpc`
 
 ```text
-console-agent serve
+console rpc
 ```
 
 Read one JSON-RPC 2.0 object per stdin line and emit one response per stdout
@@ -152,27 +155,27 @@ Targets are a declared sprite name, declared animation name, or raw tile rect
 ### Inspect and render
 
 ```text
-console-agent sprite render <cart> <target> [--frame N] [--zoom Z]
+console sprite render <cart> <target> [--frame N] [--zoom Z]
   [--grid] [--indices] [--anchor] (-o|--out) out.png
 
-console-agent sprite strip <cart> <anim> [--zoom Z] [--anchor]
+console sprite strip <cart> <anim> [--zoom Z] [--anchor]
   (-o|--out) out.png
 
-console-agent sprite onion <cart> <anim> --frame N [--zoom Z]
+console sprite onion <cart> <anim> --frame N [--zoom Z]
   [--grid] [--anchor] (-o|--out) out.png
-console-agent sprite onion <cart> <anim> --all [--zoom Z]
+console sprite onion <cart> <anim> --all [--zoom Z]
   [--grid] [--anchor] (-o|--out) out.png
 
-console-agent sprite diff <cart> <anim> <frameA> <frameB>
+console sprite diff <cart> <anim> <frameA> <frameB>
   [--zoom Z] (-o|--out) out.png
 
-console-agent sprite ghost <cart> <anim> [--zoom Z]
+console sprite ghost <cart> <anim> [--zoom Z]
   [--grid] [--anchor] (-o|--out) out.png
 
-console-agent sprite gif <cart> <anim> [--zoom Z]
+console sprite gif <cart> <anim> [--zoom Z]
   [--grid] [--anchor] (-o|--out) out.gif
 
-console-agent sprite dump <cart> <target> [--frame N]
+console sprite dump <cart> <target> [--frame N]
 ```
 
 - `render`: one resolved frame/rect.
@@ -187,7 +190,7 @@ console-agent sprite dump <cart> <target> [--frame N]
 ### Lint
 
 ```text
-console-agent sprite lint <cart> [anim ...]
+console sprite lint <cart> [anim ...]
   [--max-drift PX]
   [--max-area-var PCT]
   [--max-changed PX]
@@ -202,19 +205,19 @@ compact line per animation while preserving gate behavior.
 ### Write pixels and transform regions
 
 ```text
-console-agent sprite poke <cart> <target> [--frame N]
+console sprite poke <cart> <target> [--frame N]
   --rows <pixels,pixels,...> [--dry-run]
-console-agent sprite poke <cart> <target> [--frame N]
+console sprite poke <cart> <target> [--frame N]
   --stdin [--dry-run]
 
-console-agent sprite edit <cart> shift <target> [--frame N]
+console sprite edit <cart> shift <target> [--frame N]
   [--dx N] [--dy N] [--wrap] [--dry-run]
-console-agent sprite edit <cart> flip <target> [--frame N]
+console sprite edit <cart> flip <target> [--frame N]
   --horizontal|--vertical [--dry-run]
-console-agent sprite edit <cart> rotate <target> [--frame N]
+console sprite edit <cart> rotate <target> [--frame N]
   --cw|--ccw [--dry-run]
-console-agent sprite edit <cart> copy <src> <dst> [--dry-run]
-console-agent sprite edit <cart> clear <target> [--frame N] [--dry-run]
+console sprite edit <cart> copy <src> <dst> [--dry-run]
+console sprite edit <cart> clear <target> [--frame N] [--dry-run]
 ```
 
 `poke` requires exact height/width and valid palette characters; `--stdin`
@@ -229,22 +232,22 @@ used nonzero extent (or one origin cell on an empty map). Edit operations always
 require an explicit region.
 
 ```text
-console-agent map render <cart> [cx,cy,cw,ch] [--zoom Z]
+console map render <cart> [cx,cy,cw,ch] [--zoom Z]
   [--grid] [--ids] (-o|--out) out.png
-console-agent map dump <cart> [cx,cy,cw,ch]
-console-agent map lint <cart>
+console map dump <cart> [cx,cy,cw,ch]
+console map lint <cart>
 
-console-agent map poke <cart> [cx,cy,cw,ch]
+console map poke <cart> [cx,cy,cw,ch]
   --rows <hex,hex,...> [--dry-run]
-console-agent map poke <cart> [cx,cy,cw,ch]
+console map poke <cart> [cx,cy,cw,ch]
   --stdin [--dry-run]
 
-console-agent map edit <cart> copy <cx,cy,cw,ch> <dest_cx,dest_cy>
+console map edit <cart> copy <cx,cy,cw,ch> <dest_cx,dest_cy>
   [--dry-run]
-console-agent map edit <cart> shift <cx,cy,cw,ch>
+console map edit <cart> shift <cx,cy,cw,ch>
   [--dx N] [--dy N] [--dry-run]
-console-agent map edit <cart> fill <cx,cy,cw,ch> <tile-hex> [--dry-run]
-console-agent map edit <cart> clear <cx,cy,cw,ch> [--dry-run]
+console map edit <cart> fill <cx,cy,cw,ch> <tile-hex> [--dry-run]
+console map edit <cart> clear <cx,cy,cw,ch> [--dry-run]
 ```
 
 `render --ids` labels nonempty cells. `dump` emits two hex digits/cell with a
@@ -258,12 +261,12 @@ not wrap.
 ### Inspect and render
 
 ```text
-console-agent music score <cart> [--song N]
-console-agent music lint <cart> [--strict]
-console-agent music piano-roll <cart>
+console music score <cart> [--song N]
+console music lint <cart> [--strict]
+console music piano-roll <cart>
   [--song N | --patterns a,b,c] [--cell N] [--row-h N]
   (-o|--out) out.png
-console-agent music render <cart>
+console music render <cart>
   [--song N] [--loops K | --frames F] [--seed N]
   (-o|--out) out.wav
 ```
@@ -277,15 +280,15 @@ overrides loop detection.
 ### Edit SFX rows
 
 ```text
-console-agent music edit <cart> transpose <sfx-ids> <semitones>
+console music edit <cart> transpose <sfx-ids> <semitones>
   [--clamp] [--dry-run]
-console-agent music edit <cart> copy <src-sfx> <dst-sfx>
+console music edit <cart> copy <src-sfx> <dst-sfx>
   [--force] [--dry-run]
-console-agent music edit <cart> shift-rows <sfx-id> <n> [--dry-run]
-console-agent music edit <cart> set-vol <sfx-id> <0-7|+n|-n> [--dry-run]
-console-agent music edit <cart> set-inst <sfx-id> <inst|0-5|w0-w7>
+console music edit <cart> shift-rows <sfx-id> <n> [--dry-run]
+console music edit <cart> set-vol <sfx-id> <0-7|+n|-n> [--dry-run]
+console music edit <cart> set-inst <sfx-id> <inst|0-5|w0-w7>
   [--where old] [--dry-run]
-console-agent music edit <cart> stretch <sfx-id> <2|0.5>
+console music edit <cart> stretch <sfx-id> <2|0.5>
   [--force] [--dry-run]
 ```
 
@@ -304,7 +307,7 @@ invoke them once per target ID when changing several entries.
 ### Import ABC
 
 ```text
-console-agent music import-abc <cart> <file.abc|-> --sfx <start-id>
+console music import-abc <cart> <file.abc|-> --sfx <start-id>
   [--inst <name|0-5|w0-w7>]
   [--vol 0-7]
   [--speed 1-255]
@@ -316,10 +319,10 @@ console-agent music import-abc <cart> <file.abc|-> --sfx <start-id>
 Import a monophonic tune into consecutive SFX IDs; `-` reads stdin. The command
 prints grid/tempo decisions, split points, warnings, and suggested pattern lines.
 
-## `console-pack`
+## `pack`
 
 ```text
-console-pack <cart> -o <out.html>
+console pack <cart> -o <out.html>
   [--engine FILE]
   [--template FILE]
 ```
@@ -327,13 +330,34 @@ console-pack <cart> -o <out.html>
 | Option | Meaning |
 |---|---|
 | `-o`, `--out`, `--output` | Required destination. |
-| `--engine FILE` | Emscripten single-file engine JS; default `web/engine.js`. |
-| `--template FILE` | Template containing `{{TITLE}}`, `{{CART_TEXT}}`, `{{ENGINE_JS}}`; default `web/template.html`. |
+| `--engine FILE` | Override the browser engine embedded in the executable. |
+| `--template FILE` | Override the HTML template embedded in the executable. It must contain `{{TITLE}}`, `{{CART_TEXT}}`, and `{{ENGINE_JS}}`. |
 | `-h`, `--help` | Print full help. |
 
-Default engine/template lookup checks the current directory, its ancestors,
-then executable ancestors. The packer validates the cart before writing and
-produces a zero-request HTML file that works from `file://`.
+The packer validates the cart before writing and produces a zero-request HTML
+file that works from `file://`. Because the default engine and template are
+compiled into `console`, packing works from any current directory.
+
+## `serve`
+
+```text
+console serve <cart>
+  [--host HOST]
+  [--port PORT]
+  [--engine FILE]
+  [--template FILE]
+  [--once]
+```
+
+`serve` performs the same validation and in-memory bundle as `pack`, then
+serves it at `/` and `/index.html`. It defaults to
+`http://127.0.0.1:8000/`, prints the actual URL on stdout, sends
+`Cache-Control: no-store`, and re-bundles on each page refresh so saved cart
+edits appear immediately. `--port 0` asks the OS for a free port. `--once`
+exits after one connection and is useful for scripts and tests. Use `--host`
+only when another device must reach the development server; the default is
+intentionally loopback-only. Requests must use a `Host` authority matching the
+configured host and actual port; wildcard binds accept IP-literal hosts only.
 
 ## JSON-RPC protocol
 

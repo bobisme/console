@@ -12,11 +12,9 @@ Cargo workspace:
   framebuffer, input, fixed timestep. **No windowing, no GPU, no audio device, no
   wall-clock, no filesystem access from Lua.** Compiles for native AND
   `wasm32-unknown-emscripten`.
-- `crates/console-agent` — native binary. Headless harness for AI agents:
-  oneshot CLI + JSON-RPC over stdio. PNG screenshots.
+- `crates/console-agent` — the single native `console` binary and its testable
+  library: headless harness, JSON-RPC, authoring tools, HTML packer/server.
 - `crates/console-web` — emscripten cdylib/staticlib exposing a C ABI over the core.
-- `crates/console-pack` — native binary. Splices engine JS + cart into a single
-  self-contained `game.html`.
 - `web/` — HTML template, JS shell, touch controls (all inlined at pack time).
 - `carts/` — example carts.
 
@@ -308,7 +306,7 @@ what lands in the framebuffer. Only the per-**cell** tile-0 skip is map-specific
 `palt(0, false)`.
 
 Host surfaces: `Console::display_palette() -> &[u8; 64]` (identity by default)
-and `Console::draw_state()`. `console-agent` applies the display palette when
+and `Console::draw_state()`. `console` applies the display palette when
 it renders PNG screenshots; `screen_text` stays raw. The web shell composes
 `palette[dpal[idx]]`. `DrawState::fillp()`, `DrawState::mosaic()` and
 `DrawState::rshift(y)` / `rshift_table()` / `rshift_active()` expose the new
@@ -390,14 +388,14 @@ IEEE 754 doubles everywhere and are fine).
 Save states = (cart hash, seed, input log); loading = reset + replay. Replays double
 as regression tests: `(cart, input log) → expected framebuffer hash`.
 
-## Agent harness (`console-agent`)
+## Agent harness (`console`)
 
-Oneshot: `console-agent run <cart> [--frames N] [--input SPEC] [--screenshot out.png]
+Oneshot: `console run <cart> [--frames N] [--input SPEC] [--screenshot out.png]
 [--screenshot-zoom N] [--screen-text] [--text-events] [--eval CODE] [--seed N]`
 where SPEC is comma-separated `COUNT:BUTTONS`, e.g. `30:,10:R,5:RA,60:` (empty
 buttons = no input).
 
-Serve: `console-agent serve` — JSON-RPC 2.0, one request per line on stdin,
+RPC: `console rpc` — JSON-RPC 2.0, one request per line on stdin,
 one response per line on stdout. Methods:
 
 - `load_cart {path}` or `{text}` — load + `_init`
@@ -424,13 +422,13 @@ and `music_*` (`music_score`, `music_lint`, `music_piano_roll`).
 Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback in
 `data`, and the console stays alive.
 
-Subcommands beyond `run`/`serve`, all of them operating on a cart file
-directly (no stepping): `console-agent sprite
-<render|strip|onion|diff|ghost|gif|lint|edit|dump|poke>`, `console-agent map
-<render|dump|lint|edit|poke>`, `console-agent music
+Subcommands beyond `run`/`rpc`, all of them operating on a cart file
+directly (no stepping): `console sprite
+<render|strip|onion|diff|ghost|gif|lint|edit|dump|poke>`, `console map
+<render|dump|lint|edit|poke>`, `console music
 <score|lint|piano-roll|render|edit|import-abc>`.
 
-For a repeatable multi-stage session, `console-agent playtest <cart>
+For a repeatable multi-stage session, `console playtest <cart>
 --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format
 text|pretty|json]` executes strict, versioned JSON in order. Version 1 stages
 are:
@@ -467,13 +465,14 @@ Exit 0 means every stage passed, 1 means a stage failed, and 2 means invalid
 CLI/schema/setup input. JSON output is an object envelope with `scenario`,
 `stages`, and `advice` fields.
 
-## Single-file HTML (`console-pack`)
+## Single-file HTML (`console pack`)
 
-`console-pack <cart> -o game.html [--engine <path to engine.js>]`
+`console pack <cart> -o game.html [--engine <path>] [--template <path>]`
 
 - Engine = emscripten `-sSINGLE_FILE=1 -sMODULARIZE=1` build of `console-web`
-  (wasm base64-inlined into JS). Built rarely; committed to `web/engine.js` or
-  rebuilt via script.
+  (wasm base64-inlined into JS). The committed engine and template are embedded
+  in the `console` executable at build time, so the installed packer has no
+  repository/CWD dependency. The flags override either embedded asset.
 - `game.html` = template + inline engine JS + cart text in
   `<script type="text/cart">…</script>`. **Zero external requests** — must work
   from `file://`. The cart stays human/agent-editable inside the HTML.
@@ -525,6 +524,22 @@ CLI/schema/setup input. JSON output is an object envelope with `scenario`,
   identity unless the cart called `pal(c0, c1, 1)` — the shell composes
   `palette[dpal[idx]]`), `con_error() -> *const u8` (NUL-terminated
   UTF-8 or NULL), `con_alloc(len) -> *mut u8` / `con_free(ptr, len)` for the cart copy.
+
+## Local browser server (`console serve`)
+
+`console serve <cart> [--host 127.0.0.1] [--port 8000] [--engine <path>]
+[--template <path>] [--once]` performs the same in-memory bundle and cart
+validation as `console pack`, binds loopback by default, and prints the actual
+URL to stdout. Port 0 requests an OS-selected free port. It serves only `/` and
+`/index.html`, sends `Cache-Control: no-store`, and re-reads/revalidates the
+cart and any override assets for every page request, so refresh picks up saved
+edits. It rejects mismatched HTTP `Host` authorities before returning the
+source-bearing page (wildcard binds accept IP-literal hosts only), preventing a
+public hostname from DNS-rebinding into the loopback server. `--once` exits
+after one connection for deterministic automation.
+
+This is a development server, not a production deployment surface. Binding a
+non-loopback host is explicit via `--host`.
 
 ## Audio (PoC v1)
 
@@ -599,7 +614,7 @@ auto-allocated `sfx()` to steal channel 5 out from under the music (the old
 
 - console-core: `audio_frame(&self) -> &[f32; 735]` — the samples rendered by
   the most recent `step()`.
-- console-agent — agents can't hear, so audio is inspectable in three layers
+- console — agents can't hear, so audio is inspectable in three layers
   (the session keeps an audio log + note-event log alongside the input log;
   replay-based `load_state` reproduces both):
   1. **Ground truth as data**: `audio_state {}` (per-channel: sfx, row,
@@ -687,7 +702,7 @@ anim <sprite>.<label> frames=<f0,f1,...> fps=<1-60> [loop] [frames_rect=<tx>,<ty
   `AnimDef::done_at(elapsed)` are the matching playback maths, shared by `aspr`
   and `anim_done` so the tools and the runtime agree on what "frame 3" is.
 
-### Inspection tools (console-agent `sprite` subcommands + RPC verbs)
+### Inspection tools (console `sprite` subcommands + RPC verbs)
 
 All operate on a cart file directly (no stepping). Renders default to
 **zoom 8**, on a dark checkerboard (transparency = color 0 shows through),
@@ -727,7 +742,7 @@ RPC mirrors: `sprite_render`, `sprite_strip`, `sprite_onion`, `sprite_diff`,
 JSON-RPC has no process exit code, it reports a `"violated"` boolean
 instead.
 
-### Transforms (console-agent `sprite edit` — CLI only, rewrites the cart file)
+### Transforms (console `sprite edit` — CLI only, rewrites the cart file)
 
 ```
 sprite edit <cart> shift <target> [--frame N] --dx <n> --dy <n> [--wrap]
@@ -750,7 +765,7 @@ up — cells instead of pixels, tile ids instead of palette indices — so the
 same ground-truth/numeric-lint/render progression and the same atomic,
 only-touch-changed-lines rewrite apply here too.
 
-### Inspection tools (console-agent `map` subcommands + RPC verbs)
+### Inspection tools (console `map` subcommands + RPC verbs)
 
 All operate on a cart file directly (no stepping). A `[cx,cy,cw,ch]` region
 argument (cell coordinates) is optional on `render`/`dump`/`poke`, defaulting
@@ -774,7 +789,7 @@ loaded cart — read-only, like the `sprite_*` mirrors: there is no
 `map_poke`/`map_edit` RPC verb, since mutating a cart file is a CLI-only
 operation by design.
 
-### Transforms (console-agent `map poke`/`map edit` — CLI only, rewrites the cart file)
+### Transforms (console `map poke`/`map edit` — CLI only, rewrites the cart file)
 
 ```
 map poke <cart> [cx,cy,cw,ch] (--rows <hex,hex,...> | --stdin) [--dry-run]
@@ -1213,7 +1228,7 @@ every pre-existing entry renders exactly as it always did. New entries are
 appended to the **end** of the menu so the golden entries keep their input
 scripts.
 
-### Inspection tools (console-agent `music` subcommands + RPC verbs) — phase 2
+### Inspection tools (console `music` subcommands + RPC verbs) — phase 2
 
 Agents author music blind, and until these existed the only way to check a
 song was to step a console and diff `audio_events` note by note. These work
@@ -1302,7 +1317,7 @@ read-only, like the `sprite_*`/`map_*` mirrors. There is deliberately **no**
 `wav` with the session's own console, and a second stepping engine on the RPC
 surface would only be a way for the two to disagree.
 
-### Transforms (console-agent `music edit` — CLI only, rewrites the cart file) — phase 3
+### Transforms (console `music edit` — CLI only, rewrites the cart file) — phase 3
 
 ```
 music edit <cart> transpose  <sfx-ids> <semitones> [--clamp]           [--dry-run]
@@ -1360,7 +1375,7 @@ untouched. `shift-rows`, `copy` and `stretch` move the original row text.
 `--dry-run` prints the would-be new lines (and `(removed)` for lines that
 disappear) instead of writing.
 
-### ABC import (console-agent `music import-abc` — CLI only) — phase 3
+### ABC import (console `music import-abc` — CLI only) — phase 3
 
 ```
 music import-abc <cart> <file.abc|-> --sfx <start-id>
@@ -1418,7 +1433,7 @@ existing pattern" rule) and every warning.
 
 **No RPC mirror** for either `music edit` or `music import-abc`, matching
 `sprite edit`/`sprite poke` and `map edit`/`map poke`: mutating a cart file is
-a CLI-only operation by design, and a `serve` session's console would disagree
+a CLI-only operation by design, and an `rpc` session's console would disagree
 with the file until the next `load_cart`.
 
 Phase 3 remaining (planned): `music summarize` (chord skeleton per bar),
