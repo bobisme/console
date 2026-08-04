@@ -37,7 +37,8 @@ pub mod value;
 pub const RUN_USAGE: &str = "\
 usage:
   console run <cart|project> [--frames N] [--input SPEC] [--screenshot out.png] [--screen-text] [--eval CODE] [--seed N]
-                    [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats] [--text-events]";
+                    [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats] [--text-events]
+                    [--draw-trace trace.json]";
 
 pub const RPC_USAGE: &str = "usage:\n  console rpc";
 

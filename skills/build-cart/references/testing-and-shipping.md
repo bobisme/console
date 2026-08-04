@@ -143,6 +143,7 @@ Promote valuable smoke scripts into strict versioned JSON:
       "zoom":2,
       "screen_text":"jump-apex.txt",
       "text_events":"jump-text.json",
+      "draw_trace":"jump-draws.json",
       "audio_events":"jump-events.json",
       "audio_stats":"jump-stats.json"
     }
@@ -163,6 +164,8 @@ Scenario principles:
 - name semantic stages;
 - assert after the state-changing input, not only at the end;
 - capture transition moments, failure states, and victory;
+- use `draw_tag` plus `draw_trace` when a screenshot does not reveal which
+  system produced a stray primitive, sprite, or off-camera effect;
 - compare exact JSON values and expose stable status values for floats when
   precision would otherwise make assertions brittle;
 - keep paths relative/unique beneath one explicit artifact root;

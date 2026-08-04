@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::map;
 use crate::music;
-use crate::session::{Session, SessionError};
+use crate::session::{MAX_SESSION_DRAW_EVENTS, Session, SessionError};
 use crate::sprite::view::{self, Image, LintThresholds, OverlayOpts, RenderOpts};
 use crate::value::lua_to_json;
 
@@ -161,6 +161,8 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "audio_events" => m_audio_events(session, params),
         "audio_stats" => m_audio_stats(session, params),
         "text_events" => m_text_events(session, params),
+        "draw_trace" => m_draw_trace(session, params),
+        "draw_events" => m_draw_events(session, params),
         "spectrogram" => m_spectrogram(session, params),
         "sprite_render" => m_sprite_render(session, params),
         "sprite_atlas" => m_sprite_atlas(session, params),
@@ -360,6 +362,73 @@ fn m_text_events(session: &Session, params: &Value) -> Result<Value, RpcErr> {
     let events = session.text_events(from_frame)?;
     serde_json::to_value(events)
         .map_err(|e| RpcErr::new(-32000, format!("failed to serialize text events: {e}")))
+}
+
+fn optional_bool_param(params: &Value, name: &str) -> Result<Option<bool>, RpcErr> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_) => Err(RpcErr::bad_params(format!(
+            "draw tracing {name:?} must be a boolean"
+        ))),
+    }
+}
+
+fn optional_u64_param(params: &Value, name: &str) -> Result<Option<u64>, RpcErr> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value.as_u64().map(Some).ok_or_else(|| {
+            RpcErr::bad_params(format!(
+                "draw tracing {name:?} must be a non-negative integer"
+            ))
+        }),
+    }
+}
+
+fn optional_string_param<'a>(params: &'a Value, name: &str) -> Result<Option<&'a str>, RpcErr> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value)),
+        Some(_) => Err(RpcErr::bad_params(format!(
+            "draw tracing {name:?} must be a string"
+        ))),
+    }
+}
+
+fn m_draw_trace(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
+    let enabled = optional_bool_param(params, "enabled")?
+        .ok_or_else(|| RpcErr::bad_params("draw_trace requires an \"enabled\" boolean param"))?;
+    let clear = optional_bool_param(params, "clear")?.unwrap_or(false);
+    session.set_draw_tracing(enabled);
+    if clear {
+        session.clear_draw_events();
+    }
+    let (event_count, dropped) = if session.has_cart() {
+        let report = session.draw_events(None, None)?;
+        (report.events.len(), report.dropped)
+    } else {
+        (0, 0)
+    };
+    Ok(json!({
+        "enabled": session.draw_tracing(),
+        "capacity": MAX_SESSION_DRAW_EVENTS,
+        "event_count": event_count,
+        "dropped": dropped,
+    }))
+}
+
+fn m_draw_events(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
+    let from_frame = optional_u64_param(params, "from_frame")?;
+    let tag = optional_string_param(params, "tag")?;
+    let clear = optional_bool_param(params, "clear")?.unwrap_or(false);
+    let report = session.draw_events(from_frame, tag)?;
+    let value = serde_json::to_value(report).map_err(|error| {
+        RpcErr::new(-32000, format!("failed to serialize draw events: {error}"))
+    })?;
+    if clear {
+        session.clear_draw_events();
+    }
+    Ok(value)
 }
 
 fn m_spectrogram(session: &Session, params: &Value) -> Result<Value, RpcErr> {

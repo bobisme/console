@@ -22,6 +22,7 @@
 mod api;
 mod audio;
 mod cart;
+mod draw_trace;
 mod error;
 mod font;
 mod gfx;
@@ -48,6 +49,10 @@ pub use crate::audio::{
     WAVETABLE_SLOTS, Wavetable, freq_at, parse_note,
 };
 pub use crate::cart::{Cart, PreviewPalette};
+pub use crate::draw_trace::{
+    Bounds as DrawBounds, DrawDetails, DrawEvent, DrawTraceFrame, MAX_DRAW_EVENTS_PER_FRAME,
+    PaletteRemap as DrawPaletteRemap,
+};
 pub use crate::error::Error;
 pub use crate::gfx::{
     COLOR_ALPHABET, COLOR_COUNT, COLOR_MASK, DrawState, FB_LEN, FILLP_SIZE, Framebuffer,
@@ -184,6 +189,7 @@ impl Console {
         {
             let mut s = self.state.borrow_mut();
             s.text_draws.clear();
+            s.clear_draw_events();
             s.prev_input = s.input;
             s.input = input & input::MASK;
         }
@@ -316,6 +322,28 @@ impl Console {
     /// interior `RefCell` borrow across API boundaries.
     pub fn live_map(&self) -> TileMap {
         *self.state.borrow().map
+    }
+
+    /// Enable or disable draw-event tracing. Tracing is off by default and
+    /// does not participate in rendering; toggling it clears buffered events.
+    pub fn set_draw_tracing(&mut self, enabled: bool) {
+        let mut state = self.state.borrow_mut();
+        state.draw_trace_enabled = enabled;
+        state.clear_draw_events();
+    }
+
+    /// Whether this console currently records draw events.
+    pub fn draw_tracing(&self) -> bool {
+        self.state.borrow().draw_trace_enabled
+    }
+
+    /// Drain the current frame's bounded trace buffer.
+    pub fn take_draw_events(&mut self) -> DrawTraceFrame {
+        let mut state = self.state.borrow_mut();
+        DrawTraceFrame {
+            events: std::mem::take(&mut state.draw_events),
+            dropped: std::mem::take(&mut state.draw_events_dropped),
+        }
     }
 
     /// Drain buffered `printh` output.

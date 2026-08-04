@@ -162,7 +162,9 @@ For programmatic control, `console rpc` speaks JSON-RPC 2.0 (one
 request per line on stdin/stdout): load a cart, step frames with input,
 pull a screenshot or the framebuffer as text (`screen_text`), `eval` Lua,
 and inspect audio without ears (`audio_state`, `audio_events`,
-`audio_stats`, `spectrogram`). Full method list in SPEC.md.
+`audio_stats`, `spectrogram`). Optional `draw_trace`/`draw_events` diagnostics
+explain which tagged primitive, sprite, animation, map, or text call produced a
+region without changing the rendered frame. Full method list in SPEC.md.
 
 For repeatable multi-stage acceptance, use a versioned playtest scenario
 instead of hand-driving an RPC session:
@@ -177,7 +179,8 @@ Scenario stages run in file order and can evaluate Lua, hold an input mask for
 an exact frame count, compare an evaluated value to JSON, and capture
 screenshots, screen text, WAVs, spectrograms, audio events, and signal stats.
 Captures can also emit authored or live-runtime map PNG, hex, and lint
-artifacts, so a scenario can preserve terrain after scripted `mset` mutations.
+artifacts or bounded draw-trace JSON, so a scenario can preserve terrain after
+scripted `mset` mutations and isolate visual systems frame by frame.
 
 ## Development
 

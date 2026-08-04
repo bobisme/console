@@ -57,6 +57,7 @@ low six bits (`0..63`). Optional booleans use Lua truthiness.
 | `circfill(x,y,[r=4],[c=0])` | Filled circle. |
 | `text_size(value)` | Return logical `(width,height)` using the built-in fixed font. |
 | `print(value,[x=0],[y=0],[c=12],[align="left"])` | Draw text; align each line `left`, `center`, or `right` on x. Values are coerced predictably; lowercase may render uppercase. |
+| `draw_tag([name])` | Label later opt-in draw-trace events with a semantic layer/system name; no argument clears it. Maximum 64 UTF-8 bytes. Never draws. |
 
 `camera`, `clip`, the draw palette, and `fillp` affect shape primitives.
 `print` ignores `fillp`. `cls` writes its literal color instead of applying the

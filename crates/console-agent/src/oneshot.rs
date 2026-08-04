@@ -22,6 +22,7 @@ pub struct RunArgs {
     pub audio_events: bool,
     pub audio_stats: bool,
     pub text_events: bool,
+    pub draw_trace: Option<String>,
 }
 
 /// Parse the arguments following `run` (i.e. `args[2..]` of `argv`).
@@ -39,6 +40,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
     let mut audio_events = false;
     let mut audio_stats = false;
     let mut text_events = false;
+    let mut draw_trace = None;
 
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -90,6 +92,10 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--audio-events" => audio_events = true,
             "--audio-stats" => audio_stats = true,
             "--text-events" => text_events = true,
+            "--draw-trace" => {
+                let v = iter.next().ok_or("--draw-trace requires a value")?;
+                draw_trace = Some(v.clone());
+            }
             other if other.starts_with("--") => return Err(format!("unknown flag {other:?}")),
             other => {
                 if cart_path.is_some() {
@@ -114,6 +120,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
         audio_events,
         audio_stats,
         text_events,
+        draw_trace,
     })
 }
 
@@ -146,6 +153,9 @@ pub fn run(args: &RunArgs) -> i32 {
     if let Err(e) = session.load_cart(&cart_text, args.seed) {
         eprintln!("error: {e}");
         return 1;
+    }
+    if args.draw_trace.is_some() {
+        session.set_draw_tracing(true);
     }
 
     let total_frames = args
@@ -301,6 +311,28 @@ pub fn run(args: &RunArgs) -> i32 {
         }
     }
 
+    if let Some(path) = &args.draw_trace {
+        let report = match session.draw_events(None, None) {
+            Ok(report) => report,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        };
+        let mut bytes = match serde_json::to_vec(&report) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        };
+        bytes.push(b'\n');
+        if let Err(e) = crate::artifact::write(path, &bytes) {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    }
+
     if let Some(v) = eval_result {
         println!("{v}");
     }
@@ -345,6 +377,8 @@ mod tests {
             "--audio-events".into(),
             "--audio-stats".into(),
             "--text-events".into(),
+            "--draw-trace".into(),
+            "trace.json".into(),
         ])
         .unwrap();
 
@@ -364,6 +398,7 @@ mod tests {
                 audio_events: true,
                 audio_stats: true,
                 text_events: true,
+                draw_trace: Some("trace.json".into()),
             }
         );
     }

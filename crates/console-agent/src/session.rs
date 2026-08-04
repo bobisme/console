@@ -6,11 +6,11 @@
 //! parallel per-frame audio sample log and sequencer event log (see
 //! [`crate::audio`]), and a table of named save states.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use console_core::{
-    CHANNEL_COUNT, COLOR_COUNT, COLOR_MASK, ChannelInfo, Console, Error, FB_LEN, PALETTE,
-    SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W, TextDraw, color_char, input,
+    CHANNEL_COUNT, COLOR_COUNT, COLOR_MASK, ChannelInfo, Console, DrawEvent, DrawTraceFrame, Error,
+    FB_LEN, PALETTE, SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W, TextDraw, color_char, input,
 };
 use serde::Serialize;
 
@@ -52,6 +52,30 @@ pub struct TextEvent {
     pub clipped: bool,
 }
 
+/// Maximum draw calls retained across frames by an agent session. The core
+/// independently caps each frame; this second cap keeps long traced runs
+/// bounded while retaining the most recent evidence.
+pub const MAX_SESSION_DRAW_EVENTS: usize = 65_536;
+
+/// One core draw call stamped with its completed runtime frame and stable
+/// within-frame order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DrawEventRecord {
+    pub frame: u64,
+    pub index: u64,
+    #[serde(flatten)]
+    pub event: DrawEvent,
+}
+
+/// Serializable snapshot returned by RPC, one-shot runs, and playtests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DrawTraceReport {
+    pub enabled: bool,
+    pub capacity: usize,
+    pub dropped: u64,
+    pub events: Vec<DrawEventRecord>,
+}
+
 fn record_text_draws(events: &mut Vec<TextEvent>, frame: u64, draws: Vec<TextDraw>) {
     events.extend(draws.into_iter().map(|draw| TextEvent {
         frame,
@@ -69,6 +93,34 @@ fn record_text_draws(events: &mut Vec<TextEvent>, frame: u64, draws: Vec<TextDra
         visible: draw.layout.visible,
         clipped: draw.layout.clipped,
     }));
+}
+
+fn record_draw_events(
+    events: &mut VecDeque<DrawEventRecord>,
+    dropped: &mut u64,
+    index_frame: &mut Option<u64>,
+    next_index: &mut u64,
+    frame: u64,
+    trace: DrawTraceFrame,
+) {
+    if *index_frame != Some(frame) {
+        *index_frame = Some(frame);
+        *next_index = 0;
+    }
+    *dropped = dropped.saturating_add(u64::from(trace.dropped));
+    for event in trace.events {
+        if events.len() == MAX_SESSION_DRAW_EVENTS {
+            events.pop_front();
+            *dropped = dropped.saturating_add(1);
+        }
+        events.push_back(DrawEventRecord {
+            frame,
+            index: *next_index,
+            event,
+        });
+        *next_index = next_index.saturating_add(1);
+    }
+    *next_index = next_index.saturating_add(u64::from(trace.dropped));
 }
 
 /// Errors from session operations that aren't Lua/cart errors (those are
@@ -140,6 +192,13 @@ pub struct Session {
     prev_pattern: Option<u8>,
     /// Every text draw since load/reset, including frame-zero `_init` calls.
     text_events: Vec<TextEvent>,
+    /// Opt-in bounded draw-call diagnostics. This host-side switch survives
+    /// load/reset/load_state even though each operation replaces the core.
+    draw_tracing: bool,
+    draw_events: VecDeque<DrawEventRecord>,
+    draw_events_dropped: u64,
+    draw_event_index_frame: Option<u64>,
+    draw_event_next_index: u64,
 }
 
 impl Default for Session {
@@ -155,6 +214,11 @@ impl Default for Session {
             prev_channels: idle_channels(),
             prev_pattern: None,
             text_events: Vec::new(),
+            draw_tracing: false,
+            draw_events: VecDeque::new(),
+            draw_events_dropped: 0,
+            draw_event_index_frame: None,
+            draw_event_next_index: 0,
         }
     }
 }
@@ -171,12 +235,20 @@ impl Session {
         self.prev_pattern = None;
     }
 
+    fn clear_draw_log(&mut self) {
+        self.draw_events.clear();
+        self.draw_events_dropped = 0;
+        self.draw_event_index_frame = None;
+        self.draw_event_next_index = 0;
+    }
+
     /// Load a new cart from source text and (re)build the console. Clears
     /// the input log, audio log, event log and any save states from a
     /// previous cart, since a save state's replay only makes sense against
     /// the cart it was recorded on.
     pub fn load_cart(&mut self, text: &str, seed: u64) -> Result<(), SessionError> {
         let mut console = Console::new(text, seed)?;
+        console.set_draw_tracing(self.draw_tracing);
         let init_draws = console.take_text_draws();
         self.cart_text = Some(text.to_string());
         self.seed = seed;
@@ -185,6 +257,7 @@ impl Session {
         self.saved_states.clear();
         self.clear_audio_log();
         self.text_events.clear();
+        self.clear_draw_log();
         record_text_draws(&mut self.text_events, 0, init_draws);
         Ok(())
     }
@@ -197,12 +270,14 @@ impl Session {
         let text = self.cart_text.clone().ok_or(SessionError::NoCart)?;
         let seed = seed.unwrap_or(self.seed);
         let mut console = Console::new(&text, seed)?;
+        console.set_draw_tracing(self.draw_tracing);
         let init_draws = console.take_text_draws();
         self.seed = seed;
         self.console = Some(console);
         self.input_log.clear();
         self.clear_audio_log();
         self.text_events.clear();
+        self.clear_draw_log();
         record_text_draws(&mut self.text_events, 0, init_draws);
         Ok(())
     }
@@ -244,6 +319,14 @@ impl Session {
                 &mut self.text_events,
                 event_frame,
                 console.take_text_draws(),
+            );
+            record_draw_events(
+                &mut self.draw_events,
+                &mut self.draw_events_dropped,
+                &mut self.draw_event_index_frame,
+                &mut self.draw_event_next_index,
+                event_frame,
+                console.take_draw_events(),
             );
             match result {
                 Ok(()) => {
@@ -313,11 +396,19 @@ impl Session {
     }
 
     pub fn eval(&mut self, code: &str) -> Result<console_core::mlua::Value, SessionError> {
-        let console = self.console_mut()?;
+        let console = self.console.as_mut().ok_or(SessionError::NoCart)?;
         let result = console.eval(code);
         let frame = console.frame_count();
         let draws = console.take_text_draws();
         record_text_draws(&mut self.text_events, frame, draws);
+        record_draw_events(
+            &mut self.draw_events,
+            &mut self.draw_events_dropped,
+            &mut self.draw_event_index_frame,
+            &mut self.draw_event_next_index,
+            frame,
+            console.take_draw_events(),
+        );
         Ok(result?)
     }
 
@@ -359,9 +450,14 @@ impl Session {
             .ok_or_else(|| SessionError::BadParams(format!("no saved state named {name:?}")))?;
 
         let mut console = Console::new(&text, saved.seed)?;
+        console.set_draw_tracing(self.draw_tracing);
         let mut audio_log = Vec::new();
         let mut audio_events = Vec::new();
         let mut text_events = Vec::new();
+        let mut draw_events = VecDeque::new();
+        let mut draw_events_dropped = 0;
+        let mut draw_event_index_frame = None;
+        let mut draw_event_next_index = 0;
         record_text_draws(&mut text_events, 0, console.take_text_draws());
         let mut prev_channels = idle_channels();
         let mut prev_pattern = None;
@@ -375,6 +471,14 @@ impl Session {
                 console.frame_count().saturating_add(1)
             };
             record_text_draws(&mut text_events, event_frame, console.take_text_draws());
+            record_draw_events(
+                &mut draw_events,
+                &mut draw_events_dropped,
+                &mut draw_event_index_frame,
+                &mut draw_event_next_index,
+                event_frame,
+                console.take_draw_events(),
+            );
             match result {
                 Ok(()) => {
                     replayed += 1;
@@ -409,6 +513,10 @@ impl Session {
         self.prev_channels = prev_channels;
         self.prev_pattern = prev_pattern;
         self.text_events = text_events;
+        self.draw_events = draw_events;
+        self.draw_events_dropped = draw_events_dropped;
+        self.draw_event_index_frame = draw_event_index_frame;
+        self.draw_event_next_index = draw_event_next_index;
 
         Ok(StepOutcome {
             frame_count: replayed,
@@ -510,6 +618,52 @@ impl Session {
             .filter(|event| from_frame.is_none_or(|frame| event.frame >= frame))
             .cloned()
             .collect())
+    }
+
+    /// Enable or disable trace collection for subsequent draw calls. Changing
+    /// the mode starts a fresh bounded log so reports never mix policies.
+    pub fn set_draw_tracing(&mut self, enabled: bool) {
+        if self.draw_tracing == enabled {
+            return;
+        }
+        self.draw_tracing = enabled;
+        self.clear_draw_log();
+        if let Some(console) = &mut self.console {
+            console.set_draw_tracing(enabled);
+        }
+    }
+
+    pub fn draw_tracing(&self) -> bool {
+        self.draw_tracing
+    }
+
+    pub fn clear_draw_events(&mut self) {
+        self.clear_draw_log();
+        if let Some(console) = &mut self.console {
+            let _ = console.take_draw_events();
+        }
+    }
+
+    /// Snapshot bounded draw events, optionally filtering by completed frame
+    /// and semantic `draw_tag`. Filtering does not mutate the retained log.
+    pub fn draw_events(
+        &self,
+        from_frame: Option<u64>,
+        tag: Option<&str>,
+    ) -> Result<DrawTraceReport, SessionError> {
+        self.console()?;
+        Ok(DrawTraceReport {
+            enabled: self.draw_tracing,
+            capacity: MAX_SESSION_DRAW_EVENTS,
+            dropped: self.draw_events_dropped,
+            events: self
+                .draw_events
+                .iter()
+                .filter(|event| from_frame.is_none_or(|frame| event.frame >= frame))
+                .filter(|event| tag.is_none_or(|tag| event.event.tag.as_deref() == Some(tag)))
+                .cloned()
+                .collect(),
+        })
     }
 
     /// Per-window RMS/peak/clip-count stats over the whole audio log.

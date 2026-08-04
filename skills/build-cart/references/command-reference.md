@@ -94,6 +94,7 @@ console run <cart|project>
   [--audio-events]
   [--audio-stats]
   [--text-events]
+  [--draw-trace trace.json]
 ```
 
 `SPEC` is comma-separated `COUNT:BUTTONS`, for example
@@ -116,6 +117,7 @@ are idle. An empty spec plus `--frames N` is an idle run.
 | `--audio-events` | Print one JSON sequencer event per line. |
 | `--audio-stats` | Print JSON mix windows using 6 frames/window. |
 | `--text-events` | Print one JSON text-draw event per line, including resolved bounds. |
+| `--draw-trace FILE` | Write a bounded JSON draw-call trace for all stepped frames and the final eval. |
 
 `printh` lines go to stderr as `[log] ...`. A readable cart that fails to load,
 a project that fails to compile, a halted runtime, or a failed eval exits 1
@@ -156,6 +158,7 @@ Version 1 schema:
       "zoom":2,
       "screen_text":"jump.txt",
       "text_events":"jump-text.json",
+      "draw_trace":"jump-draws.json",
       "wav":"jump.wav",
       "spectrogram":"jump-spectrum.png",
       "audio_events":"jump-events.json",
@@ -497,11 +500,22 @@ One line is one request. Important error codes: `-32700` parse error,
 | `audio_events` | `{from_frame?}` | Sequencer events at/after the bound. |
 | `audio_stats` | `{window_frames?=6}` | RMS/peak/clipped counts over mix windows. |
 | `text_events` | `{from_frame?}` | `print` calls at/after the bound with anchors, bounds, alignment, visibility, and clipping. |
+| `draw_trace` | `{enabled,clear?}` | Enable/disable bounded recording for later calls; mode changes or `clear:true` clear the trace. |
+| `draw_events` | `{from_frame?,tag?,clear?}` | Return trace status and calls; optionally filter by frame/tag and clear after reading. |
 | `spectrogram` | `{path,from_frame?,to_frame?,cell?=4}` | Write PNG; return windows/dimensions. |
 
 Saved states are reset-plus-replay, so they reproduce pixels, map mutations,
-audio samples, sequencer events, and text events rather than serializing opaque
-VM memory.
+audio samples, sequencer events, text events, and enabled draw traces rather
+than serializing opaque VM memory.
+
+Draw traces distinguish primitives from `spr`/`sspr`/`aspr`/`map`, snapshot
+camera, clip, non-identity palette remaps, transparency, and fill state, and
+report world, screen, and visible bounds. Omitted palette indices are identity
+mapped. The core cap is 4096 calls per frame; the session retains
+the newest 65536 calls and reports all drops. Use Lua `draw_tag("actors")` (and
+`draw_tag()` to clear) for stable layer/system filtering. Tracing does not alter
+rendered pixels. It records subsequent frame-step and host-eval draws, not cart
+top-level or `_init` calls that already ran while the console was loading.
 
 ## Sprite RPC methods
 

@@ -98,6 +98,7 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `mset(cx, cy, [v=0])` | write a tile id (0–255, masked); off the map is a no-op |
 | `text_size(s)` | return logical `(width, height)` for the built-in 4×6 font; widest line × line count |
 | `print(s, x, y, [c=12], [align="left"])` | draw text with built-in 4×6 font; `align` is `left`, `center`, or `right` and anchors each line at x (ASCII 32–126; lowercase may render as uppercase) |
+| `draw_tag([name])` | label subsequent opt-in draw-trace events with a semantic layer/system name (64 UTF-8 bytes maximum); no argument clears the label and nothing is drawn |
 | `camera([x=0], [y=0])` | draw offset subtracted from all later draw coords; no args resets |
 | `clip([x, y, w, h])` | clip rectangle in **screen** space; no args resets to full screen |
 | `pal([c0], [c1], [p=0])` | p=0 draw-palette remap (rewrites pixels), p=1 display-palette remap (scanout only); no args resets both maps **and** `palt` |
@@ -538,7 +539,8 @@ as regression tests: `(cart, input log) → expected framebuffer hash`.
 ## Agent harness (`console`)
 
 Oneshot: `console run <cart|project> [--frames N] [--input SPEC] [--screenshot out.png]
-[--screenshot-zoom N] [--screen-text] [--text-events] [--eval CODE] [--seed N]`
+[--screenshot-zoom N] [--screen-text] [--text-events] [--draw-trace trace.json]
+[--eval CODE] [--seed N]`
 where SPEC is comma-separated `COUNT:BUTTONS`, e.g. `30:,10:R,5:RA,60:` (empty
 buttons = no input).
 
@@ -558,6 +560,11 @@ one response per line on stdout. Methods:
 - `text_events {from_frame?}` — every `print` call with frame, text, alignment,
   world/screen anchor, screen-space logical bounds, color, visibility, and
   clipping state
+- `draw_trace {enabled,clear?}` — enable/disable bounded draw-call recording;
+  changing the mode or passing `clear:true` clears the retained trace
+- `draw_events {from_frame?,tag?,clear?}` — bounded draw calls with frame/order,
+  operation, semantic tag, world/screen/visible bounds, camera, clip, palette,
+  fill, sprite/animation identity, and dropped-event count
 - `save_state {name}` / `load_state {name}` — replay-based
 - `info {}` — frame count, cart meta, seed, input log length
 
@@ -587,7 +594,8 @@ are:
 - `{"op":"assert","code":"return ...","equals":<json>}` — exact JSON
   comparison of the evaluated value;
 - `{"op":"capture",...}` — write one or more `screenshot`, `screen_text`,
-  `wav`, `spectrogram`, `audio_events`, `audio_stats`, or `text_events`
+  `wav`, `spectrogram`, `audio_events`, `audio_stats`, `text_events`, or
+  `draw_trace`
   artifacts, plus an optional nested `map` capture.
 
 Every stage may have a unique `name`. A scenario declares `version: 1` and an
@@ -603,6 +611,9 @@ current framebuffer. `zoom` is an integer from 1 through 16 (default 1) used by
 (default 4), and a spectrogram range may span at most 3600 frames.
 `audio_events` emits events at or after `from_frame` (default 0).
 `text_events` emits text draws at or after `from_frame` (default 0).
+`draw_trace` emits draw calls at or after `from_frame`; the playtest enables
+tracing before its first scenario stage whenever any capture requests this
+artifact.
 `audio_stats` groups audio into `window_frames`, an integer from 1 through
 36000 (default 6). A scenario may step at most 36000 input frames in total.
 Each input stage requires `frames >= 1`; `buttons` is a string containing only
@@ -617,6 +628,29 @@ expected/actual values, logs, and artifacts.
 Exit 0 means every stage passed, 1 means a stage failed, and 2 means invalid
 CLI/schema/setup input. JSON output is an object envelope with `scenario`,
 `stages`, and `advice` fields.
+
+### Draw-event tracing
+
+Tracing is opt-in and read-only: enabling it produces byte-identical
+framebuffers. The core retains at most 4096 calls from the current frame and a
+session retains the most recent 65536 calls across frames; both report dropped
+counts instead of growing without bound. Recorded operations are `cls`,
+`pset`, `line`, `rect`, `rectfill`, `circ`, `circfill`, `spr`, `sspr`, `aspr`,
+`map`, and `print`. Sprite-backed calls carry source/sprite/animation identity;
+primitive calls carry their draw color.
+
+Tracing covers draw calls made by subsequent frame steps and host `eval`
+requests. Cart top-level and `_init` code run while the console is being
+constructed, before optional tracing is activated, and are not included.
+
+Every event reports original world bounds, camera-resolved screen bounds, the
+intersection with the active screen-space clip, and whether clipping occurred.
+It also snapshots non-identity draw/display palette remaps, transparent colors,
+and fill pattern. Missing palette indices retain the identity mapping.
+Use `draw_tag("actors")`, `draw_tag("terrain")`, or another stable system name
+around related calls, then filter `draw_events` by `tag`. Call `draw_tag()` to
+clear it. Tags are diagnostics only and persist like other draw state until
+changed or the console is reset.
 
 ## Single-file HTML (`console pack`)
 

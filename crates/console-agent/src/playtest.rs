@@ -41,7 +41,7 @@ Scenario format (version 1):
     {\"op\":\"input\",\"frames\":1,\"buttons\":\"A\"},
     {\"op\":\"eval\",\"code\":\"dev_warp(48,449)\"},
     {\"op\":\"assert\",\"code\":\"return dev_status().embers\",\"equals\":1},
-    {\"op\":\"capture\",\"screenshot\":\"scene.png\",\"zoom\":4,
+    {\"op\":\"capture\",\"screenshot\":\"scene.png\",\"zoom\":4,\"draw_trace\":\"draw-trace.json\",
       \"map\":{\"source\":\"live\",\"png\":\"map.png\",\"dump\":\"map.txt\"}}
   ]}
 
@@ -119,6 +119,8 @@ pub enum Stage {
         audio_stats: Option<String>,
         #[serde(default)]
         text_events: Option<String>,
+        #[serde(default)]
+        draw_trace: Option<String>,
         #[serde(default)]
         map: Option<Box<MapCapture>>,
         #[serde(default)]
@@ -391,6 +393,17 @@ pub fn run_scenario(
     let cart_text = crate::project::load_cart_text(cart_path).map_err(|error| error.to_string())?;
     let seed = seed_override.unwrap_or(scenario.seed);
     let mut session = Session::new();
+    if scenario.stages.iter().any(|stage| {
+        matches!(
+            stage,
+            Stage::Capture {
+                draw_trace: Some(_),
+                ..
+            }
+        )
+    }) {
+        session.set_draw_tracing(true);
+    }
     session
         .load_cart(&cart_text, seed)
         .map_err(|error| format!("loading {}: {error}", cart_path.display()))?;
@@ -508,6 +521,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                 audio_events,
                 audio_stats,
                 text_events,
+                draw_trace,
                 map,
                 from_frame,
                 to_frame,
@@ -523,6 +537,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                     audio_events.as_deref(),
                     audio_stats.as_deref(),
                     text_events.as_deref(),
+                    draw_trace.as_deref(),
                 ];
                 if let Some(map) = map {
                     let map_outputs =
@@ -675,6 +690,7 @@ fn execute_stage(
             audio_events,
             audio_stats,
             text_events,
+            draw_trace,
             map,
             from_frame,
             to_frame,
@@ -755,6 +771,17 @@ fn execute_stage(
                 report
                     .artifacts
                     .push(write_artifact(root, name, "text_events", &bytes)?);
+            }
+            if let Some(name) = draw_trace {
+                let trace = session
+                    .draw_events(*from_frame, None)
+                    .map_err(|error| error.to_string())?;
+                let mut bytes = serde_json::to_vec(&trace)
+                    .map_err(|error| format!("serializing draw trace: {error}"))?;
+                bytes.push(b'\n');
+                report
+                    .artifacts
+                    .push(write_artifact(root, name, "draw_trace", &bytes)?);
             }
             if let Some(map_capture) = map {
                 let console = session.console().map_err(|error| error.to_string())?;

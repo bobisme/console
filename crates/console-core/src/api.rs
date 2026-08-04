@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use mlua::{Lua, Result as LuaResult, Table, Value, Variadic};
 
+use crate::draw_trace::{Bounds, DrawDetails, DrawSpec, ScreenBounds, clamp_i32};
 use crate::gfx::{self, MAP_H, MAP_W, col, fl};
 use crate::gfx_meta::{AnimDef, GfxMeta, SpriteDef};
 use crate::state::State;
@@ -15,6 +16,34 @@ pub const BUTTON_COUNT: i32 = 7;
 const TAU: f64 = std::f64::consts::TAU;
 
 type Shared = Rc<RefCell<State>>;
+
+fn color_details(color: u8) -> DrawDetails {
+    DrawDetails {
+        color: Some(color),
+        ..DrawDetails::default()
+    }
+}
+
+fn scaled(value: i32, factor: i32) -> i32 {
+    clamp_i32(i64::from(value) * i64::from(factor))
+}
+
+fn scaled_wide(value: i32, factor: i32) -> i64 {
+    i64::from(value) * i64::from(factor)
+}
+
+fn circle_bounds(x: i32, y: i32, radius: i32) -> Bounds {
+    if radius < 0 {
+        return Bounds::xywh(x, y, 0, 0);
+    }
+    let radius = i64::from(radius);
+    Bounds::wide_xywh(
+        i64::from(x) - radius,
+        i64::from(y) - radius,
+        radius * 2 + 1,
+        radius * 2 + 1,
+    )
+}
 
 /// Format a Lua value the way `print`/`printh` should show it.
 ///
@@ -156,9 +185,16 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
     g.set(
         "cls",
         lua.create_function(move |_, c: Option<f64>| {
+            let color = col(c.unwrap_or(0.0));
             let mut s = st.borrow_mut();
+            s.record_draw(DrawSpec {
+                op: "cls",
+                bounds: Bounds::xywh(0, 0, gfx::SCREEN_W as i32, gfx::SCREEN_H as i32),
+                screen: ScreenBounds::ScreenSpace,
+                details: color_details(color),
+            });
             let State { fb, draw, .. } = &mut *s;
-            gfx::cls(fb, draw, col(c.unwrap_or(0.0)));
+            gfx::cls(fb, draw, color);
             Ok(())
         })?,
     )?;
@@ -167,9 +203,16 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
     g.set(
         "pset",
         lua.create_function(move |_, (x, y, c): (f64, f64, Option<f64>)| {
+            let (x, y, color) = (fl(x), fl(y), col(c.unwrap_or(0.0)));
             let mut s = st.borrow_mut();
+            s.record_draw(DrawSpec {
+                op: "pset",
+                bounds: Bounds::xywh(x, y, 1, 1),
+                screen: ScreenBounds::Origin { x, y },
+                details: color_details(color),
+            });
             let State { fb, draw, .. } = &mut *s;
-            gfx::pset(fb, draw, fl(x), fl(y), col(c.unwrap_or(0.0)));
+            gfx::pset(fb, draw, x, y, color);
             Ok(())
         })?,
     )?;
@@ -187,17 +230,17 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         "line",
         lua.create_function(
             move |_, (x0, y0, x1, y1, c): (f64, f64, f64, f64, Option<f64>)| {
+                let (x0, y0, x1, y1, color) =
+                    (fl(x0), fl(y0), fl(x1), fl(y1), col(c.unwrap_or(0.0)));
                 let mut s = st.borrow_mut();
+                s.record_draw(DrawSpec {
+                    op: "line",
+                    bounds: Bounds::corners(x0, y0, x1, y1),
+                    screen: ScreenBounds::Corners { x0, y0, x1, y1 },
+                    details: color_details(color),
+                });
                 let State { fb, draw, .. } = &mut *s;
-                gfx::line(
-                    fb,
-                    draw,
-                    fl(x0),
-                    fl(y0),
-                    fl(x1),
-                    fl(y1),
-                    col(c.unwrap_or(0.0)),
-                );
+                gfx::line(fb, draw, x0, y0, x1, y1, color);
                 Ok(())
             },
         )?,
@@ -208,17 +251,17 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         "rect",
         lua.create_function(
             move |_, (x0, y0, x1, y1, c): (f64, f64, f64, f64, Option<f64>)| {
+                let (x0, y0, x1, y1, color) =
+                    (fl(x0), fl(y0), fl(x1), fl(y1), col(c.unwrap_or(0.0)));
                 let mut s = st.borrow_mut();
+                s.record_draw(DrawSpec {
+                    op: "rect",
+                    bounds: Bounds::corners(x0, y0, x1, y1),
+                    screen: ScreenBounds::Corners { x0, y0, x1, y1 },
+                    details: color_details(color),
+                });
                 let State { fb, draw, .. } = &mut *s;
-                gfx::rect(
-                    fb,
-                    draw,
-                    fl(x0),
-                    fl(y0),
-                    fl(x1),
-                    fl(y1),
-                    col(c.unwrap_or(0.0)),
-                );
+                gfx::rect(fb, draw, x0, y0, x1, y1, color);
                 Ok(())
             },
         )?,
@@ -229,17 +272,17 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         "rectfill",
         lua.create_function(
             move |_, (x0, y0, x1, y1, c): (f64, f64, f64, f64, Option<f64>)| {
+                let (x0, y0, x1, y1, color) =
+                    (fl(x0), fl(y0), fl(x1), fl(y1), col(c.unwrap_or(0.0)));
                 let mut s = st.borrow_mut();
+                s.record_draw(DrawSpec {
+                    op: "rectfill",
+                    bounds: Bounds::corners(x0, y0, x1, y1),
+                    screen: ScreenBounds::Corners { x0, y0, x1, y1 },
+                    details: color_details(color),
+                });
                 let State { fb, draw, .. } = &mut *s;
-                gfx::rectfill(
-                    fb,
-                    draw,
-                    fl(x0),
-                    fl(y0),
-                    fl(x1),
-                    fl(y1),
-                    col(c.unwrap_or(0.0)),
-                );
+                gfx::rectfill(fb, draw, x0, y0, x1, y1, color);
                 Ok(())
             },
         )?,
@@ -250,16 +293,18 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         "circ",
         lua.create_function(
             move |_, (x, y, r, c): (f64, f64, Option<f64>, Option<f64>)| {
+                let (x, y) = (fl(x), fl(y));
+                let radius = fl(r.unwrap_or(4.0));
+                let color = col(c.unwrap_or(0.0));
                 let mut s = st.borrow_mut();
+                s.record_draw(DrawSpec {
+                    op: "circ",
+                    bounds: circle_bounds(x, y, radius),
+                    screen: ScreenBounds::Circle { x, y, radius },
+                    details: color_details(color),
+                });
                 let State { fb, draw, .. } = &mut *s;
-                gfx::circ(
-                    fb,
-                    draw,
-                    fl(x),
-                    fl(y),
-                    fl(r.unwrap_or(4.0)),
-                    col(c.unwrap_or(0.0)),
-                );
+                gfx::circ(fb, draw, x, y, radius, color);
                 Ok(())
             },
         )?,
@@ -270,16 +315,18 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         "circfill",
         lua.create_function(
             move |_, (x, y, r, c): (f64, f64, Option<f64>, Option<f64>)| {
+                let (x, y) = (fl(x), fl(y));
+                let radius = fl(r.unwrap_or(4.0));
+                let color = col(c.unwrap_or(0.0));
                 let mut s = st.borrow_mut();
+                s.record_draw(DrawSpec {
+                    op: "circfill",
+                    bounds: circle_bounds(x, y, radius),
+                    screen: ScreenBounds::Circle { x, y, radius },
+                    details: color_details(color),
+                });
                 let State { fb, draw, .. } = &mut *s;
-                gfx::circfill(
-                    fb,
-                    draw,
-                    fl(x),
-                    fl(y),
-                    fl(r.unwrap_or(4.0)),
-                    col(c.unwrap_or(0.0)),
-                );
+                gfx::circfill(fb, draw, x, y, radius, color);
                 Ok(())
             },
         )?,
@@ -298,20 +345,33 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
     g.set(
         "spr",
         lua.create_function(move |_, (n, x, y, w, h, fx, fy): SprArgs| {
+            let (n, x, y) = (fl(n), fl(x), fl(y));
+            let size = (fl(w.unwrap_or(1.0)), fl(h.unwrap_or(1.0)));
+            let flip = (truthy(fx.as_ref()), truthy(fy.as_ref()));
             let mut s = st.borrow_mut();
+            let sheet_x = if n >= 0 { (n % 16) * 8 } else { 0 };
+            let sheet_y = if n >= 0 { (n / 16) * 8 } else { 0 };
+            s.record_draw(DrawSpec {
+                op: "spr",
+                bounds: Bounds::xywh(x, y, scaled(size.0, 8), scaled(size.1, 8)),
+                screen: ScreenBounds::Origin { x, y },
+                details: DrawDetails {
+                    sprite_id: Some(n),
+                    sheet_bounds: Some(Bounds::xywh(
+                        sheet_x,
+                        sheet_y,
+                        scaled(size.0, 8),
+                        scaled(size.1, 8),
+                    )),
+                    flip_x: Some(flip.0),
+                    flip_y: Some(flip.1),
+                    ..DrawDetails::default()
+                },
+            });
             let State {
                 fb, draw, sheet, ..
             } = &mut *s;
-            gfx::spr(
-                fb,
-                draw,
-                sheet,
-                fl(n),
-                fl(x),
-                fl(y),
-                (fl(w.unwrap_or(1.0)), fl(h.unwrap_or(1.0))),
-                (truthy(fx.as_ref()), truthy(fy.as_ref())),
-            );
+            gfx::spr(fb, draw, sheet, n, x, y, size, flip);
             Ok(())
         })?,
     )?;
@@ -338,18 +398,25 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         lua.create_function(move |_, args: SsprArgs| {
             let (sx, sy, sw, sh, dx, dy, dw, dh, fx, fy) = args;
             let (sw, sh) = (fl(sw), fl(sh));
+            let (sx, sy, dx, dy) = (fl(sx), fl(sy), fl(dx), fl(dy));
+            let (dw, dh) = (dw.map_or(sw, fl), dh.map_or(sh, fl));
+            let flip = (truthy(fx.as_ref()), truthy(fy.as_ref()));
             let mut s = st.borrow_mut();
+            s.record_draw(DrawSpec {
+                op: "sspr",
+                bounds: Bounds::xywh(dx, dy, dw, dh),
+                screen: ScreenBounds::Origin { x: dx, y: dy },
+                details: DrawDetails {
+                    sheet_bounds: Some(Bounds::xywh(sx, sy, sw, sh)),
+                    flip_x: Some(flip.0),
+                    flip_y: Some(flip.1),
+                    ..DrawDetails::default()
+                },
+            });
             let State {
                 fb, draw, sheet, ..
             } = &mut *s;
-            gfx::sspr(
-                fb,
-                draw,
-                sheet,
-                (fl(sx), fl(sy), sw, sh),
-                (fl(dx), fl(dy), dw.map_or(sw, fl), dh.map_or(sh, fl)),
-                (truthy(fx.as_ref()), truthy(fy.as_ref())),
-            );
+            gfx::sspr(fb, draw, sheet, (sx, sy, sw, sh), (dx, dy, dw, dh), flip);
             Ok(())
         })?,
     )?;
@@ -383,31 +450,47 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         lua.create_function(move |_, (name, x, y, t0, fx, fy): AsprArgs| {
             let name = name.to_str()?;
             let mut s = st.borrow_mut();
+            let (pos, sx, sy, w, h, anchor) = {
+                let (anim, sprite) = anim_and_sprite(&s.gfx_meta, "aspr", &name)?;
+                let pos = anim.frame_at(elapsed(s.frame, t0));
+                // Every frame is validated against the sheet at parse time,
+                // so `None` here would be a core bug, not a cart error.
+                let (sx, sy, w, h) = anim.resolve_frame(sprite, pos).ok_or_else(|| {
+                    mlua::Error::RuntimeError(format!(
+                        "aspr: anim {name:?} frame {pos} does not resolve to a sheet rect"
+                    ))
+                })?;
+                (pos, sx, sy, w, h, sprite.anchor)
+            };
+            let (dest_x, dest_y) = (fl(x) - anchor.0, fl(y) - anchor.1);
+            let flip = (truthy(fx.as_ref()), truthy(fy.as_ref()));
+            s.record_draw(DrawSpec {
+                op: "aspr",
+                bounds: Bounds::xywh(dest_x, dest_y, w as i32, h as i32),
+                screen: ScreenBounds::Origin {
+                    x: dest_x,
+                    y: dest_y,
+                },
+                details: DrawDetails {
+                    animation: Some(name.to_string()),
+                    animation_frame: Some(pos),
+                    sheet_bounds: Some(Bounds::xywh(sx as i32, sy as i32, w as i32, h as i32)),
+                    flip_x: Some(flip.0),
+                    flip_y: Some(flip.1),
+                    ..DrawDetails::default()
+                },
+            });
             let State {
-                fb,
-                draw,
-                sheet,
-                gfx_meta,
-                frame,
-                ..
+                fb, draw, sheet, ..
             } = &mut *s;
-            let (anim, sprite) = anim_and_sprite(gfx_meta, "aspr", &name)?;
-            let pos = anim.frame_at(elapsed(*frame, t0));
-            // Every frame is validated against the sheet at parse time, so a
-            // `None` here would be a core bug rather than a cart error.
-            let (sx, sy, w, h) = anim.resolve_frame(sprite, pos).ok_or_else(|| {
-                mlua::Error::RuntimeError(format!(
-                    "aspr: anim {name:?} frame {pos} does not resolve to a sheet rect"
-                ))
-            })?;
             gfx::spr_rect(
                 fb,
                 draw,
                 sheet,
                 (sx as i32, sy as i32),
-                (fl(x) - sprite.anchor.0, fl(y) - sprite.anchor.1),
+                (dest_x, dest_y),
                 (w as i32, h as i32),
-                (truthy(fx.as_ref()), truthy(fy.as_ref())),
+                flip,
             );
             Ok(())
         })?,
@@ -457,7 +540,30 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
     g.set(
         "map",
         lua.create_function(move |_, (cx, cy, sx, sy, cw, ch): MapArgs| {
+            let source = (fl(cx.unwrap_or(0.0)), fl(cy.unwrap_or(0.0)));
+            let dest = (fl(sx.unwrap_or(0.0)), fl(sy.unwrap_or(0.0)));
+            let size = (
+                fl(cw.unwrap_or(MAP_W as f64)),
+                fl(ch.unwrap_or(MAP_H as f64)),
+            );
             let mut s = st.borrow_mut();
+            s.record_draw(DrawSpec {
+                op: "map",
+                bounds: Bounds::wide_xywh(
+                    i64::from(dest.0),
+                    i64::from(dest.1),
+                    scaled_wide(size.0, 8),
+                    scaled_wide(size.1, 8),
+                ),
+                screen: ScreenBounds::Origin {
+                    x: dest.0,
+                    y: dest.1,
+                },
+                details: DrawDetails {
+                    map_bounds: Some(Bounds::xywh(source.0, source.1, size.0, size.1)),
+                    ..DrawDetails::default()
+                },
+            });
             let State {
                 fb,
                 draw,
@@ -465,18 +571,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                 map,
                 ..
             } = &mut *s;
-            gfx::map(
-                fb,
-                draw,
-                sheet,
-                map,
-                (fl(cx.unwrap_or(0.0)), fl(cy.unwrap_or(0.0))),
-                (fl(sx.unwrap_or(0.0)), fl(sy.unwrap_or(0.0))),
-                (
-                    fl(cw.unwrap_or(MAP_W as f64)),
-                    fl(ch.unwrap_or(MAP_H as f64)),
-                ),
-            );
+            gfx::map(fb, draw, sheet, map, source, dest, size);
             Ok(())
         })?,
     )?;
@@ -515,6 +610,25 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         })?,
     )?;
 
+    // `draw_tag([name])`: attach a semantic layer/system label to subsequent
+    // trace events. It never draws; nil/no argument clears the current tag.
+    let st = state.clone();
+    g.set(
+        "draw_tag",
+        lua.create_function(move |_, value: Option<mlua::LuaString>| {
+            let tag = value
+                .map(|value| value.to_str().map(|value| value.to_string()))
+                .transpose()?;
+            if tag.as_ref().is_some_and(|tag| tag.len() > 64) {
+                return Err(mlua::Error::RuntimeError(
+                    "draw_tag: tag must be at most 64 UTF-8 bytes".to_string(),
+                ));
+            }
+            st.borrow_mut().draw_tag = tag;
+            Ok(())
+        })?,
+    )?;
+
     let st = state.clone();
     g.set(
         "print",
@@ -541,14 +655,32 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                 let y = fl(y.unwrap_or(0.0));
                 let color = col(c.unwrap_or(12.0));
                 let mut s = st.borrow_mut();
-                let State {
-                    fb,
-                    draw,
-                    text_draws,
-                    ..
-                } = &mut *s;
-                let layout = gfx::print_aligned(fb, draw, &text, x, y, color, align);
-                text_draws.push(gfx::TextDraw {
+                let layout = {
+                    let State { fb, draw, .. } = &mut *s;
+                    gfx::print_aligned(fb, draw, &text, x, y, color, align)
+                };
+                let world_x = match align {
+                    gfx::TextAlign::Left => x,
+                    gfx::TextAlign::Center => x.saturating_sub(layout.width / 2),
+                    gfx::TextAlign::Right => x.saturating_sub(layout.width),
+                };
+                s.record_draw(DrawSpec {
+                    op: "print",
+                    bounds: Bounds::xywh(world_x, y, layout.width, layout.height),
+                    screen: ScreenBounds::Explicit(Bounds::xywh(
+                        layout.x,
+                        layout.y,
+                        layout.width,
+                        layout.height,
+                    )),
+                    details: DrawDetails {
+                        color: Some(color),
+                        text: Some(text.clone()),
+                        align: Some(align.as_str().to_string()),
+                        ..DrawDetails::default()
+                    },
+                });
+                s.text_draws.push(gfx::TextDraw {
                     text,
                     anchor_x: x,
                     anchor_y: y,
