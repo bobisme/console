@@ -12,6 +12,7 @@ may be newer than this skill.
 - [`rpc`](#rpc)
 - [`pack`](#pack)
 - [`serve`](#serve)
+- [`palette` commands](#palette-commands)
 - [`sprite` commands](#sprite-commands)
 - [`map` commands](#map-commands)
 - [`music` commands](#music-commands)
@@ -31,15 +32,17 @@ console playtest ...
 console rpc
 console pack <cart> -o <out.html> ...
 console serve <cart> ...
-console sprite <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke> ...
+console palette <show|quantize> ...
+console sprite <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke|export|import> ...
 console map <render|dump|lint|edit|poke> ...
 console music <score|lint|piano-roll|render|edit|import-abc> ...
 ```
 
 `-h` and `--help` are accepted at the top level or anywhere after a top-level
-subcommand. They print the relevant usage and exit 0; for `sprite`, `map`, and
-`music`, that usage covers the entire command family. Every image/audio render
-command below accepts equivalent `-o` and `--out` output-path forms.
+subcommand. They print the relevant usage and exit 0; for `palette`, `sprite`,
+`map`, and `music`, that usage covers the entire command family. Every
+image/audio render command below accepts equivalent `-o` and `--out`
+output-path forms.
 
 Top-level/family help exits 0. Invalid CLI syntax generally exits 2; cart load,
 runtime, assertion, or artifact failures generally exit 1.
@@ -146,6 +149,31 @@ Read one JSON-RPC 2.0 object per stdin line and emit one response per stdout
 line, flushed immediately. Blank input lines are ignored. Keep the process alive
 to load/step/inspect one session incrementally.
 
+## `palette` commands
+
+```text
+console palette show [-o|--out out.png] [--cell N]
+
+console palette quantize <input.png> (-o|--out) <output.png>
+  [--colors 1-63]
+  [--alpha-threshold 0-255]
+  [--dither none]
+  [--format text|pretty|json]
+```
+
+`show` writes the exact Apollo64 colors as an 8x8 swatch grid; `--cell`
+selects each swatch's pixel size and defaults to 16. With no output path it
+writes `apollo64.png`.
+
+`quantize` never resizes. It preserves transparent pixels, selects at most the
+explicit `--colors` budget from opaque indices 1-63, maps pixels
+deterministically, and reports selected indices plus color/error statistics.
+Alpha below `--alpha-threshold` becomes transparent. `--dither` accepts only
+`none`; unsupported modes fail rather than silently changing pixel clusters.
+The default budget is 16 colors and the default alpha threshold is 128.
+Report format precedence is explicit `--format`, then the `FORMAT` environment
+variable, then TTY-aware pretty or piped text output.
+
 ## `sprite` commands
 
 Targets are a declared sprite name, declared animation name, or raw tile rect
@@ -176,6 +204,9 @@ console sprite gif <cart> <anim> [--zoom Z]
   [--grid] [--anchor] (-o|--out) out.gif
 
 console sprite dump <cart> <target> [--frame N]
+
+console sprite export <cart> <target> [--frame N]
+  [--palette source] (-o|--out) out.png
 ```
 
 - `render`: one resolved frame/rect.
@@ -186,6 +217,7 @@ console sprite dump <cart> <target> [--frame N]
 - `ghost`: motion accumulation over every frame.
 - `gif`: declared animation timing in an animated GIF.
 - `dump`: palette-character rows with a `#` header suitable for `poke --stdin`.
+- `export`: exact-size source-index PNG; source color 0 is transparent.
 
 ### Lint
 
@@ -218,12 +250,25 @@ console sprite edit <cart> rotate <target> [--frame N]
   --cw|--ccw [--dry-run]
 console sprite edit <cart> copy <src> <dst> [--dry-run]
 console sprite edit <cart> clear <target> [--frame N] [--dry-run]
+
+console sprite import <cart> <target> [--frame N]
+  --input in.png
+  [--mapping exact|nearest]
+  [--alpha-threshold 0-255]
+  [--max-colors 1-63]
+  [--dry-run]
+  [--format text|pretty|json]
 ```
 
 `poke` requires exact height/width and valid palette characters; `--stdin`
 skips `#` comment lines. Edit targets accept sprite/anim/raw rect; copy endpoints
 accept `sprite[:frame]` or raw rect and must match size. Rotate requires a square
 region. Shift fills vacated pixels with color 0 unless `--wrap`.
+
+`import` also requires exact target dimensions. Exact mapping is the default
+and rejects non-Apollo RGB; nearest mapping must be explicit. `--max-colors`
+is a gate, not an implicit quantizer. Alpha below the threshold maps to source
+color 0. Dry runs report changed pixels/rows and never write.
 
 ## `map` commands
 
@@ -442,11 +487,12 @@ There is no `music_render` RPC: use `eval` to call `music(n)`, then `step` and
 Every operation that rewrites cart text is intentionally CLI-only:
 
 ```text
-sprite edit, sprite poke
+sprite edit, sprite poke, sprite import
 map edit, map poke
 music edit, music import-abc
 ```
 
-Run them between RPC sessions and reload the cart. Static `sprite gif` and raw
-`sprite dump` are also CLI-only. This boundary prevents a running session from
-silently disagreeing with a rewritten file.
+Run them between RPC sessions and reload the cart. Static `sprite gif`, PNG
+`sprite export`, palette commands, and raw `sprite dump` are also CLI-only.
+This boundary prevents a running session from silently disagreeing with a
+rewritten file.

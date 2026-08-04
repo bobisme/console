@@ -757,6 +757,55 @@ changed lines of `__sprites__`; every other byte of the cart file survives
 verbatim (text carts must stay git-diff friendly). `--dry-run` prints the
 would-be new hex lines instead of writing.
 
+### PNG and Apollo64 interchange (CLI only)
+
+```
+palette show [-o out.png] [--cell N]
+palette quantize <input.png> -o <output.png>
+  [--colors 1-63] [--alpha-threshold 0-255] [--dither none]
+  [--format text|pretty|json]
+sprite export <cart> <target> [--frame N] [--palette source] -o out.png
+sprite import <cart> <target> [--frame N] --input in.png
+  [--mapping exact|nearest] [--alpha-threshold 0-255]
+  [--max-colors 1-63] [--dry-run] [--format text|pretty|json]
+```
+
+`palette show` writes all 64 exact RGB entries in an 8x8 swatch grid.
+`palette quantize` preserves input dimensions and the alpha mask, maps every
+opaque pixel to a deterministic subset of Apollo indices 1-63, and reports
+the selected indices, source/output color counts, transparency count, and
+mean squared RGB error. Arbitrary RGB colors first collapse to their nearest
+Apollo64 bins; deterministic greedy selection then minimizes weighted RGB error
+over those at-most-63 bins, with lower indices winning ties. This bounds work
+independently of source-color cardinality. `--colors` is a hard 1-63 budget.
+`--dither` currently accepts only `none`: there is no implicit resize,
+dithering, or tracing.
+
+Report formatting follows the common CLI contract: an explicit `--format`
+wins, then `FORMAT=text|pretty|json`, then TTY detection (`pretty` on a terminal
+and `text` when piped).
+
+`sprite export` is deliberately a source-index image, not the checkerboard or
+`preview_palette` inspection render. Source index 0 becomes transparent;
+indices 1-63 become their exact Apollo RGB colors. An exact export/import
+round-trip therefore preserves every source index.
+
+`sprite import` requires PNG dimensions to equal the resolved target exactly.
+`--mapping exact` is the default and rejects any opaque RGB value not in
+Apollo64. `--mapping nearest` must be requested explicitly and maps opaque
+pixels to the nearest index 1-63 by squared RGB distance. Alpha below
+`--alpha-threshold` becomes source index 0; surviving partial alpha becomes
+opaque and is reported. Opaque Apollo index 0 is rejected because the text
+sheet cannot distinguish it from transparent source index 0. `--max-colors`
+gates the imported nontransparent index count rather than silently reducing
+it; use `palette quantize` for deliberate reduction.
+
+Import is a CLI-only mutation like `sprite poke`: `--dry-run` reports changed
+pixels and affected rows without writing, and a real write changes only the
+necessary `__sprites__` rows and reparses the complete cart before replacement.
+There are no PNG mutation RPC methods, so a live session never silently
+disagrees with its source file.
+
 ## Tile map agent tooling (PoC v1)
 
 Agents author the `__map__` grid as hex text with no way to see the 128x64

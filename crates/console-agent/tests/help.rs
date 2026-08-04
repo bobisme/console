@@ -18,7 +18,10 @@ fn top_level_help_is_complete_and_successful() {
         assert!(output.status.success(), "{flag} should exit successfully");
         assert!(output.stderr.is_empty(), "help should not write stderr");
         let text = stdout(&output);
-        assert!(text.contains("sprite <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke>"));
+        assert!(text.contains("palette <show|quantize>"));
+        assert!(text.contains(
+            "sprite <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke|export|import>"
+        ));
         assert!(text.contains("map <render|dump|lint|edit|poke>"));
         assert!(text.contains("music <score|lint|piano-roll|render|edit|import-abc>"));
         assert!(text.contains("playtest <cart> --scenario <scenario.json>"));
@@ -36,6 +39,7 @@ fn command_family_and_leaf_help_use_stdout_and_exit_zero() {
         (&["pack", "--help"][..], "console pack"),
         (&["serve", "--help"][..], "console serve"),
         (&["playtest", "--help"][..], "Scenario format (version 1)"),
+        (&["palette", "--help"][..], "console palette quantize"),
         (&["sprite", "--help"][..], "console sprite gif"),
         (&["sprite", "render", "--help"][..], "console sprite render"),
         (&["map", "--help"][..], "console map render"),

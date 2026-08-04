@@ -5,6 +5,7 @@
 //! Module boundaries are deliberate — `view.rs` and `transform.rs` are being
 //! developed independently; shared plumbing lives in this file only.
 
+pub mod png_io;
 pub mod transform;
 pub mod view;
 
@@ -12,7 +13,8 @@ use console_core::{Cart, GfxMeta, SpriteDef};
 
 /// Canonical command inventory used by generated top-level help.
 pub const COMMANDS: &[&str] = &[
-    "render", "strip", "onion", "diff", "ghost", "gif", "lint", "edit", "dump", "poke",
+    "render", "strip", "onion", "diff", "ghost", "gif", "lint", "edit", "dump", "poke", "export",
+    "import",
 ];
 
 /// What a `<target>` CLI argument resolved to: a named sprite (with its
@@ -153,6 +155,8 @@ pub fn cli_sprite(args: &[String]) -> i32 {
         | Some("lint") | Some("dump") | Some("gif") => view::cli_view(args),
         Some("edit") => transform::cli_edit(&args[1..]),
         Some("poke") => transform::cli_poke(&args[1..]),
+        Some("export") => png_io::cli_export(&args[1..]),
+        Some("import") => png_io::cli_import(&args[1..]),
         _ => {
             eprintln!("{SPRITE_USAGE}");
             2
@@ -173,4 +177,6 @@ usage:
   console sprite edit   <cart> <shift|flip|rotate|copy|clear> ... [--dry-run]
   console sprite dump   <cart> <target> [--frame N]
   console sprite poke   <cart> <target> [--frame N] (--rows <pixels,pixels,...> | --stdin) [--dry-run]
+  console sprite export <cart> <target> [--frame N] [--palette source] -o out.png
+  console sprite import <cart> <target> [--frame N] --input in.png [--mapping exact|nearest] [--alpha-threshold N] [--max-colors N] [--dry-run] [--format text|pretty|json]
   (targets: sprite name, anim name, or tile rect tx,ty,w,h)";

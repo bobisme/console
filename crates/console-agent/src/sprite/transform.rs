@@ -212,10 +212,35 @@ fn run_poke(
         }
     }
 
+    replace_region_values(text, &cart, (x0, y0, w as u32, h as u32), &values)
+}
+
+/// Replace a resolved sheet rectangle with exact palette indices, then use
+/// the same selective, reparse-before-write path as `sprite poke`.
+pub(crate) fn replace_region_values(
+    text: &str,
+    cart: &Cart,
+    rect: (u32, u32, u32, u32),
+    values: &[u8],
+) -> Result<EditResult, String> {
+    let (x0, y0, w, h) = rect;
+    let expected = (w * h) as usize;
+    if values.len() != expected {
+        return Err(format!(
+            "sprite pixel replacement expected {expected} value(s) for {w}x{h}, got {}",
+            values.len()
+        ));
+    }
+    if let Some((index, value)) = values.iter().enumerate().find(|(_, value)| **value > 63) {
+        return Err(format!(
+            "sprite pixel replacement value {value} at offset {index} is outside 0-63"
+        ));
+    }
+
     let mut sheet: SpriteSheet = *cart.sprites();
     for j in 0..h {
         for i in 0..w {
-            sheet[idx(x0 + i as u32, y0 + j as u32)] = values[j * w + i];
+            sheet[idx(x0 + i, y0 + j)] = values[(j * w + i) as usize];
         }
     }
 
@@ -230,7 +255,7 @@ fn run_poke(
 }
 
 /// The outcome of computing an edit against cart text, before any I/O.
-enum EditResult {
+pub(crate) enum EditResult {
     /// No pixel in the sheet actually changed; nothing to write.
     Unchanged,
     /// `new_text` is the full rewritten cart text (only `__sprites__` lines

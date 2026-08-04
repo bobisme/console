@@ -107,6 +107,32 @@ Pixel-art heuristics:
 
 ## Author pixels safely
 
+For an external pixel editor or generated bitmap, use an explicit PNG
+round-trip. Export is raw source-palette art without checkerboard decoration:
+
+```bash
+console sprite export game.cart player --frame 0 --palette source \
+  -o /tmp/player.png
+console sprite import game.cart player --frame 0 --input /tmp/player.png \
+  --mapping exact --max-colors 6 --dry-run
+console sprite import game.cart player --frame 0 --input /tmp/player.png \
+  --mapping exact --max-colors 6
+```
+
+PNG dimensions must equal the target exactly. If source art is not already
+Apollo64, reduce it deliberately first—never make import guess at a resize or
+color budget:
+
+```bash
+console palette show -o /tmp/apollo64.png --cell 16
+console palette quantize /tmp/concept-crop.png -o /tmp/player-apollo.png \
+  --colors 6 --alpha-threshold 128 --dither none --format json
+```
+
+Inspect the quantized preview before import. Prefer `--mapping exact` for the
+final write; `--mapping nearest` is useful for a controlled one-step conversion
+but makes every chosen index less explicit.
+
 Use `sprite dump` to extract exact palette rows and `sprite poke --stdin` to
 write them back. The dump header begins with `#`, so it can pass through stdin.
 
@@ -222,7 +248,8 @@ composed body parts.
 
 Use all three evidence layers:
 
-1. **Data:** `sprite dump` confirms exact indices and dimensions.
+1. **Data:** `sprite dump` confirms exact indices and dimensions;
+   `sprite export` confirms the editor-facing source image round-trips.
 2. **Numbers:** `sprite lint` measures area, centroid/bbox drift, changed pixels,
    and one-frame-only colors.
 3. **Vision:** render, strip, onion, diff, ghost, and GIF views expose actual

@@ -10,10 +10,10 @@ make it unusual:
    the cart's source stays readable and editable inside the HTML.
 2. **AI agents are first-class developers, not an afterthought.** There is
    no visual editor. An agent (or a human) writes carts as plain text and
-   drives the console headlessly through `console`: step frames with
-   scripted input, take a screenshot, dump the framebuffer as text, inspect
-   audio as data, eval Lua expressions — all without a GPU, a display, or
-   ears.
+    drives the console headlessly through `console`: step frames with
+    scripted input, take a screenshot, exchange sprites with PNG editors,
+    quantize artwork to Apollo64, dump the framebuffer as text, inspect audio
+    as data, eval Lua expressions — all without a GPU, a display, or ears.
 
 Both are anchored by a determinism contract: **same cart + same seed + same
 per-frame input ⇒ byte-identical framebuffers and audio samples**, on native
