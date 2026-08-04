@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::palette::{ReportFormat, parse_report_format, resolve_report_format};
 
 mod lua;
+mod sprites;
 
 pub const BUILD_USAGE: &str = "console build <project|console.toml> [-o|--out out.cart] [--check] [--format text|pretty|json]";
 
@@ -35,9 +36,48 @@ pub(crate) struct Manifest {
     pub cart: CartConfig,
     pub lua: LuaConfig,
     #[serde(default)]
+    pub sprites: Vec<SpriteAssetConfig>,
+    #[serde(default)]
     pub build: BuildConfig,
     #[serde(default)]
     pub sections: BTreeMap<String, PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SpriteAssetConfig {
+    pub name: String,
+    pub source: PathBuf,
+    pub tile: [u32; 2],
+    pub anchor: Option<[i32; 2]>,
+    #[serde(default)]
+    pub mapping: SpriteMapping,
+    #[serde(default = "default_alpha_threshold")]
+    pub alpha_threshold: u8,
+    pub max_colors: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SpriteMapping {
+    #[default]
+    Exact,
+    Nearest,
+    Quantize,
+}
+
+impl SpriteMapping {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Nearest => "nearest",
+            Self::Quantize => "quantize",
+        }
+    }
+}
+
+fn default_alpha_threshold() -> u8 {
+    128
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,7 +130,27 @@ pub struct CompiledProject {
     pub default_output: PathBuf,
     pub inputs: Vec<PathBuf>,
     pub lua_sources: Vec<LuaSourceMap>,
+    pub sprite_assets: Vec<SpriteAssetReport>,
     pub content_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SpriteAssetReport {
+    pub name: String,
+    pub source: PathBuf,
+    pub tile: [u32; 2],
+    pub size_tiles: [u32; 2],
+    pub size_pixels: [u32; 2],
+    pub anchor: [i32; 2],
+    pub mapping: String,
+    pub alpha_threshold: u8,
+    pub color_budget: Option<usize>,
+    pub source_colors: usize,
+    pub output_colors: usize,
+    pub palette_indices: Vec<u8>,
+    pub transparent_pixels: usize,
+    pub partial_alpha_pixels: usize,
+    pub mean_squared_error: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -114,6 +174,7 @@ struct BuildReport {
     content_id: String,
     inputs: Vec<String>,
     lua_sources: Vec<LuaSourceMap>,
+    sprite_assets: Vec<SpriteAssetReport>,
 }
 
 pub fn cli_build(args: &[String]) -> i32 {
@@ -174,6 +235,7 @@ pub fn cli_build(args: &[String]) -> i32 {
             .map(|path| path.display().to_string())
             .collect(),
         lua_sources: compiled.lua_sources,
+        sprite_assets: compiled.sprite_assets,
     };
     print_build_report(options.format, &report);
     0
@@ -254,6 +316,28 @@ pub fn compile_project(input: &Path) -> Result<CompiledProject, String> {
         sections.insert(name.clone(), body);
     }
 
+    let sprite_assets = if manifest.sprites.is_empty() {
+        Vec::new()
+    } else {
+        if sections.contains_key("sprites") {
+            return Err(
+                "[sections].sprites cannot be combined with [[sprites]] assets; remove the raw sprite section or the asset list"
+                    .into(),
+            );
+        }
+        let assembled = sprites::assemble(&project_root, &manifest.sprites)?;
+        inputs.extend(assembled.inputs);
+        sections.insert("sprites".into(), assembled.sheet);
+        let authored_meta = sections.remove("gfx_meta").unwrap_or_default();
+        let gfx_meta = if authored_meta.is_empty() {
+            assembled.gfx_meta
+        } else {
+            format!("{}\n{}", assembled.gfx_meta, authored_meta)
+        };
+        sections.insert("gfx_meta".into(), gfx_meta);
+        assembled.assets
+    };
+
     inputs.sort();
     inputs.dedup();
     let cart_text = render_cart(&sections);
@@ -268,6 +352,7 @@ pub fn compile_project(input: &Path) -> Result<CompiledProject, String> {
         default_output,
         inputs,
         lua_sources,
+        sprite_assets,
         content_id,
     })
 }
@@ -642,6 +727,22 @@ fn print_build_report(format: ReportFormat, report: &BuildReport) {
                     source.generated_end_line
                 );
             }
+            if !report.sprite_assets.is_empty() {
+                println!("  sprite assets:");
+                for asset in &report.sprite_assets {
+                    println!(
+                        "    {}: {} -> tile {},{} size {}x{} ({}, {} colors)",
+                        asset.name,
+                        asset.source.display(),
+                        asset.tile[0],
+                        asset.tile[1],
+                        asset.size_tiles[0],
+                        asset.size_tiles[1],
+                        asset.mapping,
+                        asset.output_colors
+                    );
+                }
+            }
         }
         ReportFormat::Text => {
             println!("command={}", report.command);
@@ -661,6 +762,19 @@ fn print_build_report(format: ReportFormat, report: &BuildReport) {
                     source.source.display(),
                     source.generated_start_line,
                     source.generated_end_line
+                );
+            }
+            for asset in &report.sprite_assets {
+                println!(
+                    "sprite_asset={}|{}|{},{}|{}x{}|{}|{}",
+                    asset.name,
+                    asset.source.display(),
+                    asset.tile[0],
+                    asset.tile[1],
+                    asset.size_tiles[0],
+                    asset.size_tiles[1],
+                    asset.mapping,
+                    asset.output_colors
                 );
             }
         }

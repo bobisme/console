@@ -83,7 +83,8 @@ and compile the deterministic distribution cart:
 my-game/
 ├── console.toml
 ├── lua/main.lua
-├── sprites.txt
+├── art/player.png
+├── art/enemies.png
 ├── map.txt
 ├── gfx-meta.txt
 ├── instruments.txt
@@ -98,6 +99,10 @@ console build my-game --check
 
 The default output is `my-game/build/game.cart`; `[build].output` or `-o`
 selects another path. See the project-manifest contract in [SPEC.md](SPEC.md).
+PNG assets can be named and placed explicitly with `[[sprites]]`; the build
+maps them through Apollo64 and generates both `__sprites__` and matching
+`__gfx_meta__` declarations. Exact conversion is the default, while lossy
+nearest or budgeted quantization must be requested in the manifest.
 
 Run a cart headlessly for 90 frames (idle 30, hold right 30, idle 30) and
 take a 4x screenshot — this is exactly how an agent iterates on a cart:

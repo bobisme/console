@@ -394,8 +394,23 @@ root = "lua"                      # module root; used by module bundling
 [build]
 output = "build/game.cart"        # optional; this is the default
 
+[[sprites]]
+name = "player"                   # [a-z0-9_]+; generated gfx name
+source = "art/player.png"         # path confined to the project
+tile = [2, 4]                     # explicit sheet tile coordinate
+anchor = [8, 15]                  # optional; default is bottom-center
+mapping = "exact"                 # exact (default), nearest, or quantize
+alpha_threshold = 128             # optional; default 128
+max_colors = 8                    # optional gate; quantize defaults to 16
+
+[[sprites]]
+name = "moth_strip"
+source = "art/moth-strip.png"
+tile = [4, 4]
+mapping = "quantize"
+max_colors = 6
+
 [sections]
-sprites = "sprites.txt"
 map = "map.txt"
 gfx_meta = "gfx-meta.txt"
 instruments = "instruments.txt"
@@ -403,6 +418,29 @@ sfx = "sfx.txt"
 music = "music.txt"
 design_notes = "notes.txt"        # unknown cart sections remain allowed
 ```
+
+Each PNG must be a nonzero multiple of 8 pixels in both dimensions and fit at
+its explicit `tile` coordinate on the 16 by 16 tile sheet. The compiler never
+resizes or dithers. Asset names and occupied tile rectangles must be unique;
+placement is never inferred from manifest or filesystem order. Reordering the
+`[[sprites]]` tables therefore produces the same cart.
+
+`exact` accepts only Apollo64 RGB values and requires transparency to be alpha,
+because opaque palette index 0 cannot be distinguished from sprite
+transparency. `nearest` is an explicit lossy mapping to the closest opaque
+Apollo64 entry. `quantize` is an explicit deterministic reduction to
+`max_colors` (16 when omitted). For exact/nearest assets, `max_colors` is a
+validation gate rather than an implicit conversion. Pixels with alpha below
+`alpha_threshold` become source index 0; partial alpha at or above it becomes
+opaque and is counted in the build report.
+
+When any `[[sprites]]` assets exist, `[sections].sprites` is rejected rather
+than ambiguously layering two sheets. The compiler emits name-sorted `sprite`
+declarations before an optional authored `[sections].gfx_meta` body, so authored
+animations may refer to generated sprites. Duplicate authored/generated names
+are rejected by final cart validation. The `sprite_assets` report records each
+canonical PNG source, placement, dimensions, anchor, conversion policy, color
+budget and resulting palette indices.
 
 `lua.entry` must be inside the canonical `lua.root`. Project Lua may use only
 literal module imports in either of these forms:

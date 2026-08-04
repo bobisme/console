@@ -133,6 +133,36 @@ Inspect the quantized preview before import. Prefer `--mapping exact` for the
 final write; `--mapping nearest` is useful for a controlled one-step conversion
 but makes every chosen index less explicit.
 
+### PNGs in multi-file projects
+
+For project source trees, make placement reproducible in `console.toml` instead
+of importing into a generated cart:
+
+```toml
+[[sprites]]
+name = "player"
+source = "art/player.png"
+tile = [2, 4]
+anchor = [8, 15]
+mapping = "exact"
+max_colors = 8
+
+[[sprites]]
+name = "smoke_strip"
+source = "art/smoke.png"
+tile = [4, 4]
+mapping = "quantize"
+max_colors = 5
+```
+
+`console build` generates the full sheet and named graphics metadata. PNG
+dimensions must be tile-aligned; entries need explicit nonoverlapping
+placements. Exact is safe-by-default. Choose `nearest` or `quantize` only when
+the loss is intentional, and inspect `sprite_assets` in the JSON build report
+to verify the selected palette indices and color counts. Keep authored `anim`
+lines in the file selected by `[sections].gfx_meta`; they may refer to these
+generated sprite names.
+
 Use `sprite dump` to extract exact palette rows and `sprite poke --stdin` to
 write them back. The dump header begins with `#`, so it can pass through stdin.
 

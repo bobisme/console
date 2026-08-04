@@ -94,6 +94,9 @@ inspection methods never rewrite the cart file.
 - Use `sprite export`/`import` to round-trip exact-size assets through PNG
   editors. Use `palette quantize` explicitly before import when source art is
   not already Apollo64; never expect import to resize or silently reduce it.
+- In a `console.toml` project, prefer explicit `[[sprites]]` PNG placements so
+  `console build` deterministically generates the sheet and named metadata.
+  Keep exact mapping as the default; opt into nearest/quantize deliberately.
 - Use `map dump`/`poke` and `map edit` for cell grids and regions.
 - Use `music edit` and `music import-abc` instead of manually shifting tracker
   rows or respelling every note.

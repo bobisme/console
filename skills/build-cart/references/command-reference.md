@@ -59,6 +59,9 @@ console build <project|console.toml>
 ```
 
 Compile a version-1 `console.toml` project into the normal text cart format.
+The manifest may repeat `[[sprites]]` to place tile-aligned PNGs explicitly;
+build generates their sheet and named graphics metadata using exact, nearest,
+or deterministic quantized Apollo64 conversion.
 The argument may be the project directory or its explicit manifest. With no
 `-o`, the output is `[build].output`, defaulting to `build/game.cart` under the
 project. An explicit output is interpreted as the supplied CLI path.
@@ -69,9 +72,12 @@ atomically replace the output. Manifest inputs must be relative UTF-8 files
 confined to the project root, including after symlink resolution. See
 [platform and cart format](platform-and-cart-format.md#multi-file-projects) for
 the manifest schema and separated-section rules. Every report format includes
-canonical inputs and Lua source provenance. JSON exposes `lua_sources` entries
+canonical inputs, Lua source provenance, and PNG sprite provenance. JSON
+exposes `lua_sources` entries
 with module/source names plus original and generated line ranges; text emits
-one `lua_source=module|path|start-end` line per source.
+one `lua_source=module|path|start-end` line per source. JSON `sprite_assets`
+entries record source, placement, dimensions, anchor, conversion policy, color
+budget and final palette indices; text emits one `sprite_asset=` line each.
 
 ## `run`
 

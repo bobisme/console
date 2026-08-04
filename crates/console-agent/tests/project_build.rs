@@ -31,6 +31,14 @@ impl Project {
         }
         std::fs::write(path, contents).unwrap();
     }
+
+    fn write_bytes(&self, relative: &str, contents: &[u8]) {
+        let path = self.0.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, contents).unwrap();
+    }
 }
 
 impl Drop for Project {
@@ -48,6 +56,26 @@ fn run(args: &[&str]) -> Output {
 
 fn path(path: &Path) -> &str {
     path.to_str().unwrap()
+}
+
+fn set_sprite_manifest(project: &Project, assets: &str, extra_sections: &str) {
+    project.write(
+        "console.toml",
+        &format!(
+            "manifest_version = 1\n\n[cart]\ntitle = \"Sprite Build Test\"\n\n[lua]\nentry = \"lua/main.lua\"\n\n[build]\noutput = \"dist/test.cart\"\n\n{assets}\n[sections]\nnotes = \"notes.txt\"\n{extra_sections}"
+        ),
+    );
+}
+
+fn write_png(project: &Project, relative: &str, rgba: &[u8], width: u32, height: u32) {
+    project.write_bytes(
+        relative,
+        &console_agent::palette::encode_png_rgba(rgba, width, height),
+    );
+}
+
+fn solid_rgba(width: u32, height: u32, rgb: [u8; 3], alpha: u8) -> Vec<u8> {
+    [rgb[0], rgb[1], rgb[2], alpha].repeat((width * height) as usize)
 }
 
 #[test]
@@ -281,6 +309,313 @@ fn concatenation_before_global_require_is_bundled() {
         console.get_global("label_loaded").unwrap().as_boolean(),
         Some(true)
     );
+}
+
+#[test]
+fn png_assets_build_a_named_sheet_with_all_mapping_modes_and_authored_animation() {
+    use console_core::{PALETTE, SHEET_W};
+
+    let project = Project::new();
+    let assets = r#"
+[[sprites]]
+name = "quant_blob"
+source = "art/quant.png"
+tile = [4, 2]
+mapping = "quantize"
+max_colors = 2
+
+[[sprites]]
+name = "hero"
+source = "art/hero.png"
+tile = [1, 2]
+anchor = [3, 7]
+mapping = "exact"
+max_colors = 1
+
+[[sprites]]
+name = "nearest_blob"
+source = "art/nearest.png"
+tile = [3, 2]
+mapping = "nearest"
+max_colors = 1
+"#;
+    set_sprite_manifest(&project, assets, "gfx_meta = \"gfx-meta.txt\"\n");
+    project.write("gfx-meta.txt", "anim hero.idle frames=0 fps=6 loop\n");
+
+    let mut hero = solid_rgba(8, 8, PALETTE[14], 255);
+    hero[..4].copy_from_slice(&[0, 0, 0, 0]);
+    write_png(&project, "art/hero.png", &hero, 8, 8);
+    write_png(
+        &project,
+        "art/nearest.png",
+        &solid_rgba(8, 8, [1, 2, 3], 255),
+        8,
+        8,
+    );
+    let quant_colors = [[240, 10, 20], [10, 240, 20], [10, 20, 240], [220, 180, 40]];
+    let mut quant = Vec::new();
+    for pixel in 0..128 {
+        let rgb = quant_colors[pixel % quant_colors.len()];
+        quant.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+    }
+    write_png(&project, "art/quant.png", &quant, 16, 8);
+
+    let compiled = console_agent::project::compile_project(&project.0).unwrap();
+    assert_eq!(
+        compiled
+            .sprite_assets
+            .iter()
+            .map(|asset| asset.name.as_str())
+            .collect::<Vec<_>>(),
+        ["hero", "nearest_blob", "quant_blob"]
+    );
+    let cart = console_core::Cart::parse(&compiled.cart_text).unwrap();
+    let hero_def = cart.gfx_meta().sprite("hero").unwrap();
+    assert_eq!(hero_def.rect, (1, 2));
+    assert_eq!(hero_def.size, (1, 1));
+    assert_eq!(hero_def.anchor, (3, 7));
+    assert!(cart.gfx_meta().anim("hero.idle").is_some());
+    assert_eq!(cart.sprites()[2 * 8 * SHEET_W + 8], 0);
+    assert_eq!(cart.sprites()[2 * 8 * SHEET_W + 9], 14);
+    assert_eq!(
+        cart.sprites()[2 * 8 * SHEET_W + 3 * 8],
+        console_agent::palette::nearest_opaque_index([1, 2, 3])
+    );
+    let expected_quant = console_agent::palette::quantize_rgba(&quant, 2, 128)
+        .unwrap()
+        .indices;
+    let mut actual_quant = Vec::new();
+    for y in 0..8 {
+        let start = (2 * 8 + y) * SHEET_W + 4 * 8;
+        actual_quant.extend_from_slice(&cart.sprites()[start..start + 16]);
+    }
+    assert_eq!(actual_quant, expected_quant);
+    let quant_asset = compiled
+        .sprite_assets
+        .iter()
+        .find(|asset| asset.name == "quant_blob")
+        .unwrap();
+    assert_eq!(quant_asset.mapping, "quantize");
+    assert!(quant_asset.output_colors <= 2);
+    assert_eq!(quant_asset.size_tiles, [2, 1]);
+
+    let first = compiled.cart_text;
+    let reordered = r#"
+[[sprites]]
+name = "nearest_blob"
+source = "art/nearest.png"
+tile = [3, 2]
+mapping = "nearest"
+max_colors = 1
+
+[[sprites]]
+name = "hero"
+source = "art/hero.png"
+tile = [1, 2]
+anchor = [3, 7]
+mapping = "exact"
+max_colors = 1
+
+[[sprites]]
+name = "quant_blob"
+source = "art/quant.png"
+tile = [4, 2]
+mapping = "quantize"
+max_colors = 2
+"#;
+    set_sprite_manifest(&project, reordered, "gfx_meta = \"gfx-meta.txt\"\n");
+    let second = console_agent::project::compile_project(&project.0).unwrap();
+    assert_eq!(second.cart_text, first);
+
+    let built = run(&["build", path(&project.0), "--format", "json"]);
+    assert!(built.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
+    assert_eq!(report["sprite_assets"][0]["name"], "hero");
+    assert_eq!(report["sprite_assets"][2]["color_budget"], 2);
+}
+
+#[test]
+fn png_assets_reject_invalid_dimensions_bounds_duplicates_and_overlaps() {
+    use console_core::PALETTE;
+
+    let invalid_size = Project::new();
+    set_sprite_manifest(
+        &invalid_size,
+        "[[sprites]]\nname=\"bad\"\nsource=\"bad.png\"\ntile=[0,0]\n",
+        "",
+    );
+    write_png(
+        &invalid_size,
+        "bad.png",
+        &solid_rgba(7, 8, PALETTE[2], 255),
+        7,
+        8,
+    );
+    let error = console_agent::project::compile_project(&invalid_size.0).unwrap_err();
+    assert!(error.contains("nonzero multiples of 8"), "{error}");
+
+    let bounds = Project::new();
+    set_sprite_manifest(
+        &bounds,
+        "[[sprites]]\nname=\"wide\"\nsource=\"wide.png\"\ntile=[15,15]\n",
+        "",
+    );
+    write_png(
+        &bounds,
+        "wide.png",
+        &solid_rgba(16, 8, PALETTE[2], 255),
+        16,
+        8,
+    );
+    let error = console_agent::project::compile_project(&bounds.0).unwrap_err();
+    assert!(error.contains("outside the 16x16 sprite sheet"), "{error}");
+
+    let duplicate = Project::new();
+    set_sprite_manifest(
+        &duplicate,
+        "[[sprites]]\nname=\"same\"\nsource=\"pixel.png\"\ntile=[0,0]\n\n[[sprites]]\nname=\"same\"\nsource=\"pixel.png\"\ntile=[1,0]\n",
+        "",
+    );
+    write_png(
+        &duplicate,
+        "pixel.png",
+        &solid_rgba(8, 8, PALETTE[2], 255),
+        8,
+        8,
+    );
+    let error = console_agent::project::compile_project(&duplicate.0).unwrap_err();
+    assert!(error.contains("duplicate [[sprites]] name"), "{error}");
+
+    let overlap = Project::new();
+    set_sprite_manifest(
+        &overlap,
+        "[[sprites]]\nname=\"alpha\"\nsource=\"pixel.png\"\ntile=[2,3]\n\n[[sprites]]\nname=\"beta\"\nsource=\"pixel.png\"\ntile=[2,3]\n",
+        "",
+    );
+    write_png(
+        &overlap,
+        "pixel.png",
+        &solid_rgba(8, 8, PALETTE[2], 255),
+        8,
+        8,
+    );
+    let error = console_agent::project::compile_project(&overlap.0).unwrap_err();
+    assert!(
+        error.contains("overlaps sprite \"alpha\" at tile 2,3"),
+        "{error}"
+    );
+}
+
+#[test]
+fn png_assets_require_explicit_lossy_conversion_and_enforce_color_budgets() {
+    use console_core::PALETTE;
+
+    let arbitrary = Project::new();
+    set_sprite_manifest(
+        &arbitrary,
+        "[[sprites]]\nname=\"bad_rgb\"\nsource=\"bad.png\"\ntile=[0,0]\n",
+        "",
+    );
+    write_png(
+        &arbitrary,
+        "bad.png",
+        &solid_rgba(8, 8, [1, 2, 3], 255),
+        8,
+        8,
+    );
+    let error = console_agent::project::compile_project(&arbitrary.0).unwrap_err();
+    assert!(error.contains("non-Apollo RGB"), "{error}");
+
+    let opaque_zero = Project::new();
+    set_sprite_manifest(
+        &opaque_zero,
+        "[[sprites]]\nname=\"zero\"\nsource=\"zero.png\"\ntile=[0,0]\n",
+        "",
+    );
+    write_png(
+        &opaque_zero,
+        "zero.png",
+        &solid_rgba(8, 8, PALETTE[0], 255),
+        8,
+        8,
+    );
+    let error = console_agent::project::compile_project(&opaque_zero.0).unwrap_err();
+    assert!(error.contains("opaque Apollo index 0"), "{error}");
+
+    let budget = Project::new();
+    set_sprite_manifest(
+        &budget,
+        "[[sprites]]\nname=\"too_many\"\nsource=\"two.png\"\ntile=[0,0]\nmax_colors=1\n",
+        "",
+    );
+    let mut two = Vec::new();
+    for pixel in 0..64 {
+        let rgb = PALETTE[2 + pixel % 2];
+        two.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+    }
+    write_png(&budget, "two.png", &two, 8, 8);
+    let error = console_agent::project::compile_project(&budget.0).unwrap_err();
+    assert!(error.contains("exceeding max_colors 1"), "{error}");
+}
+
+#[test]
+fn png_assets_reject_a_competing_raw_sheet_and_duplicate_authored_metadata() {
+    use console_core::PALETTE;
+
+    let raw = Project::new();
+    set_sprite_manifest(
+        &raw,
+        "[[sprites]]\nname=\"hero\"\nsource=\"hero.png\"\ntile=[0,0]\n",
+        "sprites = \"sprites.txt\"\n",
+    );
+    write_png(&raw, "hero.png", &solid_rgba(8, 8, PALETTE[2], 255), 8, 8);
+    raw.write("sprites.txt", "0\n");
+    let error = console_agent::project::compile_project(&raw.0).unwrap_err();
+    assert!(
+        error.contains("cannot be combined with [[sprites]]"),
+        "{error}"
+    );
+
+    let duplicate_meta = Project::new();
+    set_sprite_manifest(
+        &duplicate_meta,
+        "[[sprites]]\nname=\"hero\"\nsource=\"hero.png\"\ntile=[0,0]\n",
+        "gfx_meta = \"gfx-meta.txt\"\n",
+    );
+    write_png(
+        &duplicate_meta,
+        "hero.png",
+        &solid_rgba(8, 8, PALETTE[2], 255),
+        8,
+        8,
+    );
+    duplicate_meta.write("gfx-meta.txt", "sprite hero rect=1,1 size=1x1\n");
+    let error = console_agent::project::compile_project(&duplicate_meta.0).unwrap_err();
+    assert!(error.contains("duplicate sprite name \"hero\""), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn png_asset_symlinks_cannot_escape_the_project() {
+    use console_core::PALETTE;
+    use std::os::unix::fs::symlink;
+
+    let project = Project::new();
+    set_sprite_manifest(
+        &project,
+        "[[sprites]]\nname=\"escape\"\nsource=\"escape.png\"\ntile=[0,0]\n",
+        "",
+    );
+    let outside = project.0.with_extension("outside.png");
+    std::fs::write(
+        &outside,
+        console_agent::palette::encode_png_rgba(&solid_rgba(8, 8, PALETTE[2], 255), 8, 8),
+    )
+    .unwrap();
+    symlink(&outside, project.0.join("escape.png")).unwrap();
+    let error = console_agent::project::compile_project(&project.0).unwrap_err();
+    assert!(error.contains("escapes project root"), "{error}");
+    std::fs::remove_file(outside).unwrap();
 }
 
 #[test]

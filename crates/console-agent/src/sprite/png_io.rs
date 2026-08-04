@@ -199,7 +199,7 @@ fn export_rgba(cart: &Cart, rect: (u32, u32, u32, u32)) -> (Vec<u8>, u32, u32) {
     (rgba, width, height)
 }
 
-fn map_import_pixels(
+pub(crate) fn map_import_pixels(
     rgba: &[u8],
     mapping: &str,
     alpha_threshold: u8,

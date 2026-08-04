@@ -113,8 +113,16 @@ root = "lua"
 [build]
 output = "build/game.cart"
 
+[[sprites]]
+name = "player"
+source = "art/player.png"
+tile = [2, 4]
+anchor = [8, 15]
+mapping = "exact"
+alpha_threshold = 128
+max_colors = 8
+
 [sections]
-sprites = "sprites.txt"
 map = "map.txt"
 gfx_meta = "gfx-meta.txt"
 instruments = "instruments.txt"
@@ -143,6 +151,25 @@ capability is added. Build reports map generated Lua line ranges back to each
 canonical source; syntax failures already name the original file and line.
 Names beginning `__console_` are reserved for generated internals and fail the
 build rather than risking a lexical collision.
+
+Repeat `[[sprites]]` for PNG assets. Every asset has a stable `[a-z0-9_]+`
+name, a project-relative `source`, and explicit `tile = [x, y]` placement.
+Dimensions must be nonzero multiples of 8 and the occupied tile rectangles may
+not overlap or leave the 16x16 sheet. `anchor` is optional and defaults to
+bottom-center. Tables are emitted name-sorted, so reordering them does not move
+or rename art.
+
+`mapping = "exact"` is the default and rejects non-Apollo64 RGB plus opaque
+palette index 0. `nearest` is explicit lossy nearest-color conversion;
+`quantize` is explicit deterministic budgeted conversion and defaults to 16
+colors unless `max_colors` is set. On exact/nearest assets, `max_colors` is only
+a gate. `alpha_threshold` defaults to 128. No mode resizes or dithers.
+
+PNG assets generate `__sprites__` plus named `sprite` declarations in
+`__gfx_meta__`. Do not also set `[sections].sprites`. An authored
+`[sections].gfx_meta` may add animations and other nonduplicate declarations;
+the final cart parser checks all references and duplicate names. JSON build
+reports expose conversion and placement details under `sprite_assets`.
 
 Paths in the manifest are relative and cannot escape the project root through
 `..` or symlinks. Every section source is UTF-8 and contains only the section
