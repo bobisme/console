@@ -323,6 +323,18 @@ Available pure Lua facilities include normal table/string/math operations,
 io os debug package require dofile loadfile load loadstring
 ```
 
+That list describes the runtime and hand-authored cart chunk: there is no host
+module loader or filesystem. A `console.toml` project may nevertheless split
+Lua into static modules. `console build` recognizes only literal
+`require("game.player")` and `require 'game.player'`, resolves them under
+`[lua].root`, and compiles them into private cached closures. The generated
+loader is lexical, so `require` and `package` remain `nil` globals at runtime.
+Modules keep local scope, return one cached value, execute once, and return
+`true` when they have no explicit return. Dynamic imports and cycles fail the
+build. Keep the generated namespace free: identifiers beginning `__console_`
+are reserved and rejected. See [platform and cart format](platform-and-cart-format.md#multi-file-projects)
+for the manifest and diagnostics contract.
+
 Do not use execution order from `pairs` where it can change state, rendering,
 or sound. Prefer arrays/`ipairs`, numeric `for`, or a sorted explicit key list.
 Do not derive behavior from host time. Use `t`, frame counters, and deterministic

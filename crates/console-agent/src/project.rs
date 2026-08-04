@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::palette::{ReportFormat, parse_report_format, resolve_report_format};
 
+mod lua;
+
 pub const BUILD_USAGE: &str = "console build <project|console.toml> [-o|--out out.cart] [--check] [--format text|pretty|json]";
 
 const MANIFEST_NAME: &str = "console.toml";
@@ -87,7 +89,18 @@ pub struct CompiledProject {
     pub project_root: PathBuf,
     pub default_output: PathBuf,
     pub inputs: Vec<PathBuf>,
+    pub lua_sources: Vec<LuaSourceMap>,
     pub content_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LuaSourceMap {
+    pub module: String,
+    pub source: PathBuf,
+    pub source_start_line: usize,
+    pub source_end_line: usize,
+    pub generated_start_line: usize,
+    pub generated_end_line: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -100,6 +113,7 @@ struct BuildReport {
     bytes: usize,
     content_id: String,
     inputs: Vec<String>,
+    lua_sources: Vec<LuaSourceMap>,
 }
 
 pub fn cli_build(args: &[String]) -> i32 {
@@ -159,6 +173,7 @@ pub fn cli_build(args: &[String]) -> i32 {
             .iter()
             .map(|path| path.display().to_string())
             .collect(),
+        lua_sources: compiled.lua_sources,
     };
     print_build_report(options.format, &report);
     0
@@ -220,11 +235,10 @@ pub fn compile_project(input: &Path) -> Result<CompiledProject, String> {
     let mut sections = BTreeMap::<String, String>::new();
     sections.insert("meta".into(), render_meta(&manifest.cart)?);
 
-    let lua_path = resolve_input(&project_root, &manifest.lua.entry, "lua.entry")?;
-    let lua = read_source(&lua_path, "Lua entry")?;
-    reject_section_markers(&lua, &lua_path)?;
-    inputs.push(lua_path);
-    sections.insert("lua".into(), lua);
+    let lua = lua::bundle(&project_root, &manifest.lua)?;
+    inputs.extend(lua.inputs);
+    let lua_sources = lua.sources;
+    sections.insert("lua".into(), lua.source);
 
     for (name, relative) in &manifest.sections {
         validate_section_name(name)?;
@@ -253,6 +267,7 @@ pub fn compile_project(input: &Path) -> Result<CompiledProject, String> {
         project_root,
         default_output,
         inputs,
+        lua_sources,
         content_id,
     })
 }
@@ -351,7 +366,7 @@ fn render_meta(config: &CartConfig) -> Result<String, String> {
         .join("\n"))
 }
 
-fn resolve_input(root: &Path, relative: &Path, label: &str) -> Result<PathBuf, String> {
+pub(super) fn resolve_input(root: &Path, relative: &Path, label: &str) -> Result<PathBuf, String> {
     validate_relative(relative, label)?;
     let path = root.join(relative);
     let resolved = std::fs::canonicalize(&path)
@@ -415,7 +430,7 @@ fn resolve_output(root: &Path, relative: &Path) -> Result<PathBuf, String> {
     Ok(output)
 }
 
-fn validate_relative(path: &Path, label: &str) -> Result<(), String> {
+pub(super) fn validate_relative(path: &Path, label: &str) -> Result<(), String> {
     if path.as_os_str().is_empty() || path.is_absolute() {
         return Err(format!("{label} must be a non-empty relative path"));
     }
@@ -430,7 +445,7 @@ fn validate_relative(path: &Path, label: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn read_source(path: &Path, label: &str) -> Result<String, String> {
+pub(super) fn read_source(path: &Path, label: &str) -> Result<String, String> {
     let source = std::fs::read_to_string(path)
         .map_err(|error| format!("cannot read {label} {} as UTF-8: {error}", path.display()))?;
     Ok(normalize_body(&source))
@@ -444,7 +459,7 @@ fn normalize_body(source: &str) -> String {
         .to_string()
 }
 
-fn reject_section_markers(source: &str, path: &Path) -> Result<(), String> {
+pub(super) fn reject_section_markers(source: &str, path: &Path) -> Result<(), String> {
     for (line_index, line) in source.lines().enumerate() {
         if section_marker(line).is_some() {
             return Err(format!(
@@ -617,6 +632,16 @@ fn print_build_report(format: ReportFormat, report: &BuildReport) {
             for input in &report.inputs {
                 println!("    {input}");
             }
+            println!("  Lua sources:");
+            for source in &report.lua_sources {
+                println!(
+                    "    {}: {} (generated lines {}-{})",
+                    source.module,
+                    source.source.display(),
+                    source.generated_start_line,
+                    source.generated_end_line
+                );
+            }
         }
         ReportFormat::Text => {
             println!("command={}", report.command);
@@ -628,6 +653,15 @@ fn print_build_report(format: ReportFormat, report: &BuildReport) {
             println!("content_id={}", report.content_id);
             for input in &report.inputs {
                 println!("input={input}");
+            }
+            for source in &report.lua_sources {
+                println!(
+                    "lua_source={}|{}|{}-{}",
+                    source.module,
+                    source.source.display(),
+                    source.generated_start_line,
+                    source.generated_end_line
+                );
             }
         }
     }
@@ -701,11 +735,14 @@ mod tests {
         let second = compile_project(&project.0.join("console.toml")).unwrap();
         assert_eq!(first.cart_text, second.cart_text);
         assert_eq!(first.content_id, second.content_id);
-        assert_eq!(
-            first.cart_text,
-            "__meta__\nauthor=Agent\ntitle=Test Game\nversion=1\n__lua__\nfunction _draw() end\n__sprites__\n\n__map__\n\n__z_notes__\nhello\nworld\n"
+        let cart = Cart::parse(&first.cart_text).unwrap();
+        assert_eq!(cart.title(), "Test Game");
+        assert!(cart.lua().contains("local require"));
+        assert!(
+            cart.lua()
+                .contains("-- console entry\nfunction _draw() end")
         );
-        assert_eq!(Cart::parse(&first.cart_text).unwrap().title(), "Test Game");
+        assert_eq!(cart.section("z_notes").unwrap().trim_end(), "hello\nworld");
     }
 
     #[test]

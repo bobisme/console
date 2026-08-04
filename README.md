@@ -37,7 +37,7 @@ orientation, not the spec.
 | Palette | fixed 64-color Apollo64 palette, one byte-sized index per pixel |
 | Input | 7 buttons: d-pad, A, B, menu |
 | Audio | 6 channels, waveforms: pulse 12.5%/25%, square, triangle, saw, noise, plus 8 cart-defined 32×4-bit wavetables |
-| Script | Lua 5.4 (mlua, vendored), sandboxed — no `io`/`os`/`debug`/`require` |
+| Script | Lua 5.4 (mlua, vendored), sandboxed — no host `io`/`os`/`debug`/`package`; project builds provide a private static `require` |
 | Cart | projects compile normal source files into one plain-text `.cart`: Lua + sprites (64-character grid) + tile map + sfx/music (tracker text) |
 
 192×320 is the retained platform resolution, not a transitional or optional

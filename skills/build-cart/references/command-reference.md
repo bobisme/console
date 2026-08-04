@@ -68,7 +68,10 @@ deterministic compiled bytes. Normal builds validate the complete cart and
 atomically replace the output. Manifest inputs must be relative UTF-8 files
 confined to the project root, including after symlink resolution. See
 [platform and cart format](platform-and-cart-format.md#multi-file-projects) for
-the manifest schema and separated-section rules.
+the manifest schema and separated-section rules. Every report format includes
+canonical inputs and Lua source provenance. JSON exposes `lua_sources` entries
+with module/source names plus original and generated line ranges; text emits
+one `lua_source=module|path|start-end` line per source.
 
 ## `run`
 

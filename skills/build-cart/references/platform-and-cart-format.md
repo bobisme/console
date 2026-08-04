@@ -127,6 +127,23 @@ Run `console build my-game` to atomically write the configured output, or
 content without writing. `-o`/`--out` overrides the destination. Build reports
 support `--format text|pretty|json`.
 
+Split Lua with literal imports:
+
+```lua
+local player = require("game.player") -- lua/game/player.lua
+local hud = require 'ui.hud'           -- lua/ui/hud.lua
+```
+
+Only dot-separated ASCII names and literal calls are allowed. The compiler
+follows reachable modules, rejects missing/dynamic/cyclic/aliased sources, and
+emits each module as a private execute-once closure. A module return is cached;
+no explicit return becomes `true`. The loader is lexical to the generated cart,
+so runtime globals `require` and `package` remain absent and no host filesystem
+capability is added. Build reports map generated Lua line ranges back to each
+canonical source; syntax failures already name the original file and line.
+Names beginning `__console_` are reserved for generated internals and fail the
+build rather than risking a lexical collision.
+
 Paths in the manifest are relative and cannot escape the project root through
 `..` or symlinks. Every section source is UTF-8 and contains only the section
 body, never its `__name__` header. `meta` and `lua` come from their typed tables;

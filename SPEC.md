@@ -404,6 +404,41 @@ music = "music.txt"
 design_notes = "notes.txt"        # unknown cart sections remain allowed
 ```
 
+`lua.entry` must be inside the canonical `lua.root`. Project Lua may use only
+literal module imports in either of these forms:
+
+```lua
+local player = require("game.player")
+local physics = require 'game.physics'
+```
+
+The dot-separated name uses ASCII letters, digits, and underscores and maps to
+`lua.root/game/player.lua` or `lua.root/game/physics.lua`. The compiler follows
+only modules reachable from the entry, emits their factories in name-sorted
+order, and rejects dynamic/aliased calls, nonliteral or escaped names, missing
+modules, dependency cycles, canonical source aliases, and paths outside the
+project or Lua root. It scans Lua tokens rather than text matches: comments,
+short/long strings, and table methods named `require` are not imports.
+Identifiers beginning `__console_` are reserved for generated loader internals
+and are rejected in project Lua, preventing a source module from capturing or
+overwriting bundler state through Lua lexical scope.
+
+The generated chunk declares a lexical, private `require`; the runtime still
+has no global `require` or `package` and never receives filesystem access.
+Every module executes in its own function scope on first import. The result is
+cached and returned for every later import (including `false`); a module with
+no return caches and returns `true`, matching the useful Lua module convention.
+Module locals cannot leak into the entry, while intentional global assignments
+still enter the cart environment. A potential static dependency cycle is a
+build error even when the import appears in a branch that may not execute.
+
+After bundling, Lua is syntax-compiled without executing top-level game code.
+Syntax errors are remapped from generated lines to the original source path and
+line. Build reports contain a `lua_sources` list with module name, canonical
+source, original range, and generated range. The readable generated Lua also
+marks every module and the entry with comments; the report remains the precise
+machine-readable provenance map.
+
 All manifest source and default-output paths are non-empty, relative paths.
 Inputs are canonicalized and must remain under the canonical project root, so
 `..` and escaping symlinks fail. `meta` and `lua` cannot be supplied through
@@ -424,7 +459,8 @@ Without `-o`, output is resolved from `[build].output` under the project root.
 An explicit `-o` is interpreted as the CLI output path. `--check` performs no
 write: it exits 0 and reports `current` only when the existing output is
 byte-identical; missing or stale output exits 1. Reports include the manifest,
-all canonical input paths, output, byte count, and a deterministic content ID.
+all canonical input paths, Lua source mappings, output, byte count, and a
+deterministic content ID.
 CLI misuse exits 2; discovery, compilation, validation, check, and I/O failures
 exit 1.
 

@@ -23,6 +23,14 @@ impl Project {
         std::fs::write(path.join("notes.txt"), "source tree\n").unwrap();
         Self(path)
     }
+
+    fn write(&self, relative: &str, contents: &str) {
+        let path = self.0.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, contents).unwrap();
+    }
 }
 
 impl Drop for Project {
@@ -163,4 +171,183 @@ fn build_help_and_usage_errors_follow_cli_conventions() {
     let missing = run(&["build"]);
     assert_eq!(missing.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&missing.stderr).contains("requires <project|console.toml>"));
+}
+
+#[test]
+fn static_modules_preserve_scope_returns_cache_and_source_provenance() {
+    let project = Project::new();
+    project.write(
+        "lua/main.lua",
+        "local counter = require('counter')\n\
+         local value = require \"nested.value\"\n\
+         local nil_a = require('nilmod')\n\
+         local nil_b = require('nilmod')\n\
+         local false_a = require('falsemod')\n\
+         local false_b = require('falsemod')\n\
+         function _init()\n\
+           result = value.answer + counter.count\n\
+           again = require('counter').count\n\
+           nil_cached = nil_a == true and nil_b == true and nil_runs == 1\n\
+           false_cached = false_a == false and false_b == false and false_runs == 1\n\
+         end\n",
+    );
+    project.write(
+        "lua/counter.lua",
+        "local hidden = 40\nruns = (runs or 0) + 1\nreturn {count=hidden}\n",
+    );
+    project.write(
+        "lua/nested/value.lua",
+        "local counter = require('counter')\nreturn {answer=counter.count + 2}\n",
+    );
+    project.write("lua/nilmod.lua", "nil_runs = (nil_runs or 0) + 1\n");
+    project.write(
+        "lua/falsemod.lua",
+        "false_runs = (false_runs or 0) + 1\nreturn false\n",
+    );
+
+    let compiled = console_agent::project::compile_project(&project.0).unwrap();
+    assert_eq!(
+        compiled
+            .lua_sources
+            .iter()
+            .map(|source| source.module.as_str())
+            .collect::<Vec<_>>(),
+        vec!["counter", "falsemod", "nested.value", "nilmod", "<entry>"]
+    );
+    for source in &compiled.lua_sources {
+        assert!(source.source.is_absolute());
+        assert!(source.generated_start_line <= source.generated_end_line);
+    }
+
+    let console = console_core::Console::new(&compiled.cart_text, 0).unwrap();
+    assert_eq!(console.get_global("result").unwrap().as_i64(), Some(82));
+    assert_eq!(console.get_global("again").unwrap().as_i64(), Some(40));
+    assert_eq!(console.get_global("runs").unwrap().as_i64(), Some(1));
+    assert_eq!(
+        console.get_global("nil_cached").unwrap().as_boolean(),
+        Some(true)
+    );
+    assert_eq!(
+        console.get_global("false_cached").unwrap().as_boolean(),
+        Some(true)
+    );
+    assert!(matches!(
+        console.get_global("hidden").unwrap(),
+        console_core::mlua::Value::Nil
+    ));
+    assert!(matches!(
+        console.get_global("require").unwrap(),
+        console_core::mlua::Value::Nil
+    ));
+    assert!(matches!(
+        console.get_global("package").unwrap(),
+        console_core::mlua::Value::Nil
+    ));
+
+    let built = run(&["build", path(&project.0), "--format", "json"]);
+    assert!(built.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
+    assert_eq!(report["lua_sources"][0]["module"], "counter");
+    assert_eq!(report["lua_sources"][1]["module"], "falsemod");
+    assert_eq!(report["lua_sources"][2]["module"], "nested.value");
+    assert_eq!(report["lua_sources"][3]["module"], "nilmod");
+    assert_eq!(report["lua_sources"][4]["module"], "<entry>");
+    assert!(report["lua_sources"][0]["generated_start_line"].is_number());
+}
+
+#[test]
+fn concatenation_before_global_require_is_bundled() {
+    let project = Project::new();
+    project.write(
+        "lua/main.lua",
+        "::load_side_effect:: require('labeled')\n\
+         local prefix = 'prefix-\\z\n\
+           joined-'\n\
+         local message = prefix .. require('suffix')\n\
+         function _init() result = message end\n",
+    );
+    project.write("lua/labeled.lua", "label_loaded = true\n");
+    project.write("lua/suffix.lua", "return 'suffix'\n");
+
+    let compiled = console_agent::project::compile_project(&project.0).unwrap();
+    assert_eq!(compiled.lua_sources[0].module, "labeled");
+    assert_eq!(compiled.lua_sources[1].module, "suffix");
+    let console = console_core::Console::new(&compiled.cart_text, 0).unwrap();
+    assert_eq!(
+        console.get_global("result").unwrap().as_string().unwrap(),
+        "prefix-joined-suffix"
+    );
+    assert_eq!(
+        console.get_global("label_loaded").unwrap().as_boolean(),
+        Some(true)
+    );
+}
+
+#[test]
+fn module_build_errors_name_dynamic_missing_invalid_and_cyclic_imports() {
+    let dynamic = Project::new();
+    dynamic.write("lua/main.lua", "local name='counter'\nrequire(name)\n");
+    let error = console_agent::project::compile_project(&dynamic.0).unwrap_err();
+    assert!(error.contains("uses dynamic require"), "{error}");
+    assert!(error.contains("main.lua:2"), "{error}");
+
+    let missing = Project::new();
+    missing.write("lua/main.lua", "require('does.not.exist')\n");
+    let error = console_agent::project::compile_project(&missing.0).unwrap_err();
+    assert!(
+        error.contains("cannot resolve module \"does.not.exist\""),
+        "{error}"
+    );
+    assert!(error.contains("does/not/exist.lua"), "{error}");
+
+    let invalid = Project::new();
+    invalid.write("lua/main.lua", "require('../escape')\n");
+    let error = console_agent::project::compile_project(&invalid.0).unwrap_err();
+    assert!(error.contains("invalid module name"), "{error}");
+
+    let cycle = Project::new();
+    cycle.write("lua/main.lua", "require('a')\n");
+    cycle.write("lua/a.lua", "return require('nested.b')\n");
+    cycle.write("lua/nested/b.lua", "return require('a')\n");
+    let error = console_agent::project::compile_project(&cycle.0).unwrap_err();
+    assert!(error.contains("a -> nested.b -> a"), "{error}");
+
+    let cross_boundary = Project::new();
+    cross_boundary.write("lua/main.lua", "require('a')\n");
+    cross_boundary.write("lua/a.lua", "if true then\n  require('b')\n");
+    cross_boundary.write("lua/b.lua", "end\n");
+    let error = console_agent::project::compile_project(&cross_boundary.0).unwrap_err();
+    assert!(error.contains("Lua syntax error"), "{error}");
+    assert!(error.contains("lua/a.lua:2"), "{error}");
+    assert!(error.contains("module a"), "{error}");
+
+    let syntax = Project::new();
+    syntax.write("lua/main.lua", "require('broken')\n");
+    syntax.write("lua/broken.lua", "local okay = true\nlocal = nope\n");
+    let error = console_agent::project::compile_project(&syntax.0).unwrap_err();
+    assert!(error.contains("broken.lua:2"), "{error}");
+    assert!(error.contains("module broken"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn module_sources_reject_escape_symlinks_and_duplicate_canonical_files() {
+    use std::os::unix::fs::symlink;
+
+    let escaping = Project::new();
+    escaping.write("lua/main.lua", "require('escape')\n");
+    let outside = escaping.0.with_extension("outside.lua");
+    std::fs::write(&outside, "return {}\n").unwrap();
+    symlink(&outside, escaping.0.join("lua/escape.lua")).unwrap();
+    let error = console_agent::project::compile_project(&escaping.0).unwrap_err();
+    assert!(error.contains("escapes project root"), "{error}");
+    std::fs::remove_file(outside).unwrap();
+
+    let duplicate = Project::new();
+    duplicate.write("lua/main.lua", "require('a')\nrequire('b')\n");
+    duplicate.write("lua/a.lua", "return {}\n");
+    symlink("a.lua", duplicate.0.join("lua/b.lua")).unwrap();
+    let error = console_agent::project::compile_project(&duplicate.0).unwrap_err();
+    assert!(error.contains("duplicates Lua source"), "{error}");
+    assert!(error.contains("already owned by \"a\""), "{error}");
 }
