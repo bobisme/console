@@ -591,6 +591,9 @@ are:
 
 - `{"op":"eval","code":"..."}` — evaluate a Lua chunk immediately;
 - `{"op":"input","frames":N,"buttons":"RA"}` — step a fixed input mask;
+- `{"op":"sequence","frames":N,"every":M,...}` — step that fixed input
+  mask in exact `M`-frame samples and emit a cropped GIF, contact strip,
+  and/or labeled review board;
 - `{"op":"assert","code":"return ...","equals":<json>}` — exact JSON
   comparison of the evaluated value;
 - `{"op":"capture",...}` — write one or more `screenshot`, `screen_text`,
@@ -602,6 +605,21 @@ Every stage may have a unique `name`. A scenario declares `version: 1` and an
 optional seed; `--seed` overrides it. Captures require `--artifacts`, use
 relative unique paths beneath that root, and reject absolute paths, `.`/`..`
 components, symlink traversal, and paths that alias after normalization.
+
+A `sequence` requires `frames >= 1`, `every >= 1` (default 1), and exact
+divisibility of `frames` by `every`; at most 240 frames may be sampled. Its
+optional `buttons` uses the same input-mask syntax as `input`. `crop` is a
+strict native-screen rectangle `{x,y,w,h}` (default the full 192x320 screen),
+`zoom` is nearest-neighbor scale 1-16 (default 1), and `columns` is the review
+board grid width 1-16 (default 4). At least one of `gif`, `strip`, or `board`
+must name a unique artifact path. GIF frame delays are the nearest
+centisecond representation of the sample cadence at 60 Hz, with a 2 cs
+minimum. Each board labels the stage, crop, scale, and sampled frame numbers.
+An optional `reference` PNG path is resolved relative to the scenario file and
+requires `board`; it is decoded before stepping, copied byte-for-byte at native
+size, and labeled `NOT PIXEL-ALIGNED`. It is a visual comparison panel, never
+an implied quantitative or pixel-aligned score. Sequence frames count toward
+the same 36000-frame scenario limit, and all visual allocations are bounded.
 
 Capture fields are strict and typed. `screenshot` and `screen_text` capture the
 current framebuffer. `zoom` is an integer from 1 through 16 (default 1) used by
@@ -616,7 +634,8 @@ tracing before its first scenario stage whenever any capture requests this
 artifact.
 `audio_stats` groups audio into `window_frames`, an integer from 1 through
 36000 (default 6). A scenario may step at most 36000 input frames in total.
-Each input stage requires `frames >= 1`; `buttons` is a string containing only
+Each input stage requires `frames >= 1`. Input and sequence stages use
+`buttons` as a string containing only
 `L R U D A B M` (whitespace and separators accepted by the input parser).
 The nested `map` object accepts `source` (`authored`, the default, or `live`),
 one or more of `png`, `dump`, and `lint`, plus optional `region`, `zoom` (1-16,

@@ -181,6 +181,10 @@ screenshots, screen text, WAVs, spectrograms, audio events, and signal stats.
 Captures can also emit authored or live-runtime map PNG, hex, and lint
 artifacts or bounded draw-trace JSON, so a scenario can preserve terrain after
 scripted `mset` mutations and isolate visual systems frame by frame.
+Sequence stages sample exact frame cadences into cropped, nearest-neighbor GIFs
+and contact strips. They can also build labeled review boards beside an
+optional reference PNG, which stays at its untouched native size and is
+explicitly marked as non-pixel-aligned comparison art.
 
 ## Development
 

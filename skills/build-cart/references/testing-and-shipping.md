@@ -228,6 +228,22 @@ Use domain tools before screenshots: sprite strip/onion reveals motion more
 clearly than one game frame, and map render with IDs reveals wrong cells more
 clearly than gameplay.
 
+For a runtime action, capture the whole motion deterministically in the
+scenario instead of choosing one favorable screenshot:
+
+```json
+{"op":"sequence","name":"tongue swing","frames":24,"buttons":"B","every":3,
+ "crop":{"x":24,"y":64,"w":144,"h":128},"zoom":2,"columns":4,
+ "gif":"tongue.gif","strip":"tongue-strip.png","board":"tongue-board.png",
+ "reference":"frog-game-design-inspo.png"}
+```
+
+The GIF timing follows the 60 Hz sample cadence. The strip makes pose-to-pose
+spacing obvious. The board labels every sampled frame, crop, and integer zoom;
+its optional reference panel remains at native resolution and explicitly says
+it is not pixel-aligned. Inspect the board as a qualitative composition target,
+not as an automated similarity score.
+
 ## Audio acceptance
 
 Static cart checks:

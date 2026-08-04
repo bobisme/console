@@ -708,14 +708,7 @@ pub fn encode_png(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT]) -> Vec<u8> {
 /// `zoom <= 1` behaves exactly like [`encode_png`].
 pub fn encode_png_zoomed(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT], zoom: u32) -> Vec<u8> {
     let zoom = zoom.max(1);
-    // Fold the display map into an RGB lookup once, not per pixel.
-    let lut: [[u8; 3]; COLOR_COUNT] =
-        std::array::from_fn(|i| PALETTE[(dpal[i] & COLOR_MASK) as usize]);
-    let mut rgba = Vec::with_capacity(FB_LEN * 4);
-    for &idx in fb.iter() {
-        let [r, g, b] = lut[(idx & COLOR_MASK) as usize];
-        rgba.extend_from_slice(&[r, g, b, 255]);
-    }
+    let rgba = framebuffer_rgba(fb, dpal);
 
     let (rgba, width, height) = if zoom == 1 {
         (rgba, SCREEN_W as u32, SCREEN_H as u32)
@@ -724,19 +717,22 @@ pub fn encode_png_zoomed(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT], zoom: u32)
         (scaled, SCREEN_W as u32 * zoom, SCREEN_H as u32 * zoom)
     };
 
-    let mut bytes = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut bytes, width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder
-            .write_header()
-            .expect("PNG header write cannot fail on an in-memory buffer");
-        writer
-            .write_image_data(&rgba)
-            .expect("PNG data write cannot fail on an in-memory buffer");
+    crate::palette::encode_png_rgba(&rgba, width, height)
+}
+
+/// Convert raw framebuffer indices to opaque RGBA using the current display
+/// palette. Kept separate from PNG encoding so deterministic sequence capture
+/// can crop native pixels before any nearest-neighbor enlargement.
+pub(crate) fn framebuffer_rgba(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT]) -> Vec<u8> {
+    // Fold the display map into an RGB lookup once, not per pixel.
+    let lut: [[u8; 3]; COLOR_COUNT] =
+        std::array::from_fn(|i| PALETTE[(dpal[i] & COLOR_MASK) as usize]);
+    let mut rgba = Vec::with_capacity(FB_LEN * 4);
+    for &idx in fb.iter() {
+        let [r, g, b] = lut[(idx & COLOR_MASK) as usize];
+        rgba.extend_from_slice(&[r, g, b, 255]);
     }
-    bytes
+    rgba
 }
 
 /// Nearest-neighbor integer upscale of an RGBA buffer: each source pixel

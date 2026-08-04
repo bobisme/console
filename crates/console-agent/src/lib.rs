@@ -33,6 +33,7 @@ pub mod serve;
 pub mod session;
 pub mod sprite;
 pub mod value;
+pub mod visual;
 
 pub const RUN_USAGE: &str = "\
 usage:

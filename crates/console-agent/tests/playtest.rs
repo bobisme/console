@@ -469,3 +469,207 @@ fn invalid_nested_map_capture_is_rejected_before_writing() {
     }
     assert!(!artifacts.exists());
 }
+
+#[test]
+fn visual_sequence_is_deterministic_and_preserves_native_reference_pixels() {
+    let dir = scratch("visual-sequence");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("motion.cart");
+    let scenario = dir.join("motion.json");
+    let reference = dir.join("reference.png");
+    fs::write(
+        &cart,
+        "__lua__\nx=0\nfunction _update() x=x+1 end\nfunction _draw() cls(1) rectfill(x,10,x+3,13,12) end\n",
+    )
+    .unwrap();
+    let reference_rgba = vec![
+        255, 0, 0, 255, 0, 255, 0, 192, 0, 0, 255, 128, 255, 255, 0, 64, 255, 0, 255, 0, 10, 20,
+        30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255, 130, 140, 150, 255, 160,
+        170, 180, 255, 190, 200, 210, 255, 220, 230, 240, 255, 1, 2, 3, 255, 4, 5, 6, 255,
+    ];
+    fs::write(
+        &reference,
+        console_agent::palette::encode_png_rgba(&reference_rgba, 5, 3),
+    )
+    .unwrap();
+    fs::write(
+        &scenario,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "seed": 17,
+            "stages": [{
+                "op": "sequence",
+                "name": "hop arc",
+                "frames": 12,
+                "buttons": "R",
+                "every": 3,
+                "crop": {"x":0, "y":0, "w":32, "h":24},
+                "zoom": 2,
+                "columns": 2,
+                "gif": "motion.gif",
+                "strip": "motion-strip.png",
+                "board": "motion-board.png",
+                "reference": "reference.png"
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let first = dir.join("first");
+    let second = dir.join("second");
+    let mut first_report = None;
+    for artifacts in [&first, &second] {
+        let output = run(&[
+            "playtest",
+            as_str(&cart),
+            "--scenario",
+            as_str(&scenario),
+            "--artifacts",
+            as_str(artifacts),
+            "--format",
+            "json",
+        ]);
+        assert!(
+            output.status.success(),
+            "playtest failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["scenario"]["frame_count"], 12);
+        assert_eq!(report["scenario"]["artifact_count"], 3);
+        assert_eq!(
+            report["stages"][0]["actual"]["sampled_frames"],
+            json!([3, 6, 9, 12])
+        );
+        assert_eq!(report["stages"][0]["actual"]["scaling"], "nearest_neighbor");
+        assert_eq!(
+            report["stages"][0]["actual"]["gif"]["delay_centiseconds"],
+            5
+        );
+        assert_eq!(
+            report["stages"][0]["actual"]["reference"]["scale"],
+            "native"
+        );
+        assert_eq!(
+            report["stages"][0]["actual"]["reference"]["pixel_aligned"],
+            false
+        );
+        first_report.get_or_insert(report);
+    }
+    for name in ["motion.gif", "motion-strip.png", "motion-board.png"] {
+        assert_eq!(
+            fs::read(first.join(name)).unwrap(),
+            fs::read(second.join(name)).unwrap(),
+            "{name} should be byte-identical across identical runs"
+        );
+    }
+
+    let gif_bytes = fs::read(first.join("motion.gif")).unwrap();
+    let mut options = gif::DecodeOptions::new();
+    options.set_color_output(gif::ColorOutput::RGBA);
+    let mut decoder = options.read_info(std::io::Cursor::new(gif_bytes)).unwrap();
+    assert_eq!((decoder.width(), decoder.height()), (64, 48));
+    let mut delays = Vec::new();
+    while let Some(frame) = decoder.read_next_frame().unwrap() {
+        delays.push(frame.delay);
+    }
+    assert_eq!(delays, vec![5, 5, 5, 5]);
+
+    let strip =
+        console_agent::palette::decode_png_rgba(&fs::read(first.join("motion-strip.png")).unwrap())
+            .unwrap();
+    assert_eq!((strip.width, strip.height), (280, 48));
+
+    let report = first_report.unwrap();
+    let panel = &report["stages"][0]["actual"]["reference"]["panel"];
+    let panel_x = panel["x"].as_u64().unwrap() as u32;
+    let panel_y = panel["y"].as_u64().unwrap() as u32;
+    let board =
+        console_agent::palette::decode_png_rgba(&fs::read(first.join("motion-board.png")).unwrap())
+            .unwrap();
+    let mut copied_reference = Vec::new();
+    for y in panel_y..panel_y + 3 {
+        let start = ((y * board.width + panel_x) * 4) as usize;
+        copied_reference.extend_from_slice(&board.rgba[start..start + 5 * 4]);
+    }
+    assert_eq!(copied_reference, reference_rgba);
+}
+
+#[test]
+fn invalid_visual_sequences_are_rejected_before_execution_or_writing() {
+    let dir = scratch("visual-sequence-schema");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    let artifacts = dir.join("artifacts");
+    fs::write(
+        &cart,
+        "__lua__\nfunction _init() error('must not load') end\n",
+    )
+    .unwrap();
+
+    let cases = [
+        (json!({"frames":0, "gif":"x.gif"}), "frames must be >= 1"),
+        (
+            json!({"frames":1, "every":0, "gif":"x.gif"}),
+            "every must be >= 1",
+        ),
+        (
+            json!({"frames":5, "every":2, "gif":"x.gif"}),
+            "exactly divisible",
+        ),
+        (json!({"frames":241, "gif":"x.gif"}), "at most 240"),
+        (
+            json!({"frames":1, "crop":{"x":191,"y":0,"w":2,"h":1}, "gif":"x.gif"}),
+            "exceeds the 192x320 screen",
+        ),
+        (json!({"frames":1}), "has no outputs"),
+        (
+            json!({"frames":1, "gif":"x.gif", "reference":"reference.png"}),
+            "reference requires a board",
+        ),
+        (
+            json!({"frames":1, "zoom":0, "gif":"x.gif"}),
+            "zoom must be 1..=16",
+        ),
+        (
+            json!({"frames":1, "columns":17, "board":"x.png"}),
+            "columns must be 1..=16",
+        ),
+        (
+            json!({"frames":1, "gif":"same//x", "strip":"same/x"}),
+            "aliases an earlier artifact",
+        ),
+        (
+            json!({"frames":240, "zoom":2, "strip":"huge.png"}),
+            "exceeding the 67108864 byte limit",
+        ),
+        (
+            json!({"frames":240, "zoom":16, "gif":"huge.gif"}),
+            "sequence GIF aggregate RGBA work",
+        ),
+    ];
+    for (index, (fields, expected)) in cases.into_iter().enumerate() {
+        let mut stage = fields.as_object().unwrap().clone();
+        stage.insert("op".to_string(), json!("sequence"));
+        let scenario = dir.join(format!("invalid-{index}.json"));
+        fs::write(
+            &scenario,
+            serde_json::to_vec(&json!({"version":1, "stages":[stage]})).unwrap(),
+        )
+        .unwrap();
+        let output = run(&[
+            "playtest",
+            as_str(&cart),
+            "--scenario",
+            as_str(&scenario),
+            "--artifacts",
+            as_str(&artifacts),
+        ]);
+        assert_eq!(output.status.code(), Some(2), "case {index}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "case {index}: {stderr}");
+        assert!(!stderr.contains("must not load"), "case {index}: {stderr}");
+    }
+    assert!(!artifacts.exists());
+}

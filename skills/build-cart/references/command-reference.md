@@ -153,6 +153,20 @@ Version 1 schema:
     {"op":"input", "name":"jump", "frames":12, "buttons":"RA"},
     {"op":"assert", "code":"return dev_status().grounded", "equals":false},
     {
+      "op":"sequence",
+      "name":"jump arc",
+      "frames":12,
+      "buttons":"R",
+      "every":3,
+      "crop":{"x":32,"y":80,"w":128,"h":120},
+      "zoom":2,
+      "columns":2,
+      "gif":"jump.gif",
+      "strip":"jump-strip.png",
+      "board":"jump-board.png",
+      "reference":"jump-reference.png"
+    },
+    {
       "op":"capture",
       "screenshot":"jump.png",
       "zoom":2,
@@ -191,6 +205,14 @@ Nested map captures accept `source: "authored"` (default) or `"live"` and one
 or more output paths: `png`, `dump`, `lint`. Optional `region` uses
 `cx,cy,cw,ch`; omitted regions use that snapshot's nonzero extent. Map zoom is
 1–16 (default 4). `grid` and `ids` affect only the PNG.
+
+`sequence` holds one input mask for `frames` and samples after every `every`
+frames; the two values must divide exactly and yield at most 240 samples.
+`crop` uses native 192x320 coordinates. `zoom` 1–16 is always nearest-neighbor,
+and `columns` 1–16 lays out the board. Request one or more of `gif`, `strip`,
+and `board`. An optional `reference` requires `board`, resolves relative to the
+scenario file, and is embedded untouched at native size with a
+`NOT PIXEL-ALIGNED` label rather than a similarity score.
 
 ## `rpc`
 

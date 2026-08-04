@@ -17,12 +17,16 @@ use crate::artifact;
 use crate::map;
 use crate::session::Session;
 use crate::value::lua_to_json;
+use crate::visual::{self, Rect, RgbaImage};
 
 const MAX_SCREENSHOT_ZOOM: u32 = 16;
 const MAX_SPECTROGRAM_CELL: u32 = 8;
 const MAX_SCENARIO_FRAMES: u64 = 36_000;
 const MAX_SPECTROGRAM_FRAMES: u64 = 3_600;
 const MAX_MAP_ZOOM: u32 = 16;
+const MAX_SEQUENCE_SAMPLES: u64 = 240;
+const MAX_SEQUENCE_ZOOM: u32 = 16;
+const MAX_REVIEW_COLUMNS: u32 = 16;
 
 pub const USAGE: &str = "\
 Run an ordered, deterministic cart playtest scenario
@@ -41,6 +45,9 @@ Scenario format (version 1):
     {\"op\":\"input\",\"frames\":1,\"buttons\":\"A\"},
     {\"op\":\"eval\",\"code\":\"dev_warp(48,449)\"},
     {\"op\":\"assert\",\"code\":\"return dev_status().embers\",\"equals\":1},
+    {\"op\":\"sequence\",\"name\":\"hop\",\"frames\":12,\"buttons\":\"R\",\"every\":3,
+      \"crop\":{\"x\":16,\"y\":24,\"w\":96,\"h\":80},\"zoom\":2,
+      \"gif\":\"hop.gif\",\"strip\":\"hop-strip.png\",\"board\":\"hop-board.png\"},
     {\"op\":\"capture\",\"screenshot\":\"scene.png\",\"zoom\":4,\"draw_trace\":\"draw-trace.json\",
       \"map\":{\"source\":\"live\",\"png\":\"map.png\",\"dump\":\"map.txt\"}}
   ]}
@@ -94,6 +101,29 @@ pub enum Stage {
         #[serde(default)]
         buttons: String,
     },
+    Sequence {
+        #[serde(default)]
+        name: Option<String>,
+        frames: u64,
+        #[serde(default)]
+        buttons: String,
+        #[serde(default = "default_every")]
+        every: u64,
+        #[serde(default)]
+        crop: Crop,
+        #[serde(default = "default_zoom")]
+        zoom: u32,
+        #[serde(default = "default_columns")]
+        columns: u32,
+        #[serde(default)]
+        gif: Option<String>,
+        #[serde(default)]
+        strip: Option<String>,
+        #[serde(default)]
+        board: Option<String>,
+        #[serde(default)]
+        reference: Option<String>,
+    },
     Assert {
         #[serde(default)]
         name: Option<String>,
@@ -132,6 +162,26 @@ pub enum Stage {
         #[serde(default = "default_cell")]
         cell: u32,
     },
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Crop {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+}
+
+impl Default for Crop {
+    fn default() -> Self {
+        Crop {
+            x: 0,
+            y: 0,
+            w: SCREEN_W as u32,
+            h: SCREEN_H as u32,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -179,11 +229,20 @@ fn default_map_zoom() -> u32 {
     4
 }
 
+fn default_every() -> u64 {
+    1
+}
+
+fn default_columns() -> u32 {
+    4
+}
+
 impl Stage {
     fn op(&self) -> &'static str {
         match self {
             Stage::Eval { .. } => "eval",
             Stage::Input { .. } => "input",
+            Stage::Sequence { .. } => "sequence",
             Stage::Assert { .. } => "assert",
             Stage::Capture { .. } => "capture",
         }
@@ -193,6 +252,7 @@ impl Stage {
         match self {
             Stage::Eval { name, .. }
             | Stage::Input { name, .. }
+            | Stage::Sequence { name, .. }
             | Stage::Assert { name, .. }
             | Stage::Capture { name, .. } => name.as_deref(),
         }
@@ -389,6 +449,7 @@ pub fn run_scenario(
     let scenario: Scenario = serde_json::from_str(&scenario_text)
         .map_err(|error| format!("parsing {}: {error}", scenario_path.display()))?;
     validate_scenario(&scenario, artifacts)?;
+    let scenario_dir = scenario_path.parent().unwrap_or_else(|| Path::new("."));
 
     let cart_text = crate::project::load_cart_text(cart_path).map_err(|error| error.to_string())?;
     let seed = seed_override.unwrap_or(scenario.seed);
@@ -439,9 +500,13 @@ pub fn run_scenario(
             logs: Vec::new(),
             artifacts: Vec::new(),
         };
-        if let Err(error) =
-            execute_stage(stage, &mut session, artifact_root.as_deref(), &mut report)
-        {
+        if let Err(error) = execute_stage(
+            stage,
+            &mut session,
+            artifact_root.as_deref(),
+            scenario_dir,
+            &mut report,
+        ) {
             report.status = "failed";
             report.error = Some(error);
             passed = false;
@@ -506,6 +571,109 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                 stepped_frames = stepped_frames
                     .checked_add(*frames)
                     .ok_or_else(|| format!("stage {index} input frame total overflows u64"))?;
+                if stepped_frames > MAX_SCENARIO_FRAMES {
+                    return Err(format!(
+                        "stage {index} brings the scenario to {stepped_frames} frames; version 1 allows at most {MAX_SCENARIO_FRAMES}"
+                    ));
+                }
+            }
+            Stage::Sequence {
+                name,
+                frames,
+                buttons,
+                every,
+                crop,
+                zoom,
+                columns,
+                gif,
+                strip,
+                board,
+                reference,
+                ..
+            } => {
+                if *frames == 0 {
+                    return Err(format!("stage {index} sequence frames must be >= 1"));
+                }
+                if *every == 0 {
+                    return Err(format!("stage {index} sequence every must be >= 1"));
+                }
+                if frames % every != 0 {
+                    return Err(format!(
+                        "stage {index} sequence frames ({frames}) must be exactly divisible by every ({every})"
+                    ));
+                }
+                let samples = frames / every;
+                if samples > MAX_SEQUENCE_SAMPLES {
+                    return Err(format!(
+                        "stage {index} sequence samples {samples} frames; version 1 allows at most {MAX_SEQUENCE_SAMPLES}"
+                    ));
+                }
+                input::parse(buttons).map_err(|button| {
+                    format!("stage {index} has unknown input button {button:?} in {buttons:?}")
+                })?;
+                validate_crop(index, *crop)?;
+                if !(1..=MAX_SEQUENCE_ZOOM).contains(zoom) {
+                    return Err(format!(
+                        "stage {index} sequence zoom must be 1..={MAX_SEQUENCE_ZOOM}, got {zoom}"
+                    ));
+                }
+                if !(1..=MAX_REVIEW_COLUMNS).contains(columns) {
+                    return Err(format!(
+                        "stage {index} sequence columns must be 1..={MAX_REVIEW_COLUMNS}, got {columns}"
+                    ));
+                }
+                if gif.is_none() && strip.is_none() && board.is_none() {
+                    return Err(format!("stage {index} sequence has no outputs"));
+                }
+                if reference.is_some() && board.is_none() {
+                    return Err(format!(
+                        "stage {index} sequence reference requires a board output"
+                    ));
+                }
+                if artifacts.is_none() {
+                    return Err(format!(
+                        "stage {index} captures files, so --artifacts <DIR> is required"
+                    ));
+                }
+                let frame_numbers = (1..=samples)
+                    .map(|sample| sample * *every)
+                    .collect::<Vec<_>>();
+                validate_sequence_dimensions(
+                    index,
+                    &visual::SequencePreflight {
+                        stage: name.as_deref().unwrap_or("sequence"),
+                        frame_numbers: &frame_numbers,
+                        crop: Rect {
+                            x: crop.x,
+                            y: crop.y,
+                            w: crop.w,
+                            h: crop.h,
+                        },
+                        zoom: *zoom,
+                        columns: *columns,
+                        reference_dimensions: None,
+                        cadence_frames: *every,
+                        gif: gif.is_some(),
+                        strip: strip.is_some(),
+                        board: board.is_some(),
+                    },
+                )?;
+                for output in [gif.as_deref(), strip.as_deref(), board.as_deref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    let normalized = normalize_relative_path(output).map_err(|error| {
+                        format!("stage {index} sequence path {output:?}: {error}")
+                    })?;
+                    if !paths.insert(duplicate_path_key(&normalized)) {
+                        return Err(format!(
+                            "stage {index} sequence path {output:?} aliases an earlier artifact; every normalized path must be unique"
+                        ));
+                    }
+                }
+                stepped_frames = stepped_frames
+                    .checked_add(*frames)
+                    .ok_or_else(|| format!("stage {index} sequence frame total overflows u64"))?;
                 if stepped_frames > MAX_SCENARIO_FRAMES {
                     return Err(format!(
                         "stage {index} brings the scenario to {stepped_frames} frames; version 1 allows at most {MAX_SCENARIO_FRAMES}"
@@ -608,6 +776,48 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
     Ok(())
 }
 
+fn validate_crop(index: usize, crop: Crop) -> Result<(), String> {
+    if crop.w == 0 || crop.h == 0 {
+        return Err(format!(
+            "stage {index} sequence crop width and height must be >= 1"
+        ));
+    }
+    let right = crop
+        .x
+        .checked_add(crop.w)
+        .ok_or_else(|| format!("stage {index} sequence crop x+w overflows"))?;
+    let bottom = crop
+        .y
+        .checked_add(crop.h)
+        .ok_or_else(|| format!("stage {index} sequence crop y+h overflows"))?;
+    if right > SCREEN_W as u32 || bottom > SCREEN_H as u32 {
+        return Err(format!(
+            "stage {index} sequence crop {},{},{},{} exceeds the {}x{} screen",
+            crop.x, crop.y, crop.w, crop.h, SCREEN_W, SCREEN_H
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sequence_dimensions(
+    index: usize,
+    spec: &visual::SequencePreflight<'_>,
+) -> Result<(), String> {
+    let native_bytes = u64::from(spec.crop.w)
+        .checked_mul(u64::from(spec.crop.h))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .and_then(|bytes| bytes.checked_mul(spec.frame_numbers.len() as u64))
+        .ok_or_else(|| format!("stage {index} sequence sampled RGBA size overflows"))?;
+    if native_bytes > visual::MAX_VISUAL_RGBA_BYTES as u64 {
+        return Err(format!(
+            "stage {index} sequence samples need {native_bytes} RGBA bytes, exceeding the {} byte limit",
+            visual::MAX_VISUAL_RGBA_BYTES
+        ));
+    }
+    visual::preflight_sequence(spec)
+        .map_err(|error| format!("stage {index} sequence dimensions are invalid: {error}"))
+}
+
 fn validate_capture_dimensions(zoom: u32, cell: u32) -> Result<(), String> {
     let screen_width = (SCREEN_W as u32)
         .checked_mul(zoom)
@@ -643,6 +853,7 @@ fn execute_stage(
     stage: &Stage,
     session: &mut Session,
     artifact_root: Option<&Path>,
+    scenario_dir: &Path,
     report: &mut StageReport,
 ) -> Result<(), String> {
     match stage {
@@ -668,6 +879,182 @@ fn execute_stage(
                 ));
             }
             report.actual = Some(json!({"frames": frames, "buttons": buttons, "mask": mask}));
+        }
+        Stage::Sequence {
+            name,
+            frames,
+            buttons,
+            every,
+            crop,
+            zoom,
+            columns,
+            gif,
+            strip,
+            board,
+            reference,
+        } => {
+            let root = artifact_root.expect("sequence validation requires an artifact root");
+            // Resolve and decode the optional comparison image before stepping.
+            // A missing/bad reference must not consume part of the requested input.
+            let reference_image = reference
+                .as_deref()
+                .map(|reference| load_reference(scenario_dir, reference))
+                .transpose()?;
+            let rect = Rect {
+                x: crop.x,
+                y: crop.y,
+                w: crop.w,
+                h: crop.h,
+            };
+            let sample_count = frames / every;
+            let stage_label = name
+                .clone()
+                .unwrap_or_else(|| format!("sequence-{}", report.index));
+            let frame_start = frame_count(session);
+            let expected_frame_numbers = (1..=sample_count)
+                .map(|sample| {
+                    frame_start
+                        .checked_add(sample * *every)
+                        .ok_or("sequence frame number overflows")
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            visual::preflight_sequence(&visual::SequencePreflight {
+                stage: &stage_label,
+                frame_numbers: &expected_frame_numbers,
+                crop: rect,
+                zoom: *zoom,
+                columns: *columns,
+                reference_dimensions: reference_image
+                    .as_ref()
+                    .map(|image| (image.width, image.height)),
+                cadence_frames: *every,
+                gif: gif.is_some(),
+                strip: strip.is_some(),
+                board: board.is_some(),
+            })?;
+            let mask = input::parse(buttons)
+                .map_err(|button| format!("unknown input button {button:?} in {buttons:?}"))?;
+            let mut images = Vec::with_capacity(sample_count as usize);
+            let mut frame_numbers = Vec::with_capacity(sample_count as usize);
+            for _ in 0..sample_count {
+                let outcome = session
+                    .step(*every, mask)
+                    .map_err(|error| error.to_string())?;
+                if outcome.halted {
+                    return Err(format!(
+                        "cart halted at frame {}: {}",
+                        outcome.frame_count,
+                        outcome
+                            .message
+                            .unwrap_or_else(|| "unknown error".to_string())
+                    ));
+                }
+                let rgba = {
+                    let console = session.console().map_err(|error| error.to_string())?;
+                    crate::session::framebuffer_rgba(
+                        console.framebuffer(),
+                        console.display_palette(),
+                    )
+                };
+                let frame = RgbaImage::new(SCREEN_W as u32, SCREEN_H as u32, rgba)?;
+                images.push(frame.crop(rect)?);
+                frame_numbers.push(outcome.frame_count);
+            }
+            if frame_numbers != expected_frame_numbers {
+                return Err(format!(
+                    "sequence cadence drifted: expected {expected_frame_numbers:?}, got {frame_numbers:?}"
+                ));
+            }
+
+            // Produce every requested artifact in memory before writing any of
+            // them, so dimension/encoder errors cannot leave a partial stage.
+            let gif_output = gif
+                .as_ref()
+                .map(|_| visual::animated_gif(&images, *zoom, *every))
+                .transpose()?;
+            let strip_output = strip
+                .as_ref()
+                .map(|_| visual::contact_strip(&images, *zoom))
+                .transpose()?;
+            let board_output = board
+                .as_ref()
+                .map(|_| {
+                    visual::review_board(&visual::BoardSpec {
+                        stage: &stage_label,
+                        frames: &images,
+                        frame_numbers: &frame_numbers,
+                        crop: rect,
+                        zoom: *zoom,
+                        columns: *columns,
+                        reference: reference_image.as_ref(),
+                    })
+                })
+                .transpose()?;
+
+            if let (Some(path), Some((bytes, _, _, _))) = (gif, &gif_output) {
+                report
+                    .artifacts
+                    .push(write_artifact(root, path, "sequence_gif", bytes)?);
+            }
+            if let (Some(path), Some(image)) = (strip, &strip_output) {
+                report
+                    .artifacts
+                    .push(write_artifact(root, path, "sequence_strip", &image.png())?);
+            }
+            if let (Some(path), Some((image, _))) = (board, &board_output) {
+                report
+                    .artifacts
+                    .push(write_artifact(root, path, "review_board", &image.png())?);
+            }
+
+            let gif_meta = gif_output.as_ref().map(|(_, width, height, delay)| {
+                json!({
+                    "width": width,
+                    "height": height,
+                    "delay_centiseconds": delay,
+                    "loop": "infinite"
+                })
+            });
+            let reference_meta = reference_image.as_ref().map(|image| {
+                let panel = board_output
+                    .as_ref()
+                    .and_then(|(_, layout)| layout.reference_panel)
+                    .expect("validated reference has a review board panel");
+                json!({
+                    "path": reference,
+                    "width": image.width,
+                    "height": image.height,
+                    "scale": "native",
+                    "pixel_aligned": false,
+                    "panel": {"x": panel.x, "y": panel.y, "w": panel.w, "h": panel.h}
+                })
+            });
+            let runtime_panels = board_output.as_ref().map(|(_, layout)| {
+                layout
+                    .runtime_panels
+                    .iter()
+                    .map(|panel| {
+                        json!({
+                            "x": panel.x, "y": panel.y, "w": panel.w, "h": panel.h
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            report.actual = Some(json!({
+                "frames": frames,
+                "buttons": buttons,
+                "mask": mask,
+                "every": every,
+                "samples": sample_count,
+                "sampled_frames": frame_numbers,
+                "crop": {"x": crop.x, "y": crop.y, "w": crop.w, "h": crop.h},
+                "zoom": zoom,
+                "scaling": "nearest_neighbor",
+                "columns": columns,
+                "gif": gif_meta,
+                "runtime_panels": runtime_panels,
+                "reference": reference_meta
+            }));
         }
         Stage::Assert { code, equals, .. } => {
             let value = session.eval(code).map_err(|error| error.to_string())?;
@@ -838,6 +1225,23 @@ fn frame_count(session: &Session) -> u64 {
         .console()
         .map(|console| console.frame_count())
         .unwrap_or(0)
+}
+
+fn load_reference(scenario_dir: &Path, reference: &str) -> Result<RgbaImage, String> {
+    if reference.trim().is_empty() {
+        return Err("sequence reference path is empty".to_string());
+    }
+    let reference_path = Path::new(reference);
+    let path = if reference_path.is_absolute() {
+        reference_path.to_path_buf()
+    } else {
+        scenario_dir.join(reference_path)
+    };
+    let bytes = fs::read(&path)
+        .map_err(|error| format!("reading sequence reference {}: {error}", path.display()))?;
+    let decoded = crate::palette::decode_png_rgba(&bytes)
+        .map_err(|error| format!("decoding sequence reference {}: {error}", path.display()))?;
+    RgbaImage::new(decoded.width, decoded.height, decoded.rgba)
 }
 
 fn normalize_relative_path(path: &str) -> Result<PathBuf, String> {
