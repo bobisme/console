@@ -471,6 +471,49 @@ fn boss_explosion_chain_opens_evac_and_finishes_level() {
 }
 
 #[test]
+fn boss_camera_keeps_retreats_visible_and_the_drawn_rig_is_interactive() {
+    let mut camera = Session::new();
+    camera.load_cart(&cart_text(), 8_675_309).unwrap();
+    start_game(&mut camera);
+    request(
+        &mut camera,
+        1,
+        "eval",
+        json!({"code": "dev_start_boss(); dev_warp(650,432)"}),
+    );
+    camera.step(60, 0).unwrap();
+    let framed = request(
+        &mut camera,
+        2,
+        "eval",
+        json!({"code": "return dev_status()"}),
+    );
+    let player_screen_x =
+        framed["result"]["x"].as_f64().unwrap() - framed["result"]["camera_x"].as_f64().unwrap();
+    assert!(
+        (15.0..=177.0).contains(&player_screen_x),
+        "boss camera must keep a retreating or respawned frog visible: {framed}"
+    );
+
+    let mut rig = Session::new();
+    rig.load_cart(&cart_text(), 8_675_309).unwrap();
+    start_game(&mut rig);
+    request(
+        &mut rig,
+        3,
+        "eval",
+        json!({"code": "dev_warp(760,425); dev_start_boss(); dev_boss_vulnerable()"}),
+    );
+    rig.step(12, console_core::input::RIGHT | console_core::input::B)
+        .unwrap();
+    let hit = request(&mut rig, 4, "eval", json!({"code": "return dev_status()"}));
+    assert!(
+        hit["result"]["boss_hp"].as_i64().unwrap() < 8,
+        "the tongue must hit the visibly drawn upper-left command rig: {hit}"
+    );
+}
+
+#[test]
 fn authored_level_and_animation_contracts_are_present() {
     let cart = cart_text();
     let parsed = console_core::Cart::parse(&cart).unwrap();

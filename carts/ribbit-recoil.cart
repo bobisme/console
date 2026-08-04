@@ -148,6 +148,15 @@ local function player_hits(x,y,w,h)
      and player_y < y+h and player_y+PLAYER_H > y
 end
 
+local function enemy_bounds(e,contact)
+  if e.kind==E_BOSS then
+    -- Wings are valid weapon targets; only the closed command pod deals contact damage.
+    if contact then return e.x-13,e.y-12,50,52 end
+    return e.x-34,e.y-14,92,58
+  end
+  return e.x,e.y,e.w,e.h
+end
+
 local function aim_vector(default_up)
   local ax=(btn(0) and -1 or 0)+(btn(1) and 1 or 0)
   local ay=(btn(2) and -1 or 0)+(btn(3) and 1 or 0)
@@ -183,7 +192,7 @@ local function burst(x,y,color,count,force,kind)
 end
 
 local function add_explosion(x,y,power,player_owned)
-  explosions[#explosions+1]={x=x,y=y,life=18,max=18,power=power}
+  explosions[#explosions+1]={x=x,y=y,life=24,max=24,power=power}
   burst(x,y,4,12+power*3,1.4+power*0.25,2)
   burst(x,y,12,7+power,0.9+power*0.18,3)
   shake=max(shake,5+power*2)
@@ -204,8 +213,9 @@ local function add_explosion(x,y,power,player_owned)
     end
     for i=1,#enemies do
       local e=enemies[i]
+      local hx,hy,hw,hh=enemy_bounds(e,false)
       if e.alive and not (e.kind==E_BOSS and boss_defeated)
-          and dist(x,y,e.x+e.w/2,e.y+e.h/2)<24+power*6 then
+          and dist(x,y,hx+hw/2,hy+hh/2)<24+power*6 then
         e.pending_damage=max(e.pending_damage or 0,power)
       end
     end
@@ -524,8 +534,9 @@ end
 local function tongue_hit_enemy()
   for i=1,#enemies do
     local e=enemies[i]
-    if e.alive and not e.dormant and tongue_x>=e.x-2 and tongue_x<=e.x+e.w+2
-        and tongue_y>=e.y-2 and tongue_y<=e.y+e.h+2 then
+    local hx,hy,hw,hh=enemy_bounds(e,false)
+    if e.alive and not e.dormant and tongue_x>=hx-2 and tongue_x<=hx+hw+2
+        and tongue_y>=hy-2 and tongue_y<=hy+hh+2 then
       damage_enemy(e,1,"tongue")
       if e.kind~=E_BOSS and e.alive then
         e.x=e.x+(player_x-e.x)*0.28
@@ -688,8 +699,9 @@ local function laser_attack()
     laser_x2,laser_y2=x,y
     for i=1,#enemies do
       local e=enemies[i]
+      local hx,hy,hw,hh=enemy_bounds(e,false)
       if e.alive and not e.dormant and e.laser_stamp~=hit_stamp
-          and x>=e.x and x<=e.x+e.w and y>=e.y and y<=e.y+e.h then
+          and x>=hx and x<=hx+hw and y>=hy and y<=hy+hh then
         e.laser_stamp=hit_stamp
         damage_enemy(e,1,"laser eyes")
       end
@@ -702,7 +714,8 @@ local function laser_attack()
   local boss=enemies[#enemies]
   if boss and boss.kind==E_BOSS and boss.alive and not boss.dormant
       and boss.vulnerable and boss.laser_stamp~=hit_stamp then
-    local bx,by=boss.x+boss.w/2,boss.y+boss.h/2
+    local hx,hy,hw,hh=enemy_bounds(boss,false)
+    local bx,by=hx+hw/2,hy+hh/2
     local dx,dy=bx-mx,by-my
     local d=math.sqrt(dx*dx+dy*dy)
     if d<170 and d>0 and (dx/d)*ax+(dy/d)*ay>0.76 then
@@ -734,7 +747,8 @@ local function fire_damage()
   for i=1,#enemies do
     local e=enemies[i]
     if e.alive and not e.dormant and frame_now-e.last_fire>=7 then
-      local ex,ey=e.x+e.w/2,e.y+e.h/2
+      local hx,hy,hw,hh=enemy_bounds(e,false)
+      local ex,ey=hx+hw/2,hy+hh/2
       local dx,dy=ex-mx,ey-my
       local d=math.sqrt(dx*dx+dy*dy)
       if d<58 and d>0 and (dx/d)*ax+(dy/d)*ay>0.62 then
@@ -965,8 +979,9 @@ local function update_enemies()
         e.y=e.home_y+sin(boss_clock*0.012)*(e.phase_id==1 and 8 or e.phase_id==2 and 24 or 34)
         e.dir=player_x<e.x and -1 or 1
       end
+      local hx,hy,hw,hh=enemy_bounds(e,true)
       if e.alive and not e.dormant and not boss_defeated
-          and player_hits(e.x+2,e.y+2,e.w-4,e.h-4) then
+          and player_hits(hx+2,hy+2,hw-4,hh-4) then
         hurt_player(e.kind==E_BOSS and "industrial proboscis" or "insect",e.x+e.w/2)
       end
     end
@@ -982,6 +997,8 @@ local function start_boss()
   e.dormant=false
   e.attack_clock=0
   e.phase_salvos={0,0,0}
+  camera_x=mid(0,player_x*0.35+e.x*0.65-SW/2,WORLD_W-SW)
+  camera_y=mid(0,e.y-156,WORLD_H-(SH-HUD_H))
   music(8)
   master(3,1,0)
   echo(9,5,4)
@@ -1151,8 +1168,26 @@ local function update_play()
   player_x=mid(0,player_x,WORLD_W-PLAYER_W)
   local tx=mid(0,player_x-SW*0.42,WORLD_W-SW)
   local ty=mid(0,player_y-(SH-HUD_H)*0.56,WORLD_H-(SH-HUD_H))
+  if boss_started and not exit_open then
+    local boss=enemies[#enemies]
+    -- Frame the frog and Colonel together; the arena is a confrontation, not a corner cameo.
+    tx=mid(0,player_x*0.35+boss.x*0.65-SW/2,WORLD_W-SW)
+    ty=mid(0,boss.y-156,WORLD_H-(SH-HUD_H))
+    -- Retreats and checkpoint respawns always keep the player inside a 16px safe frame.
+    tx=mid(player_x+PLAYER_W-SW+16,tx,player_x-16)
+    ty=mid(player_y-272,ty,player_y-16)
+    tx=mid(0,tx,WORLD_W-SW)
+    ty=mid(0,ty,WORLD_H-(SH-HUD_H))
+  end
   camera_x=camera_x+(tx-camera_x)*0.105
   camera_y=camera_y+(ty-camera_y)*0.105
+  if boss_started and not exit_open then
+    -- The smoothed camera itself is clamped too, so fast knockback cannot outrun its target.
+    camera_x=mid(player_x+PLAYER_W-SW+16,camera_x,player_x-16)
+    camera_y=mid(player_y-272,camera_y,player_y-16)
+    camera_x=mid(0,camera_x,WORLD_W-SW)
+    camera_y=mid(0,camera_y,WORLD_H-(SH-HUD_H))
+  end
 end
 
 function _init()
@@ -1205,88 +1240,180 @@ local function reset_draw_state()
   rshift()
 end
 
+local ZONE_ACCENT={6,4,10,45,31,36,14}
+
+local function scene_zone()
+  return mid(0,flr((camera_x+92)/128),6)
+end
+
+local function draw_cloud_mass(x,y,w,shadow,light)
+  fillp(0xaaaa,shadow)
+  rectfill(x,y,x+w,y+5,shadow)
+  circfill(x+8,y,5,shadow)
+  circfill(x+flr(w*0.45),y-3,7,shadow)
+  circfill(x+w-8,y+1,5,shadow)
+  fillp()
+  line(x+3,y+4,x+w-2,y+4,light)
+  line(x+12,y-4,x+flr(w*0.45),y-7,light)
+end
+
 local function draw_backdrop()
+  local zone=scene_zone()
+  local accent=ZONE_ACCENT[zone+1]
   cls(49)
-  rectfill(0,HUD_H,SW-1,SH-1,49)
-  rectfill(0,HUD_H,SW-1,116,41)
-  rectfill(0,116,SW-1,196,1)
-  -- A cratered moon with a quiet halo; detail stays low-contrast behind play.
-  local moon_x=151-flr(camera_x/22)
-  local moon_y=64+flr(camera_y/30)
-  fillp(0xaaaa,40) circfill(moon_x,moon_y,34,14) fillp()
-  circfill(moon_x,moon_y,27,59)
-  circ(moon_x,moon_y,28,63)
-  circfill(moon_x-8,moon_y-7,6,55)
-  circ(moon_x+9,moon_y+5,5,55)
-  circfill(moon_x+6,moon_y-12,3,52)
-  circ(moon_x-11,moon_y+10,4,52)
-  pset(moon_x-1,moon_y-17,63) pset(moon_x+15,moon_y-2,63)
+  rectfill(0,HUD_H,SW-1,76,40)
+  rectfill(0,77,SW-1,143,41)
+  rectfill(0,144,SW-1,211,9)
+  rectfill(0,212,SW-1,SH-1,1)
+  fillp(0x8888,49)
+  rectfill(0,80,SW-1,108,41)
+  fillp()
+
+  -- A stable landmark moon. Its full silhouette is deliberately kept in frame.
+  if zone<=1 or zone==6 then
+    local moon_x=zone==6 and 50 or 146
+    local moon_y=54+flr((camera_y-208)/64)
+    fillp(0xaaaa,40) circfill(moon_x,moon_y,35,14) fillp()
+    circfill(moon_x,moon_y,27,60)
+    circ(moon_x,moon_y,28,63)
+    circ(moon_x,moon_y,31,10)
+    circfill(moon_x-9,moon_y-8,7,56)
+    circfill(moon_x+10,moon_y+7,6,55)
+    circ(moon_x+7,moon_y-12,4,52)
+    circ(moon_x-13,moon_y+11,5,53)
+    line(moon_x-18,moon_y-18,moon_x-7,moon_y-23,61)
+    pset(moon_x+15,moon_y-4,63)
+    pset(moon_x-2,moon_y+18,63)
+  end
+
   for i=1,#stars do
     local s=stars[i]
-    local sx=(s.x-flr(camera_x*0.12))%(SW+30)-15
-    local sy=s.y-flr(camera_y*0.08)+HUD_H
-    if sy>HUD_H and sy<150 and (frame_now+s.phase)%74<57 then
+    local sx=(s.x-flr(camera_x*0.10))%(SW+30)-15
+    local sy=s.y-flr(camera_y*0.07)+HUD_H
+    if sy>HUD_H and sy<147 and (frame_now+s.phase)%74<57 then
       pset(sx,sy,s.c)
       if i%11==0 and (frame_now+s.phase)%74<4 then
         pset(sx-1,sy,s.c+1) pset(sx+1,sy,s.c+1)
       end
     end
   end
-  -- Three cloud ribbons keep the upper half from becoming empty wallpaper.
-  for band=0,2 do
-    local cy=102+band*35+flr(camera_y*(0.025+band*0.015))
-    local drift=flr(camera_x*(0.10+band*0.05))
-    for i=0,4 do
-      local x=(i*58+band*23-drift)%(SW+80)-40
-      local c=band==0 and 52 or band==1 and 50 or 8
-      line(x,cy,x+36,cy,c)
-      line(x+8,cy-3,x+27,cy-3,c)
-      line(x+18,cy-6,x+31,cy-6,c)
-      pset(x+39,cy,c+1)
+
+  -- Thin vapor shelves leave room for silhouettes instead of reading as black hills.
+  for band=0,1 do
+    local cy=116+band*47+flr((camera_y-208)*(0.015+band*0.01))
+    local drift=flr(camera_x*(0.045+band*0.035))
+    for i=0,3 do
+      local x=(i*70+band*27-drift)%(SW+88)-44
+      draw_cloud_mass(x,cy,36+((i+zone)%3)*7,
+        band==0 and 50 or 8,band==0 and 52 or 9)
     end
   end
-  -- Far city: staggered roofs, antennas, water towers, and tiny windows.
-  for i=0,11 do
-    local x=(i*25-flr(camera_x*0.12))%(SW+44)-22
-    local w=16+(i*7)%13
-    local h=36+(i*19)%78
-    local top=SH-h
-    rectfill(x,top,x+w,SH,50)
-    rect(x+2,top+2,x+w-2,SH,52)
-    if i%3==0 then
-      rectfill(x+5,top-11,x+w-5,top,50)
-      line(x+w/2,top-11,x+w/2,top-19,55)
-      pset(x+w/2,top-20,36)
-    elseif i%3==1 then
-      rectfill(x+w-7,top-15,x+w-3,top,52)
-      line(x+w-5,top-15,x+w-5,top-24,55)
+
+  -- Far skyline: narrow, quiet, and low contrast.
+  for i=0,15 do
+    local x=(i*19-flr(camera_x*0.10))%(SW+44)-22
+    local w=11+(i*7+zone*3)%12
+    local h=38+(i*13+zone*9)%62
+    local top=229-h
+    rectfill(x,top,x+w,SH,49)
+    rectfill(x+2,top+3,x+w-2,SH,50)
+    line(x+2,top+2,x+w-2,top+2,52)
+    if (i+zone)%4==0 then
+      rectfill(x+3,top-7,x+w-3,top,49)
+      line(x+w/2,top-7,x+w/2,top-14,52)
+      pset(x+w/2,top-15,accent)
+    elseif (i+zone)%4==1 then
+      rectfill(x+w-6,top-10,x+w-3,top,50)
+      line(x+w-5,top-10,x+w-5,top-17,52)
+    elseif (i+zone)%4==2 then
+      line(x+2,top,x+w-2,top-8,51)
+      line(x+w-2,top,x+2,top-8,51)
     end
-    for wy=top+10,SH-8,12 do
-      for wx=x+5,x+w-4,8 do
-        if (i+wx+wy)%5<2 then pset(wx,wy,(i+wy)%4==0 and 31 or 13) end
+    for wy=top+9,226,9 do
+      for wx=x+4,x+w-4,6 do
+        if (i+wx+wy+zone)%4<2 then
+          pset(wx,wy,(wy+i)%5==0 and accent or 30)
+        end
       end
     end
   end
-  -- Near roofline and utility clutter frame the playable geometry.
-  for i=0,6 do
-    local x=(i*43-flr(camera_x*0.27))%(SW+70)-35
-    local y=222+(i*17)%48+flr(camera_y/18)
-    rectfill(x,y,x+28,SH,8)
-    rect(x+3,y+3,x+25,SH,52)
-    line(x-8,y+10,x+36,y+10,55)
-    line(x+7,y,x+7,y-18,52)
-    line(x+21,y,x+21,y-11,52)
-    for wy=y+18,SH-8,14 do
-      rectfill(x+8,wy,x+10,wy+2,(wy+i)%3==0 and 31 or 13)
-      rectfill(x+18,wy,x+20,wy+2,13)
+
+  -- Middle skyline uses larger authored shapes and warmer focal windows.
+  for i=0,8 do
+    local x=(i*34+zone*11-flr(camera_x*0.22))%(SW+68)-34
+    local w=24+(i*9+zone*5)%20
+    local top=176+(i*17+zone*13)%44
+    rectfill(x,top,x+w,SH,49)
+    rect(x+2,top+3,x+w-2,SH,51)
+    line(x+3,top+2,x+w-3,top+2,53)
+    if (i+zone)%3==0 then
+      rectfill(x+5,top-9,x+w-6,top,49)
+      line(x+w/2,top-9,x+w/2,top-18,52)
+    elseif (i+zone)%3==1 then
+      line(x+4,top,x+10,top-11,51)
+      line(x+w-4,top,x+w-10,top-11,51)
+      line(x+10,top-11,x+w-10,top-11,53)
+    end
+    for wy=top+13,278,13 do
+      for wx=x+7,x+w-6,9 do
+        local lit=(i+flr(wy/13)+flr(wx/9)+zone)%5
+        if lit<2 then
+          rectfill(wx,wy,wx+2,wy+3,lit==0 and 31 or accent)
+          pset(wx,wy,63)
+        else pset(wx,wy,49) end
+      end
     end
   end
-  for i=0,7 do
-    local y=154+i*19+flr(camera_y/17)
-    local x=(i*53-flr(camera_x*0.43))%(SW+90)-45
-    line(x,y,x+46,y-5,i%2==0 and 11 or 13)
-    line(x+10,y+2,x+58,y-2,10)
-    circfill(x+10,y+2,1,55) circfill(x+46,y-5,1,55)
+
+  -- Zone landmarks establish distinct locations rather than repeated towers.
+  if zone==1 then
+    rectfill(21,165,35,278,49) rect(24,168,32,278,52)
+    rectfill(24,144,32,165,52) line(22,144,34,144,57)
+    draw_cloud_mass(13,137,31,50,52)
+    rectfill(139,181,176,278,49) rect(143,185,172,278,51)
+    circ(157,200,10,55) line(147,200,167,200,53)
+  elseif zone==2 then
+    rectfill(8,163,56,SH,49) rect(13,168,51,SH,51)
+    circ(32,193,16,55) circ(32,193,11,52)
+    line(32,177,32,209,53) line(16,193,48,193,53)
+    rectfill(133,148,181,SH,49) rect(138,153,176,SH,51)
+    for yy=165,219,14 do rectfill(145,yy,169,yy+5,31) end
+  elseif zone==3 then
+    rectfill(9,185,64,SH,49) rect(13,189,60,SH,51)
+    rectfill(20,199,53,234,41) rect(23,202,50,231,accent)
+    for yy=207,227,7 do line(27,yy,46,yy,63) end
+    rectfill(126,169,180,SH,49) rect(131,174,175,SH,51)
+    line(136,184,170,230,54) line(170,184,136,230,52)
+  elseif zone==4 then
+    line(5,175,187,137,52) line(5,180,187,142,54)
+    for x=14,182,42 do line(x,170,x,247,52) pset(x,167,36) end
+    rectfill(115,180,174,SH,49) rect(120,185,169,SH,51)
+  elseif zone==5 then
+    rectfill(34,150,158,SH,49) rect(39,155,153,SH,51)
+    rectfill(57,168,135,219,50) rect(62,173,130,214,35)
+    line(41,157,151,239,53) line(151,157,41,239,53)
+    for x=49,143,13 do pset(x,161,(x+frame_now)%8<4 and 36 or 31) end
+    print("MUTAGEN",96,188,31,"center")
+  elseif zone==6 then
+    rectfill(96,157,181,SH,49) rect(101,162,176,SH,51)
+    rectfill(111,174,164,221,50) rect(115,178,160,217,35)
+    print("BZZ-CO",138,195,31,"center")
+    line(104,159,138,136,55) line(172,159,138,136,55)
+    circfill(138,134,3,36)
+  end
+
+  -- Near silhouette is sparse and asymmetric, separating it from the play layer.
+  for i=0,4 do
+    local x=(i*57-flr(camera_x*0.34))%(SW+92)-46
+    local y=252+(i*19+zone*7)%34+flr((camera_y-208)/28)
+    rectfill(x,y,x+35,SH,48)
+    line(x-5,y+8,x+40,y+8,52)
+    line(x+8,y,x+8,y-15,51)
+    line(x+27,y,x+27,y-9,51)
+    for wy=y+16,SH-8,14 do
+      rectfill(x+9,wy,x+11,wy+2,(wy+i)%3==0 and 31 or 13)
+      rectfill(x+24,wy,x+26,wy+2,13)
+    end
   end
 end
 
@@ -1336,37 +1463,189 @@ local function draw_bomb(b,index)
   pset(b.x+wob,b.y-15,31)
 end
 
+local function draw_gnat(cx,cy,flip,hurt)
+  local flap=(frame_now%6)<3 and 1 or -1
+  local dir=flip and -1 or 1
+  local body=hurt and 11 or 4
+  line(cx-2,cy-2,cx-9,cy-7-flap,12)
+  line(cx-1,cy,cx-10,cy+5+flap,10)
+  line(cx+2,cy-2,cx+8,cy-7-flap,12)
+  line(cx+2,cy,cx+9,cy+5+flap,10)
+  circfill(cx,cy,4,1)
+  rectfill(cx-3,cy-2,cx+4,cy+2,body)
+  rectfill(cx+dir*4,cy-1,cx+dir*7,cy+1,38)
+  circfill(cx-dir*3,cy-1,2,35)
+  pset(cx-dir*4,cy-2,11)
+  line(cx-2,cy+3,cx-6,cy+6,13)
+  line(cx+2,cy+3,cx+6,cy+6,13)
+end
+
+local function draw_beetle(cx,feet,flip,hurt)
+  local dir=flip and -1 or 1
+  local shell=hurt and 11 or 7
+  for lx=-7,7,7 do
+    line(cx+lx,feet-7,cx+lx-dir*4,feet,13)
+    line(cx+lx,feet-5,cx+lx+dir*5,feet-1,13)
+  end
+  circfill(cx,feet-9,9,1)
+  circfill(cx,feet-10,8,shell)
+  line(cx,feet-17,cx,feet-3,9)
+  line(cx-6,feet-14,cx+5,feet-7,6)
+  circfill(cx+dir*8,feet-10,4,1)
+  circfill(cx+dir*9,feet-11,2,35)
+  pset(cx+dir*10,feet-12,11)
+  line(cx+dir*9,feet-14,cx+dir*13,feet-18,13)
+  line(cx+dir*8,feet-14,cx+dir*9,feet-19,13)
+end
+
+local function draw_wasp(cx,cy,flip,hurt)
+  local dir=flip and -1 or 1
+  local flap=(frame_now%8)<4 and -5 or -2
+  line(cx-3,cy-3,cx-10,cy+flap,12)
+  line(cx+2,cy-3,cx+9,cy+flap-1,10)
+  line(cx-4,cy+4,cx-9,cy+9,13)
+  line(cx+2,cy+4,cx+8,cy+9,13)
+  rectfill(cx-7,cy-3,cx+6,cy+3,1)
+  rectfill(cx-5,cy-2,cx-2,cy+2,hurt and 11 or 5)
+  rectfill(cx,cy-2,cx+3,cy+2,35)
+  rectfill(cx+5,cy-1,cx+8,cy+1,5)
+  circfill(cx-dir*7,cy-1,4,1)
+  circfill(cx-dir*8,cy-2,2,35)
+  pset(cx-dir*9,cy-3,11)
+  line(cx+dir*8,cy,cx+dir*14,cy,31)
+end
+
+local function draw_buzzkill(e,hurt)
+  local cx,feet=e.x+12,e.y+38
+  local wing=flr((sin(t()*4)+1)*3)
+  local phase=e.phase_id or 1
+  local suit=phase==3 and 35 or hurt and 36 or 52
+  -- Four luminous wings make the executive mosquito readable at gameplay scale.
+  fillp(0xaaaa,55)
+  circfill(cx-22,feet-32,13+wing,59)
+  circfill(cx+22,feet-32,13+wing,59)
+  circfill(cx-20,feet-15,11+wing,55)
+  circfill(cx+20,feet-15,11+wing,55)
+  fillp()
+  line(cx-8,feet-29,cx-34,feet-43,63)
+  line(cx+8,feet-29,cx+34,feet-43,63)
+  line(cx-8,feet-20,cx-31,feet-8,59)
+  line(cx+8,feet-20,cx+31,feet-8,59)
+  line(cx-31,feet-42,cx-12,feet-26,10)
+  line(cx+31,feet-42,cx+12,feet-26,10)
+  -- One closed command-pod silhouette separates the rig from wings and scenery.
+  circfill(cx,feet-25,25,48)
+  rectfill(cx-25,feet-25,cx+25,feet-5,48)
+  circfill(cx,feet-7,25,48)
+  circ(cx,feet-25,25,59)
+  line(cx-21,feet-39,cx-24,feet-18,10)
+  line(cx-24,feet-18,cx-18,feet-4,10)
+  line(cx+22,feet-37,cx+24,feet-12,50)
+  line(cx-22,feet-10,cx+22,feet-10,55)
+  -- Command-chair backpack and bright hazard rails.
+  rectfill(cx-20,feet-35,cx+20,feet-6,48)
+  rect(cx-21,feet-36,cx+21,feet-5,59)
+  rectfill(cx-17,feet-33,cx+17,feet-8,suit)
+  rect(cx-14,feet-30,cx+14,feet-10,13)
+  rectfill(cx-25,feet-31,cx-18,feet-9,50)
+  rectfill(cx+18,feet-31,cx+25,feet-9,50)
+  line(cx-23,feet-28,cx-23,feet-12,59)
+  line(cx+23,feet-28,cx+23,feet-12,59)
+  for yy=feet-27,feet-12,5 do
+    circfill(cx-23,yy,1,phase==3 and 36 or 31)
+    circfill(cx+23,yy,1,phase==2 and 4 or 10)
+  end
+  -- Readable arms: one claw, one absurd compliance cannon.
+  line(cx-12,feet-24,cx-30,feet-18,48)
+  line(cx-30,feet-18,cx-34,feet-9,59)
+  line(cx-34,feet-9,cx-39,feet-13,36)
+  line(cx-34,feet-9,cx-29,feet-12,36)
+  line(cx+12,feet-23,cx+27,feet-17,48)
+  rectfill(cx+24,feet-22,cx+39,feet-13,48)
+  rect(cx+24,feet-22,cx+39,feet-13,59)
+  line(cx+39,feet-18,cx+45,feet-18,phase==3 and 36 or 31)
+  -- Armored head, compound eyes, proboscis and ridiculous necktie.
+  circfill(cx,feet-38,13,48)
+  circfill(cx,feet-38,11,hurt and 36 or 35)
+  line(cx-9,feet-43,cx-6,feet-48,38)
+  line(cx-9,feet-43,cx-10,feet-35,38)
+  line(cx+9,feet-43,cx+10,feet-34,33)
+  circfill(cx-6,feet-40,5,48) circfill(cx+6,feet-40,5,48)
+  circfill(cx-6,feet-40,3,phase==3 and 4 or 36)
+  circfill(cx+6,feet-40,3,phase==3 and 4 or 36)
+  pset(cx-7,feet-41,63) pset(cx+5,feet-41,63)
+  local nose=e.dir>0 and 1 or -1
+  line(cx+nose*2,feet-35,cx+nose*23,feet-27,46)
+  line(cx+nose*2,feet-34,cx+nose*23,feet-26,47)
+  line(cx+nose*23,feet-27,cx+nose*28,feet-28,31)
+  rectfill(cx-8,feet-26,cx+8,feet-8,48)
+  line(cx-6,feet-24,cx+6,feet-24,63)
+  rectfill(cx-3,feet-23,cx+3,feet-15,36)
+  line(cx-3,feet-14,cx,feet-9,36) line(cx+3,feet-14,cx,feet-9,36)
+  line(cx-7,feet-8,cx-13,feet,48) line(cx+7,feet-8,cx+13,feet,48)
+  rectfill(cx-15,feet-2,cx-5,feet,13) rectfill(cx+5,feet-2,cx+15,feet,13)
+  if phase>=2 then
+    line(cx-15,feet-29,cx-7,feet-20,31)
+    line(cx+15,feet-20,cx+7,feet-11,31)
+  end
+  if phase==3 then
+    for i=0,5 do
+      local sx=cx-21+i*9
+      line(sx,feet-47-(i%2)*3,sx+2,feet-51-(i%2)*3,i%2==0 and 36 or 4)
+    end
+  end
+end
+
 local function draw_enemy(e,index)
   if not e.alive then return end
   if e.kind==E_BOSS and e.dormant then return end
-  if e.hurt>0 and e.hurt%2==0 then
-    for ink=1,15 do pal(ink,63) end
-  end
+  local hurt=e.hurt>0 and e.hurt%2==0
   if e.kind==E_GNAT then
-    aspr("gnat.fly",e.x+8,e.y+8,-e.phase,e.dir>0,false)
+    draw_gnat(e.x+8,e.y+8,e.dir>0,hurt)
   elseif e.kind==E_BEETLE then
-    aspr("beetle.walk",e.x+8,e.y+14,-e.phase,e.dir<0,false)
+    draw_beetle(e.x+8,e.y+15,e.dir<0,hurt)
   elseif e.kind==E_WASP then
-    aspr("wasp.fly",e.x+8,e.y+8,-e.phase,e.x<player_x,false)
+    draw_wasp(e.x+8,e.y+8,e.x<player_x,hurt)
   else
     local phase_color=e.phase_id==1 and 10 or e.phase_id==2 and 4 or 36
-    fillp(0xeeee)
-    circfill(e.x+12,e.y+12,17+flr((sin(t()*0.7)+1)*2),
+    fillp(0xaaaa)
+    circfill(e.x+12,e.y+10,31+flr((sin(t()*0.7)+1)*2),
       e.vulnerable and phase_color or 35)
     fillp()
-    aspr("buzzkill.rage",e.x+12,e.y+22,0,e.dir>0,false)
-    if not boss_defeated and not e.vulnerable then circ(e.x+12,e.y+12,20,10) end
+    draw_buzzkill(e,hurt)
+    if not boss_defeated and not e.vulnerable then
+      circ(e.x+12,e.y+10,34,10)
+      circ(e.x+12,e.y+10,31,59)
+      for a=0,7 do
+        local aa=a/8+frame_now/180
+        pset(e.x+12+cos(aa)*36,e.y+10+sin(aa)*36,a%2==0 and 31 or 10)
+      end
+    end
     if e.vulnerable and frame_now%6<4 then
-      line(e.x+4,e.y+3,e.x+20,e.y+3,63)
-      print("HIT!",e.x+4,e.y-8,31)
+      line(e.x-13,e.y-13,e.x+37,e.y-13,63)
+      print("AUDIT ME!",e.x+12,e.y-22,31,"center")
     end
     if boss_defeated then
-      line(e.x-4,e.y-4,e.x+28,e.y+28,3)
-      line(e.x+28,e.y-4,e.x-4,e.y+28,3)
+      line(e.x-20,e.y-17,e.x+44,e.y+43,36)
+      line(e.x+44,e.y-17,e.x-20,e.y+43,36)
+      if boss_death_timer>0 then
+        -- Three persistent, separated blast nodes make the destruction beat unmistakable.
+        local bx={e.x-1,e.x+25,e.x+10}
+        local by={e.y+2,e.y+14,e.y+29}
+        for blast=1,3 do
+          local r=4+(frame_now+blast*2)%3
+          circ(bx[blast],by[blast],r+3,38)
+          circ(bx[blast],by[blast],r+1,31)
+          circfill(bx[blast],by[blast],2,63)
+          for ray=0,3 do
+            local a=ray/4+blast/12
+            line(bx[blast]+cos(a)*r,by[blast]+sin(a)*r,
+              bx[blast]+cos(a)*(r+6),by[blast]+sin(a)*(r+6),
+              ray%2==0 and 31 or 36)
+          end
+        end
+      end
     end
-  end
-  if e.hurt>0 and e.hurt%2==0 then
-    for ink=0,15 do pal(ink,INK_MAP[ink+1]) end
   end
   if (e.telegraph or 0)>0 and not boss_defeated then
     local pulse=frame_now%6<3 and 31 or 4
@@ -1382,22 +1661,84 @@ local function draw_particles_world()
       line(p.x-p.dx*2,p.y-p.dy*2,p.x,p.y,p.color)
       if p.size>1 then circfill(p.x,p.y,p.size,p.color) else pset(p.x,p.y,p.color) end
     elseif p.kind==4 then
-      line(p.x-p.dx,p.y-p.dy,p.x,p.y,p.color)
+      line(p.x-p.dx*2,p.y-p.dy*2,p.x,p.y,p.color)
+      pset(p.x,p.y,11)
     elseif p.kind==3 then
-      fillp(0x8888)
-      circfill(p.x,p.y,p.size+flr((p.max-p.life)/8),p.color)
+      local swell=p.size+flr((p.max-p.life)/7)
+      fillp(0xaaaa,49)
+      circfill(p.x,p.y,swell+2,50)
       fillp()
+      circfill(p.x-1,p.y-1,max(1,swell),p.color)
+      pset(p.x-2,p.y-2,56)
+    elseif p.kind==2 then
+      line(p.x-p.dx*3,p.y-p.dy*3,p.x,p.y,p.color)
+      if p.size>1 then rectfill(p.x-1,p.y-1,p.x+1,p.y+1,p.color) end
     elseif p.size>1 then circfill(p.x,p.y,p.size,p.color)
     else pset(p.x,p.y,p.color) end
   end
   for i=1,#explosions do
     local e=explosions[i]
     local age=e.max-e.life
-    local r=2+age*e.power
-    fillp(age%2==0 and 0x5a5a or 0x8888)
-    circ(e.x,e.y,r,age<6 and 5 or 4)
-    circfill(e.x,e.y,max(1,8-age/2),age<4 and 63 or 5)
-    fillp()
+    local scale=max(1,e.power)
+    if age<=2 then
+      local r=5+age*4
+      circfill(e.x,e.y,4+age*2,63)
+      for ray=0,7 do
+        local a=ray/8
+        line(e.x+cos(a)*3,e.y+sin(a)*3,
+          e.x+cos(a)*r,e.y+sin(a)*r,ray%2==0 and 63 or 31)
+      end
+    elseif age<=6 then
+      local r=7+(age-2)*scale*2
+      -- A single hot core and two open fronts; no component-like orange discs.
+      circ(e.x,e.y,r+4,63)
+      circ(e.x,e.y,r+2,31)
+      circ(e.x,e.y,max(3,r*0.42),38)
+      circfill(e.x,e.y,max(2,7-age),63)
+      for ray=0,7 do
+        local a=ray/8+0.03
+        line(e.x+cos(a)*r*0.36,e.y+sin(a)*r*0.36,
+          e.x+cos(a)*r*0.78,e.y+sin(a)*r*0.78,ray%2==0 and 31 or 38)
+      end
+    elseif age<=12 then
+      local r=12+(age-6)*scale*1.7
+      -- A clear shock ring and long shards keep the burst airy and directional.
+      circ(e.x,e.y,r,31)
+      circ(e.x,e.y,r+3,38)
+      for shard=0,9 do
+        local a=shard/10+0.025
+        local inner=r*0.55
+        local outer=r*(0.88+(shard%3)*0.14)
+        line(e.x+cos(a)*inner,e.y+sin(a)*inner,
+          e.x+cos(a)*outer,e.y+sin(a)*outer,shard%2==0 and 63 or 38)
+        pset(e.x+cos(a)*outer,e.y+sin(a)*outer,31)
+      end
+      for ember=0,4 do
+        local a=ember/5+0.1
+        local ex=e.x+cos(a)*r*0.48
+        local ey=e.y+sin(a)*r*0.34
+        local er=max(2,5-flr(age/3))
+        circ(ex,ey,er,ember%2==0 and 38 or 36)
+        pset(ex,ey,31)
+      end
+    else
+      local r=15+(age-11)*scale
+      local rise=(age-12)*1.5
+      fillp(0xaaaa,52)
+      for smoke=0,4 do
+        local a=smoke/5+0.03
+        local sx=e.x+cos(a)*r*0.48
+        local sy=e.y+sin(a)*r*0.26-rise-(smoke%2)*3
+        circfill(sx,sy,max(2,6-flr((age-12)/3)),smoke%2==0 and 50 or 52)
+        circ(sx,sy,max(2,6-flr((age-12)/3)),59)
+      end
+      fillp()
+      for ember=0,5 do
+        local a=ember/6+frame_now/60
+        pset(e.x+cos(a)*r*0.65,e.y-rise+sin(a)*r*0.33,
+          ember%2==0 and 31 or 36)
+      end
+    end
   end
 end
 
@@ -1453,33 +1794,238 @@ local function draw_grapple_hint()
   pset(x,y,63)
 end
 
+local function draw_frog_pose(cx,feet,pose,left,hero_scale)
+  local scale=hero_scale or 1
+  local dir=left and -1 or 1
+  if pose=="recoil" then cx=cx-dir*2*scale end
+  if pose=="air" then feet=feet-1*scale end
+  local bob=pose=="idle" and flr((sin(t()*0.9)+1)*0.5) or 0
+  local head_y=feet-17*scale+bob
+  local body_y=feet-8*scale+bob
+  local function rx(dx) return cx+dir*dx*scale end
+  if pose=="hurt" then
+    rectfill(cx-11*scale,feet-10*scale,cx+11*scale,feet-2*scale,1)
+    rectfill(cx-9*scale,feet-9*scale,cx+9*scale,feet-3*scale,7)
+    circfill(cx-6*scale,feet-11*scale,4*scale,1)
+    circfill(cx+6*scale,feet-11*scale,4*scale,1)
+    line(cx-8*scale,feet-13*scale,cx-4*scale,feet-9*scale,11)
+    line(cx-4*scale,feet-13*scale,cx-8*scale,feet-9*scale,11)
+    line(cx+4*scale,feet-13*scale,cx+8*scale,feet-9*scale,11)
+    line(cx+8*scale,feet-13*scale,cx+4*scale,feet-9*scale,11)
+    line(cx-10*scale,feet,cx-4*scale,feet,13)
+    line(cx+4*scale,feet,cx+10*scale,feet,13)
+    return
+  end
+
+  -- Pose-specific limbs first, then a chunky outlined body and expressive head.
+  if pose=="victory" then
+    line(rx(-5),feet-10*scale,rx(-13),feet-21*scale,1)
+    line(rx(-13),feet-21*scale,rx(-10),feet-27*scale,7)
+    line(rx(5),feet-10*scale,rx(13),feet-21*scale,1)
+    line(rx(13),feet-21*scale,rx(10),feet-27*scale,7)
+    line(rx(-5),feet-10*scale,rx(-13),feet-21*scale,6)
+    line(rx(5),feet-10*scale,rx(13),feet-21*scale,6)
+    circfill(rx(-10),feet-27*scale,2*scale,1)
+    circfill(rx(10),feet-27*scale,2*scale,1)
+    circfill(rx(-10),feet-27*scale,scale,6)
+    circfill(rx(10),feet-27*scale,scale,6)
+    line(cx-5*scale,feet-5*scale,cx-12*scale,feet,1)
+    line(cx+5*scale,feet-5*scale,cx+12*scale,feet,1)
+    rectfill(cx-15*scale,feet-2*scale,cx-7*scale,feet,7)
+    rectfill(cx+7*scale,feet-2*scale,cx+15*scale,feet,7)
+  elseif pose=="recoil" then
+    line(rx(-4),feet-8*scale,rx(-13),feet-13*scale,1)
+    line(rx(-13),feet-13*scale,rx(-16),feet-8*scale,7)
+    line(rx(4),feet-7*scale,rx(10),feet-1*scale,1)
+    line(rx(10),feet-1*scale,rx(16),feet,7)
+    line(rx(-5),feet-4*scale,rx(-13),feet,1)
+    line(rx(5),feet-4*scale,rx(14),feet+1*scale,1)
+  elseif pose=="mutate" then
+    line(rx(-5),feet-9*scale,rx(-11),feet-15*scale,1)
+    line(rx(-11),feet-15*scale,rx(-15),feet-10*scale,7)
+    line(rx(5),feet-9*scale,rx(10),feet-15*scale,1)
+    line(rx(10),feet-15*scale,rx(15),feet-11*scale,7)
+    line(cx-5*scale,feet-4*scale,cx-11*scale,feet,1)
+    line(cx+5*scale,feet-4*scale,cx+11*scale,feet,1)
+  elseif pose=="swing" then
+    line(rx(-5),feet-8*scale,rx(-10),feet-17*scale,1)
+    line(rx(-10),feet-17*scale,rx(-7),feet-21*scale,7)
+    line(rx(5),feet-7*scale,rx(10),feet-14*scale,1)
+    line(rx(10),feet-14*scale,rx(8),feet-19*scale,6)
+    line(rx(-4),feet-4*scale,rx(-10),feet-1*scale,1)
+    line(rx(4),feet-3*scale,rx(9),feet+2*scale,1)
+  elseif pose=="air" then
+    line(rx(-5),feet-7*scale,rx(-10),feet-2*scale,1)
+    line(rx(-10),feet-2*scale,rx(-7),feet+2*scale,7)
+    line(rx(5),feet-6*scale,rx(11),feet-1*scale,1)
+    line(rx(11),feet-1*scale,rx(8),feet+2*scale,7)
+    line(rx(-5),feet-12*scale,rx(-10),feet-8*scale,6)
+    line(rx(5),feet-12*scale,rx(10),feet-9*scale,6)
+  elseif pose=="run" then
+    local step=frame_now%12<6 and 1 or -1
+    line(cx-4*scale,feet-5*scale,cx-9*scale*step,feet,1)
+    line(cx+4*scale,feet-5*scale,cx+9*scale*step,feet,1)
+    line(cx-10*scale*step,feet,cx-4*scale*step,feet,13)
+    line(cx+3*scale*step,feet,cx+10*scale*step,feet,13)
+  else
+    rectfill(cx-11*scale,feet-3*scale,cx-3*scale,feet,1)
+    rectfill(cx+3*scale,feet-3*scale,cx+11*scale,feet,1)
+    rectfill(cx-9*scale,feet-2*scale,cx-3*scale,feet-1*scale,7)
+    rectfill(cx+3*scale,feet-2*scale,cx+9*scale,feet-1*scale,7)
+  end
+
+  circfill(cx,body_y,9*scale,1)
+  circfill(cx,body_y-1*scale,7*scale,7)
+  rectfill(cx-6*scale,body_y-3*scale,cx+6*scale,body_y+2*scale,6)
+  circfill(cx,body_y+2*scale,5*scale,6)
+  -- Consistent moon-side rim and belly shadow give every pose a two-tone volume.
+  line(cx-7*scale,body_y-4*scale,cx-5*scale,body_y+3*scale,10)
+  line(cx-5*scale,body_y-5*scale,cx+2*scale,body_y-6*scale,6)
+  rectfill(cx+4*scale,body_y-1*scale,cx+6*scale,body_y+3*scale,7)
+  line(cx-4*scale,body_y+4*scale,cx+4*scale,body_y+4*scale,7)
+  pset(cx-4*scale,body_y,14) pset(cx+3*scale,body_y+2*scale,14)
+  line(cx-3*scale,body_y+4*scale,cx+3*scale,body_y+4*scale,14)
+
+  rectfill(cx-9*scale,head_y-3*scale,cx+9*scale,head_y+5*scale,1)
+  circfill(cx,head_y+1*scale,9*scale,7)
+  rectfill(cx-7*scale,head_y,cx+7*scale,head_y+5*scale,6)
+  line(cx-8*scale,head_y-1*scale,cx-7*scale,head_y+4*scale,10)
+  line(cx-6*scale,head_y-1*scale,cx+2*scale,head_y-2*scale,6)
+  rectfill(cx+5*scale,head_y+1*scale,cx+7*scale,head_y+4*scale,7)
+  line(cx-5*scale,head_y+5*scale,cx+6*scale,head_y+5*scale,7)
+  pset(cx-5*scale,head_y+1*scale,14)
+  -- Brow and eyes are oversized so the face survives phone scale.
+  circfill(cx-6*scale,head_y-5*scale,5*scale,1)
+  circfill(cx+6*scale,head_y-5*scale,5*scale,1)
+  local laser=mutation=="LASER EYES"
+  circfill(cx-6*scale,head_y-5*scale,(laser and 4 or 3)*scale,laser and 10 or 11)
+  circfill(cx+6*scale,head_y-5*scale,(laser and 4 or 3)*scale,laser and 10 or 11)
+  line(cx-8*scale,head_y-3*scale,cx-4*scale,head_y-3*scale,59)
+  line(cx+4*scale,head_y-3*scale,cx+8*scale,head_y-3*scale,59)
+  local pupil_y=head_y-5*scale
+  if pose=="air" or pose=="swing" then pupil_y=pupil_y+scale end
+  if pose=="victory" then pupil_y=pupil_y-scale end
+  pset(cx-6*scale+dir*scale,pupil_y,laser and 63 or 48)
+  pset(cx+6*scale+dir*scale,pupil_y,laser and 63 or 48)
+  if pose=="recoil" then
+    line(cx-10*scale,head_y-10*scale,cx-4*scale,head_y-8*scale,31)
+    line(cx+10*scale,head_y-10*scale,cx+4*scale,head_y-8*scale,31)
+  elseif pose=="victory" then
+    pset(cx-7*scale,head_y-7*scale,63) pset(cx+5*scale,head_y-7*scale,63)
+  end
+  if laser and laser_timer>0 then
+    circ(cx-6*scale,head_y-5*scale,6*scale,63)
+    circ(cx+6*scale,head_y-5*scale,6*scale,63)
+    line(cx-10*scale,head_y-10*scale,cx-6*scale,head_y-8*scale,31)
+    line(cx+10*scale,head_y-10*scale,cx+6*scale,head_y-8*scale,31)
+  end
+  local open=tongue_state~="idle" or fire_timer>0
+  if open then
+    local mouth0,mouth1=rx(1),rx(8)
+    rectfill(min(mouth0,mouth1),head_y+3*scale,max(mouth0,mouth1),head_y+7*scale,1)
+    local inner0,inner1=rx(3),rx(8)
+    rectfill(min(inner0,inner1),head_y+4*scale,max(inner0,inner1),head_y+6*scale,
+      fire_timer>0 and 5 or 15)
+  else
+    if pose=="victory" then
+      line(rx(-5),head_y+3*scale,rx(5),head_y+5*scale,1)
+      line(rx(-4),head_y+4*scale,rx(4),head_y+5*scale,63)
+    else
+      line(rx(-2),head_y+4*scale,rx(6),head_y+4*scale,1)
+      pset(rx(7),head_y+3*scale,14)
+    end
+  end
+  if mutation=="FIRE BREATH" then
+    local throat=fire_timer>0 and 7*scale or 4*scale
+    circfill(cx+dir*2*scale,body_y-1*scale,throat+scale,1)
+    circfill(cx+dir*2*scale,body_y-1*scale,throat,5)
+    circ(cx+dir*2*scale,body_y-1*scale,max(scale,throat-2*scale),4)
+  end
+  pset(cx-dir*7*scale,head_y+1*scale,14)
+end
+
+local function draw_fire_fx()
+  if fire_timer<=0 then return end
+  local mx,my=player_mouth()
+  local nx,ny=-fire_aim_y,fire_aim_x
+  local pulse=frame_now%3
+  -- Smoke and embers trail behind the hot tapered flame body.
+  for step=6,8 do
+    local d=step*7
+    local cx=mx+fire_aim_x*d
+    local cy=my+fire_aim_y*d
+    local drift=(step-5)*2+pulse
+    fillp(0xaaaa,36)
+    circfill(cx-fire_aim_x*drift+nx*((step+frame_now)%3-1)*3,
+      cy-fire_aim_y*drift-2*(step-5),max(1,9-step),36)
+    fillp()
+    pset(cx+nx*(step%2==0 and 5 or -5),cy,38)
+  end
+  for step=1,6 do
+    local d=step*7
+    local width=max(1,flr((7-step)*0.68)+pulse%2)
+    local cx=mx+fire_aim_x*d
+    local cy=my+fire_aim_y*d
+    circfill(cx,cy,width,step<3 and 31 or step<5 and 38 or 36)
+    line(cx-nx*width,cy-ny*width,cx+nx*width,cy+ny*width,
+      step<4 and 63 or step<6 and 31 or 38)
+    circfill(cx,cy,max(1,width-2),step<4 and 63 or 31)
+    if step%2==0 then
+      line(cx+nx*(width+1),cy+ny*(width+1),
+        cx+nx*(width+4),cy+ny*(width+4),31)
+    end
+  end
+end
+
+local function draw_laser_fx()
+  if laser_timer<=0 then return end
+  local cx=player_x+7
+  local ey=player_y-7
+  local ex0,ex1=cx-6,cx+6
+  local pulse=laser_timer%3
+  -- Cyan aura, white core, and a broken fringe read as energy instead of a flat bar.
+  line(ex0,ey-2,laser_x2,laser_y2-2,10)
+  line(ex1,ey+2,laser_x2,laser_y2+2,10)
+  line(ex0,ey+2,laser_x2,laser_y2+2,7)
+  line(ex1,ey-2,laser_x2,laser_y2-2,7)
+  line(ex0,ey,laser_x2,laser_y2,63)
+  line(ex1,ey,laser_x2,laser_y2,63)
+  if frame_now%4<2 then
+    line(ex0,ey+1,laser_x2,laser_y2+1,31)
+    line(ex1,ey-1,laser_x2,laser_y2-1,31)
+  end
+  circ(ex0,ey,5+pulse,10) circ(ex1,ey,5+pulse,10)
+  circfill(ex0,ey,2,63) circfill(ex1,ey,2,63)
+  for i=1,8 do
+    local a=i/8+frame_now/17
+    local r=4+i
+    line(laser_x2,laser_y2,
+      laser_x2+cos(a)*r,laser_y2+sin(a)*r,i%2==0 and 31 or 10)
+  end
+  circ(laser_x2,laser_y2,7+pulse,10)
+  circfill(laser_x2,laser_y2,3+pulse,63)
+end
+
 local function draw_player()
   local flicker=invuln>0 and invuln%6<3
   if flicker then
     for ink=1,15 do pal(ink,ink%2==0 and 63 or 14) end
   end
-  if tongue_state=="latched" then
-    local speed=abs(vx)+abs(vy)
-    if speed>1.2 then
-      for i=1,3 do
-        line(player_x+7-vx*i*2,player_y+8-vy*i*2,
-          player_x+7-vx*(i+1)*3,player_y+8-vy*(i+1)*3,i==1 and 10 or 8)
-      end
+  local pose="idle"
+  if hurt_timer>0 or respawn_timer>0 then pose="hurt"
+  elseif laser_timer>0 then pose="recoil"
+  elseif fire_timer>0 then pose="mutate"
+  elseif tongue_state=="latched" then pose="swing"
+  elseif not grounded then pose="air"
+  elseif abs(vx)>0.22 then pose="run" end
+  if tongue_state=="latched" and abs(vx)+abs(vy)>1.2 then
+    for i=1,3 do
+      line(player_x+7-vx*i*2,player_y+8-vy*i*2,
+        player_x+7-vx*(i+1)*3,player_y+8-vy*(i+1)*3,i==1 and 10 or 8)
     end
-    aspr("frog.swing",player_x+7,player_y+15,tongue_t0,face_left,false)
-  elseif hurt_timer>0 or respawn_timer>0 then
-    aspr("frog.hurt",player_x+7,player_y+15,frame_now-hurt_timer,face_left,false)
-  elseif not grounded then
-    aspr("frog.air",player_x+7,player_y+15,0,face_left,false)
-  elseif abs(vx)>0.22 then
-    aspr("frog.run",player_x+7,player_y+15,0,face_left,false)
-  else
-    aspr("frog.idle",player_x+7,player_y+15,0,face_left,false)
   end
+  draw_frog_pose(player_x+7,player_y+15,pose,face_left)
   if flicker then for ink=0,15 do pal(ink,INK_MAP[ink+1]) end end
-  if fire_timer>0 then
-    pset(player_x+(face_left and 1 or 13),player_y+5,5)
-  end
 end
 
 local function draw_exit()
@@ -1510,45 +2056,239 @@ local function draw_boss_gate()
   end
 end
 
+local function draw_light_pool(x,y,accent)
+  fillp(0xaaaa,accent)
+  line(x-3,y+3,x+3,y+3,accent)
+  line(x-7,y+10,x+7,y+10,accent)
+  line(x-12,y+19,x+12,y+19,accent)
+  line(x-3,y+1,x-12,y+19,accent)
+  line(x+3,y+1,x+12,y+19,accent)
+  fillp()
+  rectfill(x-3,y-4,x+3,y,48)
+  line(x-2,y-3,x+2,y-3,63)
+  pset(x,y-2,31)
+end
+
+local function draw_rooftop_room(x,y,w,label,accent)
+  rectfill(x,y-42,x+w,y,49)
+  rect(x-1,y-43,x+w+1,y+1,59)
+  rect(x+3,y-38,x+w-3,y-4,52)
+  line(x+4,y-37,x+w-4,y-37,55)
+  local panes=max(1,flr((w-8)/12))
+  for i=0,panes-1 do
+    local wx=x+6+i*12
+    rectfill(wx,y-30,wx+7,y-15,41)
+    rect(wx,y-30,wx+7,y-15,accent)
+    rectfill(wx+2,y-28,wx+5,y-17,(i+frame_now/30)%4<3 and 31 or accent)
+    line(wx+4,y-29,wx+4,y-16,63)
+  end
+  rectfill(x+4,y-11,x+w-4,y-5,48)
+  print(label,x+w/2,y-10,63,"center")
+  for bx=x+3,x+w-3,w-6 do pset(bx,y-2,31) end
+end
+
+local function draw_pipe_cluster(x,y)
+  for i=0,2 do
+    local px=x+i*9
+    local h=24+i*8
+    rectfill(px,y-h,px+5,y,50)
+    line(px,y-h,px,y,59) line(px+5,y-h,px+5,y,52)
+    line(px+2,y-h,px+2,y-h-7,55)
+    circ(px+2,y-h-8,4,59)
+    if (frame_now+i*13)%70<18 then
+      fillp(0xaaaa,59)
+      circfill(px+2,y-h-13-(frame_now%9),3+i,59)
+      fillp()
+    end
+  end
+  rectfill(x-4,y-6,x+27,y,48)
+  rect(x-4,y-6,x+27,y,55)
+end
+
+local function draw_water_tower(x,y)
+  line(x-16,y,x-10,y-48,52) line(x+16,y,x+10,y-48,52)
+  line(x-15,y-18,x+15,y-18,54)
+  line(x-14,y-4,x+12,y-34,52) line(x+14,y-4,x-12,y-34,52)
+  rectfill(x-16,y-61,x+16,y-43,49)
+  circfill(x,y-61,16,50)
+  rect(x-15,y-61,x+15,y-43,59)
+  circ(x,y-61,15,59)
+  line(x-12,y-53,x+12,y-53,13)
+  print("H2O?",x,y-57,31,"center")
+end
+
+local function draw_neon_billboard(x,y,label,accent)
+  line(x-24,y,x-19,y-32,52) line(x+24,y,x+19,y-32,52)
+  rectfill(x-28,y-60,x+28,y-28,48)
+  rect(x-29,y-61,x+29,y-27,59)
+  rect(x-25,y-57,x+25,y-31,accent)
+  fillp(0xaaaa,accent) rectfill(x-23,y-55,x+23,y-33,accent) fillp()
+  print(label,x,y-49,63,"center")
+  print("A BETTER BUG",x,y-39,31,"center")
+  for bx=x-25,x+25,10 do pset(bx,y-59,(bx+frame_now)%12<7 and 31 or 36) end
+end
+
+local function draw_fenced_machine(x,y,accent)
+  rectfill(x-25,y-38,x+25,y,49)
+  rect(x-26,y-39,x+26,y+1,59)
+  circfill(x,y-20,13,50) circ(x,y-20,13,accent)
+  circ(x,y-20,8,55)
+  line(x,y-32,x,y-8,13) line(x-12,y-20,x+12,y-20,13)
+  for a=0,3 do
+    local ax=x+cos(a/4)*8 local ay=y-20+sin(a/4)*8
+    line(x,y-20,ax,ay,54)
+  end
+  rectfill(x-20,y-7,x+20,y-3,52)
+  for px=x-22,x+22,11 do
+    line(px,y,px,y-44,55)
+    line(px,y-40,px+11,y-5,52)
+  end
+  line(x-24,y-44,x+25,y-44,59)
+end
+
+local function draw_zone_architecture()
+  local zone=scene_zone()
+  local accent=ZONE_ACCENT[zone+1]
+  -- Floating routes alternate between suspended catwalks, façades, and short trusses.
+  for i=1,#level.platforms do
+    local p=level.platforms[i]
+    local x,y,w=p[1]*8,p[2]*8,p[3]*8
+    if p[4]==1 and p[5]~=ACID and x+w>camera_x-24 and x<camera_x+SW+24 then
+      local depth=mid(16,22+(i*11)%27,WORLD_H-y-1)
+      if p[5]==MUD then
+        line(x+4,y+7,x+1,y+depth,9)
+        line(x+w-5,y+7,x+w-2,y+depth,9)
+        for root=x+10,x+w-8,16 do
+          line(root,y+6,root-3+(root%7),y+14+(root%13),10)
+        end
+      elseif p[5]==GIRDER and i%2==0 then
+        rectfill(x+2,y+5,x+w-3,y+8,50)
+        for bx=x+4,x+w-12,16 do
+          line(bx,y+9,bx,y+depth,52)
+          line(bx+12,y+9,bx+12,y+depth,52)
+          line(bx,y+10,bx+12,y+depth-1,54)
+          line(bx+12,y+10,bx,y+depth-1,51)
+          circfill(bx,y+10,1,13) circfill(bx+12,y+10,1,13)
+        end
+      elseif p[5]==GIRDER then
+        line(x+5,y+6,x+5,y-24,52)
+        line(x+w-6,y+6,x+w-6,y-24,52)
+        line(x+5,y-20,x+w-6,y-8,54)
+        line(x+w-6,y-20,x+5,y-8,51)
+        for cable=x+12,x+w-10,18 do line(cable,y+6,cable,y-13,53) end
+      else
+        rectfill(x+2,y+6,x+w-3,y+depth,50)
+        rect(x+4,y+9,x+w-5,y+depth,52)
+        line(x+5,y+12,x+w-6,y+12,54)
+        for wx=x+8,x+w-10,12 do
+          line(wx,y+13,wx,y+depth,51)
+          for wy=y+18,y+depth-5,12 do
+            if (wx+wy+i)%3==0 then rectfill(wx+2,wy,wx+4,wy+3,accent) end
+          end
+        end
+      end
+    end
+  end
+  -- Three restrained light pools guide the eye through every camera sector.
+  local sector=zone*128
+  draw_light_pool(sector+30,camera_y+196,zone%2==0 and 31 or accent)
+  draw_light_pool(sector+92,camera_y+236,zone%2==0 and accent or 31)
+  draw_light_pool(sector+154,camera_y+174,zone%3==0 and 36 or 31)
+
+  -- One major landmark per zone, supported by smaller asymmetric machinery.
+  if zone==0 then
+    draw_rooftop_room(74,454,54,"LICK LAB",10)
+    draw_pipe_cluster(157,472)
+  elseif zone==1 then
+    draw_water_tower(224,471)
+    draw_fenced_machine(294,472,10)
+  elseif zone==2 then
+    draw_neon_billboard(354,450,"MOLT!",4)
+    draw_pipe_cluster(420,472)
+  elseif zone==3 then
+    draw_rooftop_room(474,452,62,"GENE BAR",45)
+    draw_fenced_machine(558,472,4)
+  elseif zone==4 then
+    draw_water_tower(623,455)
+    draw_neon_billboard(691,438,"CROAK",10)
+  elseif zone==5 then
+    draw_fenced_machine(752,456,36)
+    draw_rooftop_room(787,448,62,"HR HIVE",36)
+  elseif zone==6 then
+    -- The arena drops to a quiet dark proscenium so the Colonel owns the silhouette.
+    rectfill(826,397,944,472,48)
+    rect(830,401,940,468,50)
+    line(834,405,936,405,52)
+    rectfill(826,397,834,472,49) rectfill(936,397,944,472,49)
+    for y=414,460,12 do
+      pset(831,y,36) pset(939,y,31)
+    end
+    circ(884,411,12,35) circ(884,411,8,52)
+    line(876,411,892,411,50) line(884,403,884,419,50)
+  end
+end
+
 local function draw_prop(p)
   local kind,x,y,w=p[1],p[2],p[3],p[4]
   if kind=="pipe" then
-    line(x,y,x+w,y,52) line(x,y+2,x+w,y+2,55)
-    line(x,y,x,y-22,52) line(x+3,y,x+3,y-22,55)
-    circ(x+2,y-22,4,13)
-    for px=x+12,x+w-4,20 do circfill(px,y+1,1,13) end
+    rectfill(x,y-4,x+w,y+3,50)
+    line(x,y-4,x+w,y-4,59) line(x,y+3,x+w,y+3,52)
+    rectfill(x-3,y-28,x+5,y+2,50)
+    line(x-3,y-28,x-3,y+1,59) line(x+5,y-28,x+5,y+1,52)
+    circ(x+1,y-28,6,55) circ(x+1,y-28,3,13)
+    for px=x+12,x+w-4,20 do
+      rectfill(px,y-5,px+3,y+4,52)
+      line(px+1,y-3,px+1,y+2,13)
+    end
   elseif kind=="fence" then
-    line(x,y-28,x+w,y-28,13) line(x,y,x+w,y,52)
+    rectfill(x,y-31,x+w,y-28,50)
+    line(x,y-31,x+w,y-31,59) line(x,y,x+w,y,52)
     for px=x,x+w,12 do
-      line(px,y,px,y-28,52)
-      line(px,y,px+12,y-28,50)
+      rectfill(px,y-31,px+2,y,50)
+      line(px+2,y-28,px+12,y-2,53)
+      line(px+12,y-28,px+2,y-2,52)
+      circfill(px+1,y-31,1,13)
     end
   elseif kind=="sign" then
-    rectfill(x-11,y-25,x+11,y,50)
-    rect(x-12,y-26,x+12,y+1,55)
-    rect(x-8,y-21,x+8,y-6,p[4]==1 and 36 or 41)
+    rectfill(x-13,y-29,x+13,y+1,49)
+    rect(x-14,y-30,x+14,y+2,59)
+    rect(x-11,y-27,x+11,y-4,52)
+    rectfill(x-9,y-25,x+9,y-6,p[4]==1 and 35 or 41)
+    line(x-9,y-25,x+9,y-25,p[4]==1 and 36 or 45)
     if p[4]==1 then
-      line(x-5,y-18,x+5,y-9,4) line(x+5,y-18,x-5,y-9,4)
+      line(x-6,y-21,x+6,y-9,4) line(x+6,y-21,x-6,y-9,4)
+      pset(x,y-15,63)
     else
-      circfill(x,y-15,5,11) pset(x-2,y-16,63) pset(x+2,y-16,63)
-      line(x-4,y-9,x+4,y-9,14)
+      circfill(x,y-16,6,7)
+      circfill(x-3,y-18,2,11) circfill(x+3,y-18,2,11)
+      pset(x-3,y-18,48) pset(x+3,y-18,48)
+      line(x-5,y-11,x+5,y-11,14)
     end
+    line(x-9,y+2,x-5,y+8,52) line(x+9,y+2,x+5,y+8,52)
   elseif kind=="vent" then
-    rectfill(x-13,y-20,x+13,y,50)
-    rect(x-14,y-21,x+14,y+1,55)
-    for vy=y-16,y-4,4 do line(x-9,vy,x+9,vy,13) end
-    line(x-10,y-24,x+10,y-24,52)
+    rectfill(x-16,y-23,x+16,y+1,49)
+    rect(x-17,y-24,x+17,y+2,59)
+    rect(x-13,y-20,x+13,y-3,52)
+    circfill(x,y-12,9,50) circ(x,y-12,9,55)
+    line(x,y-21,x,y-3,13) line(x-9,y-12,x+9,y-12,13)
+    line(x-6,y-18,x+6,y-6,52) line(x+6,y-18,x-6,y-6,52)
+    for bolt=-13,13,26 do pset(x+bolt,y-21,31) pset(x+bolt,y-2,31) end
   elseif kind=="tank" then
-    rectfill(x-12,y-26,x+12,y,50)
-    circfill(x,y-26,12,50)
-    circ(x,y-26,12,55)
-    line(x-8,y-20,x+8,y-20,13)
-    line(x,y-38,x,y-46,52)
-    pset(x,y-47,36)
+    rectfill(x-15,y-30,x+15,y,49)
+    circfill(x,y-30,15,49)
+    rect(x-14,y-29,x+14,y,55)
+    circ(x,y-30,14,59)
+    line(x-11,y-23,x+11,y-23,13)
+    line(x-12,y-12,x+12,y-12,52)
+    line(x-9,y-35,x+9,y-35,56)
+    line(x,y-45,x,y-55,52)
+    pset(x,y-56,36)
+    line(x-10,y,x-14,y+8,52) line(x+10,y,x+14,y+8,52)
   end
 end
 
 local function draw_terrain_detail()
+  local zone=scene_zone()
   local x0=max(0,flr(camera_x/8)-1)
   local x1=min(119,flr((camera_x+SW)/8)+1)
   local y0=max(0,flr(camera_y/8)-1)
@@ -1559,19 +2299,50 @@ local function draw_terrain_detail()
       local x,y=cx*8,cy*8
       if solid(tile) then
         if not solid(mget(cx,cy-1)) then
-          line(x,y,x+7,y,tile==MUD and 14 or tile==BREAKABLE and 4 or 59)
-          pset(x+1,y+1,63) pset(x+6,y+1,13)
+          local cap=tile==MUD and 14 or tile==BREAKABLE and 4 or 59
+          line(x,y,x+7,y,cap)
+          line(x,y+1,x+7,y+1,tile==MUD and 11 or 55)
+          line(x+1,y+2,x+6,y+2,tile==MUD and 9 or 52)
+          pset(x+1,y,63) pset(x+6,y+1,13)
+          if zone==1 and cx%4==0 then
+            line(x+2,y-2,x+5,y-2,31)
+          elseif zone==2 and cx%3==0 then
+            pset(x+3,y-1,45) pset(x+4,y-1,45)
+          elseif zone==3 and cx%4==1 then
+            line(x+2,y-1,x+5,y-1,10)
+          elseif zone==4 and cx%3==0 then
+            line(x+1,y-2,x+3,y,36) line(x+4,y,x+6,y-2,31)
+          elseif zone>=5 and cx%4==2 then
+            rectfill(x+2,y-2,x+5,y-1,36)
+            pset(x+3,y-2,63)
+          end
+          if tile==MUD then
+            pset(x+3,y-1,(cx%3==0) and 6 or 10)
+            if cx%5==0 then line(x+5,y,x+5,y+4,10) end
+          end
         end
-        if tile==STEEL and (cx+cy)%3==0 then pset(x+4,y+5,13) end
+        if not solid(mget(cx-1,cy)) then line(x,y+1,x,y+7,59) end
+        if not solid(mget(cx+1,cy)) then line(x+7,y+1,x+7,y+7,52) end
+        if tile==STEEL then
+          line(x+1,y+4,x+6,y+4,52)
+          if (cx+cy)%3==0 then circfill(x+4,y+5,1,13) end
+          if (cx*7+cy)%5==0 then pset(x+2,y+6,31) end
+        end
         if tile==GIRDER then
-          line(x+1,y+2,x+6,y+6,52) line(x+6,y+2,x+1,y+6,52)
+          line(x+1,y+2,x+6,y+6,55) line(x+6,y+2,x+1,y+6,52)
+          pset(x+1,y+2,13) pset(x+6,y+2,13)
         elseif tile==MUD and (cx+cy)%2==0 then
-          line(x+2,y+1,x+2,y+4,6) pset(x+5,y+2,11)
+          line(x+2,y+1,x+2,y+5,6) pset(x+5,y+2,11)
+          pset(x+6,y+5,9)
         elseif tile==BREAKABLE then
+          rect(x+1,y+1,x+6,y+6,35)
           line(x+1,y+1,x+6,y+6,36) line(x+6,y+1,x+1,y+6,36)
+          pset(x+3,y+3,31)
         end
       elseif tile==ACID then
         local bob=(frame_now+cx*7)%18
+        line(x,y+1,x+7,y+1,(cx+frame_now)%4<2 and 10 or 6)
+        fillp(0x5a5a,8) rectfill(x,y+3,x+7,y+7,9) fillp()
         if bob<5 then circ(x+2+(cx%3)*2,y+2,1,bob<2 and 31 or 6) end
       end
     end
@@ -1583,9 +2354,13 @@ local function draw_world()
   local sy=shake>0 and flr(rnd(5))-2 or 0
   clip(0,HUD_H,SW,SH-HUD_H)
   camera(camera_x-sx,camera_y-HUD_H-sy)
+  draw_zone_architecture()
   map()
   draw_terrain_detail()
-  for i=1,#level.props do draw_prop(level.props[i]) end
+  for i=1,#level.props do
+    local p=level.props[i]
+    if not (boss_started and p[2]>=810) then draw_prop(p) end
+  end
   for i=1,#secrets do draw_secret(secrets[i],i) end
   for i=1,#pickups do draw_pickup(pickups[i],i) end
   for i=1,#bombs do draw_bomb(bombs[i],i) end
@@ -1602,15 +2377,8 @@ local function draw_world()
   draw_particles_world()
   draw_grapple_hint()
   draw_tongue()
-  if laser_timer>0 then
-    local mx,my=player_mouth()
-    line(mx,my,laser_x2,laser_y2,63)
-    line(mx,my+1,laser_x2,laser_y2+1,10)
-    for i=0,4 do
-      local f=i/4
-      circfill(mx+(laser_x2-mx)*f,my+(laser_y2-my)*f,1,i%2==0 and 10 or 63)
-    end
-  end
+  draw_fire_fx()
+  draw_laser_fx()
   draw_player()
   camera()
   clip()
@@ -1618,40 +2386,61 @@ end
 
 local function draw_hud()
   clip(0,0,SW,HUD_H)
-  cls(48)
-  clip()
-  rect(0,0,SW-1,HUD_H-1,55)
-  line(1,HUD_H-2,SW-2,HUD_H-2,41)
-  print("HP",4,5,63)
+  cls(49)
+  rectfill(1,1,SW-2,HUD_H-2,48)
+  line(2,2,SW-3,2,59)
+  line(2,HUD_H-3,SW-3,HUD_H-3,41)
+  rectfill(2,3,55,12,49)
+  rectfill(59,3,126,12,49)
+  rectfill(130,3,189,12,49)
+  print("VIT",4,5,59)
   for i=1,player_max_hp do
-    local x=17+(i-1)*7
+    local x=20+(i-1)*7
     local alive=i<=player_hp
-    circfill(x,7,3,alive and 6 or 34)
-    pset(x-2,4,alive and 14 or 52) pset(x+2,4,alive and 14 or 52)
-    pset(x-1,6,alive and 48 or 52) pset(x+1,6,alive and 48 or 52)
-    line(x-1,9,x+1,9,alive and 11 or 52)
+    circfill(x-2,6,2,alive and 6 or 34)
+    circfill(x+2,6,2,alive and 6 or 34)
+    rectfill(x-3,7,x+3,10,alive and 7 or 50)
+    pset(x-2,5,alive and 11 or 52) pset(x+2,5,alive and 11 or 52)
+    pset(x-2,6,alive and 48 or 49) pset(x+2,6,alive and 48 or 49)
+    line(x-2,9,x+2,9,alive and 14 or 52)
   end
-  print(mutation,55,5,mutation=="LASER EYES" and 10 or mutation=="FIRE BREATH" and 4 or 58)
-  print("$"..score,144,5,31)
-  if combo>1 then print("X"..combo,123,5,5) end
+  line(57,3,57,12,52) line(128,3,128,12,52)
+  if mutation=="LASER EYES" then
+    circfill(66,7,3,10) circfill(73,7,3,10)
+    pset(66,7,63) pset(73,7,63)
+    print("LASER",82,5,10)
+  elseif mutation=="FIRE BREATH" then
+    circfill(69,8,4,5) circ(69,8,4,4)
+    pset(71,6,63)
+    print("FIRE",82,5,4)
+  else
+    rect(65,4,73,10,52)
+    print("WILD",82,5,58)
+  end
+  if combo>1 then print("X"..combo,124,5,31,"right") end
+  print("$"..score,187,5,31,"right")
+  clip()
   if boss_started and not exit_open then
-    rect(43,13,148,15,52)
+    rectfill(25,18,167,28,48)
+    rect(25,18,167,28,59)
+    print("BUZZKILL",30,20,63)
     local boss=enemies[#enemies]
-    rectfill(44,14,44+flr(103*boss.hp/boss.max_hp),14,
+    rectfill(76,20,150,25,50)
+    rectfill(77,21,77+flr(71*boss.hp/boss.max_hp),24,
       boss.phase_id==1 and 3 or boss.phase_id==2 and 4 or 36)
-    print("P"..(boss.phase_id or 1),151,12,boss.vulnerable and 31 or 10)
+    pset(78,21,63)
+    print("P"..(boss.phase_id or 1),162,20,boss.vulnerable and 31 or 10,"right")
   end
 end
 
 local function draw_banner()
   if banner_timer<=0 then return end
-  local y=SH-22
-  fillp(0x5a5a,49)
-  rectfill(7,y,184,y+15,48)
-  fillp()
-  rect(7,y,184,y+15,15)
-  line(10,y+2,181,y+2,4)
-  print(banner,12,y+6,banner_timer%10<7 and 63 or 31)
+  local y=SH-14
+  rectfill(2,y,189,y+11,48)
+  rect(2,y,189,y+11,59)
+  line(5,y+2,186,y+2,41)
+  rectfill(6,y+4,10,y+8,36)
+  print(banner,14,y+4,banner_timer%10<7 and 63 or 31)
 end
 
 local function draw_pause()
@@ -1670,75 +2459,154 @@ local function draw_pause()
   print("MENU  RETURN TO NONSENSE",40,220,14)
 end
 
-local function draw_title()
-  local oldx,oldy=camera_x,camera_y
-  camera_x,camera_y=0,208
-  draw_backdrop()
-  camera_x,camera_y=oldx,oldy
-  rect(2,2,SW-3,SH-3,55)
-  line(5,5,26,5,13) line(5,5,5,26,13)
-  line(SW-6,5,SW-27,5,13) line(SW-6,5,SW-6,26,13)
-  -- Hero tableau echoes the in-game scale instead of a smooth logo blob.
-  rectfill(53,103,138,109,50)
-  line(53,102,138,102,59)
-  for x=57,134,12 do pset(x,105,13) end
-  sspr(0,0,16,16,75,54,44,44,false,false)
-  local lick=129+sin(t()*0.65)*8
-  line(112,72,lick,57,46)
-  circfill(lick,57,2,46)
-  aspr("gnat.fly",142,52,-8,true,false)
-  aspr("gnat.fly",46,80,-20,false,false)
-  rectfill(17,116,174,176,48)
-  rect(17,116,174,176,15)
-  rect(21,120,170,172,52)
-  print("R I B B I T",65,128,6)
-  print("R E C O I L",59,145,4)
-  line(39,160,152,160,41)
-  print("TONGUE-BASED REGIME CHANGE",37,165,31)
-  if show_guide then
-    rectfill(18,188,173,276,49)
-    rect(18,188,173,276,55)
-    line(22,192,169,192,13)
-    print("D-PAD  RUN + AIM",57,199,63)
-    print("A  HOP / HOLD FOR HEIGHT",43,214,63)
-    print("HOLD B  TONGUE + REEL",48,229,46)
-    print("DOWN+A FIRE / DOWN+B SWAP",36,244,10)
-    print("DEFEAT UPPER MANAGEMENT",39,259,4)
-    print("HOP. LICK. ACHIEVE VELOCITY.",32,270,59)
+local GLYPH_R={30,17,17,30,20,18,17}
+local GLYPH_I={31,4,4,4,4,4,31}
+local GLYPH_B={30,17,17,30,17,17,30}
+local GLYPH_T={31,4,4,4,4,4,4}
+local GLYPH_E={31,16,16,30,16,16,31}
+local GLYPH_C={15,16,16,16,16,16,15}
+local GLYPH_O={14,17,17,17,17,17,14}
+local GLYPH_L={16,16,16,16,16,16,31}
+
+local function draw_logo_word(letters,cx,y,scale,main,highlight,shadow)
+  local advance=6*scale
+  local width=#letters*advance-scale
+  local x0=flr(cx-width/2)
+  for li=1,#letters do
+    local glyph=letters[li]
+    for row=1,7 do
+      local mask=glyph[row]
+      for col=0,4 do
+        if flr(mask/(2^(4-col)))%2==1 then
+          local x=x0+(li-1)*advance+col*scale
+          local py=y+(row-1)*scale
+          rectfill(x+2,py+2,x+scale+1,py+scale+1,shadow)
+          rectfill(x,py,x+scale-1,py+scale-1,main)
+          line(x,py,x+scale-1,py,highlight)
+        end
+      end
+    end
   end
-  print(frame_now%80<58 and "A/B  DEPLOY FROG" or "   PRESS THE BAD IDEA",53,286,63)
-  print("MENU  TOGGLE BRIEFING",55,304,58)
+end
+
+local function draw_title()
+  cls(49)
+  rectfill(0,0,191,118,40)
+  rectfill(0,119,191,190,41)
+  -- Clean moon and two city depths frame, rather than compete with, the logo.
+  fillp(0xaaaa,40) circfill(154,82,38,14) fillp()
+  circfill(154,82,29,60) circ(154,82,30,63) circ(154,82,33,10)
+  circfill(145,74,6,56) circfill(163,90,7,55) circ(164,69,4,52)
+  for i=0,8 do
+    local x=i*25-8 local h=24+(i*13)%40
+    rectfill(x,190-h,x+18,190,50)
+    line(x+2,190-h+2,x+16,190-h+2,54)
+    for wy=190-h+9,185,9 do pset(x+5,wy,i%3==0 and 31 or 13) end
+  end
+  for a=0,5 do
+    line(96,103,96+cos(a/6)*118,103+sin(a/6)*80,52)
+  end
+  rect(2,2,SW-3,SH-3,59)
+  rect(5,5,SW-6,SH-6,50)
+  line(7,7,40,7,31) line(7,7,7,40,31)
+  line(184,7,151,7,10) line(184,7,184,40,10)
+
+  -- One unified, high-contrast industrial lockup.
+  draw_logo_word({GLYPH_R,GLYPH_I,GLYPH_B,GLYPH_B,GLYPH_I,GLYPH_T},96,15,2,14,63,48)
+  draw_logo_word({GLYPH_R,GLYPH_E,GLYPH_C,GLYPH_O,GLYPH_I,GLYPH_L},96,34,2,38,31,48)
+  line(39,51,153,51,63)
+  line(45,54,145,54,46)
+  circfill(37,51,3,46) circfill(155,51,3,46)
+  rectfill(43,58,149,68,48)
+  rect(43,58,149,68,59)
+  print("MUTANT FROG STRIKES BACK",96,61,31,"center")
+
+  -- Dynamic key art: airborne frog, active tongue, recoil lines, readable prey.
+  for ray=0,6 do
+    local a=ray/7
+    line(73,132,73+cos(a)*58,132+sin(a)*48,ray%2==0 and 10 or 52)
+  end
+  draw_frog_pose(72,171,"air",false,2)
+  line(91,135,142,106,46) line(91,136,142,107,47)
+  circfill(143,106,3,46)
+  draw_gnat(156,102,true,false)
+  draw_wasp(30,118,false,false)
+  line(52,174,20,181,10) line(55,178,26,191,52)
+  rectfill(17,181,175,188,48)
+  rect(17,181,175,188,59)
+  for x=23,169,12 do line(x,183,x+6,187,52) line(x+6,183,x,187,52) end
+
+  -- One calm instruction card with a fixed hierarchy.
+  if show_guide then
+    rectfill(24,202,167,251,48)
+    rect(24,202,167,251,59)
+    rect(28,206,163,247,49)
+    print("QUICK START",96,208,31,"center")
+    line(34,216,157,216,41)
+    print("A  HOP",40,221,31) print("B  TONGUE",103,221,46)
+    print("D-PAD  RUN + AIM",96,231,63,"center")
+    print("DOWN+A  MUTATION",96,240,10,"center")
+  else
+    rectfill(24,207,167,248,48)
+    rect(24,207,167,248,59)
+    print("THE MOSQUITO COMPLEX",96,215,31,"center")
+    print("TONGUE FIRST. QUESTIONS NEVER.",96,231,63,"center")
+  end
+  rectfill(33,270,159,293,35)
+  rect(32,269,160,294,63)
+  print(frame_now%80<58 and "PRESS A  DEPLOY FROG" or "PRESS A  BAD IDEA",96,278,63,"center")
 end
 
 local function draw_win()
-  local oldx,oldy=camera_x,camera_y
-  camera_x,camera_y=0,208
-  draw_backdrop()
-  camera_x,camera_y=oldx,oldy
-  for i=0,17 do
-    local a=i/18
-    line(96,102,96+cos(a)*120,102+sin(a)*120,i%2==0 and 4 or 14)
+  cls(49)
+  rectfill(0,0,191,319,40)
+  rectfill(0,104,191,319,41)
+  -- Celebratory burst, confetti, and a stage make the ending the visual peak.
+  fillp(0xaaaa,41) circfill(96,143,86,14) fillp()
+  for i=0,23 do
+    local a=i/24
+    line(96,145,96+cos(a)*118,145+sin(a)*118,
+      i%3==0 and 31 or i%3==1 and 10 or 36)
   end
-  rectfill(16,24,175,285,59)
-  rect(16,24,175,285,63)
-  rect(20,28,171,281,36)
-  print("THE DAILY CROAK",64,37,48)
-  line(28,49,163,49,48)
-  print("FROG BECOMES TOO POWERFUL",39,58,36)
-  sspr(0,0,16,16,76,72,40,40,false,false)
-  print("MOSQUITO ECONOMY IN TATTERS",34,119,48)
-  line(29,131,162,131,48)
-  print("SCORE         "..score,39,143,41)
-  print("TIME          "..run_time(),39,158,41)
-  print("BUGS          "..bugs_defeated,39,173,41)
-  print("MAX COMBO     X"..max_combo,39,188,41)
-  print("DE-FROGGINGS  "..deaths,39,203,41)
-  print("SECRET FLIES  "..secrets_found.."/"..#secrets,39,218,41)
-  rectfill(61,235,130,255,48)
-  rect(61,235,130,255,36)
-  print("RANK  "..run_rank(),78,243,31)
-  print("NEXT: CANOPY CONVEYOR",51,267,8)
-  print("A/B  COMMIT ANOTHER INCIDENT",34,294,63)
+  circfill(96,145,65,40)
+  circ(96,145,67,63) circ(96,145,72,31)
+  for i=0,17 do
+    local x=(i*37+frame_now)%188+2
+    local y=48+(i*29)%150
+    line(x,y,x+(i%3)-1,y+4,i%3==0 and 31 or i%3==1 and 10 or 36)
+  end
+  rect(3,3,188,316,59)
+  rectfill(14,13,177,49,48)
+  rect(13,12,178,50,63)
+  print("MOSQUITO REGIME",96,20,31,"center")
+  print("TERMINATED",96,32,63,"center")
+  line(23,43,169,43,36)
+  rectfill(40,52,152,64,48)
+  rect(40,52,152,64,52)
+  print("COLONEL BUZZKILL: FIRED",96,56,38,"center")
+
+  draw_frog_pose(63,183,"victory",false,2)
+  draw_buzzkill({x=121,y=139,phase_id=3,dir=-1},false)
+  line(116,117,174,181,36) line(174,117,116,181,36)
+  rectfill(12,184,180,194,48)
+  rect(11,183,181,195,59)
+  for x=17,175,12 do line(x,186,x+6,191,52) line(x+6,186,x,191,52) end
+  rectfill(36,197,156,208,48)
+  rect(36,197,156,208,52)
+  print("NO ARMS. NO MASTERS. NO HR.",96,200,31,"center")
+
+  rectfill(25,214,166,258,48)
+  rect(24,213,167,259,59)
+  print("SCORE",34,221,59) print(score,157,221,63,"right")
+  print("TIME",34,233,59) print(run_time(),157,233,63,"right")
+  print("BUGS DE-FUNDED",34,245,59) print(bugs_defeated,157,245,63,"right")
+  rectfill(53,265,139,286,35)
+  rect(52,264,140,287,31)
+  print("DISASTER RANK",96,268,59,"center")
+  print(run_rank(),96,278,31,"center")
+  rectfill(31,292,161,310,36)
+  rect(30,291,162,311,63)
+  print("PRESS A  NEXT INCIDENT",96,297,63,"center")
 end
 
 function _draw()
@@ -1752,7 +2620,10 @@ function _draw()
     draw_banner()
     if paused then draw_pause() end
     if fire_timer>0 then
-      for y=HUD_H,SH-1,3 do rshift(y,sin(t()*4+y/13)) end
+      local heat_y=flr(player_y+6-camera_y+HUD_H)
+      for y=max(HUD_H,heat_y-10),min(SH-1,heat_y+10),2 do
+        rshift(y,sin(t()*4+y/13))
+      end
     end
   end
   if transition>0 then
@@ -1772,10 +2643,12 @@ function dev_status()
     grounded=grounded,hp=player_hp,score=score,combo=combo,deaths=deaths,
     respawn=respawn_timer,coyote=coyote_timer,hop_buffer=hop_buffer,
     hops=hops,landings=landings,movement_fx=movement_fx,
-    tongue=tongue_state,latched=tongue_state=="latched",rope=rope_len,
+    tongue=tongue_state,tongue_x=tongue_x,tongue_y=tongue_y,
+    latched=tongue_state=="latched",rope=rope_len,
     mutation=mutation,laser=laser_unlocked,fire=fire_unlocked,
     bugs=alive,boss_started=boss_started,boss_hp=boss and boss.hp or 0,
-    boss_defeated=boss_defeated,exit_open=exit_open,checkpoint=checkpoint_index,
+    boss_defeated=boss_defeated,boss_x=boss and boss.x or 0,boss_y=boss and boss.y or 0,
+    exit_open=exit_open,checkpoint=checkpoint_index,
     boss_phase=boss and boss.phase_id or 0,boss_vulnerable=boss and boss.vulnerable or false,
     boss_attack=boss and boss.attack_clock or 0,boss_telegraph=boss and boss.telegraph or 0,
     boss_salvo1=boss and boss.phase_salvos[1] or 0,

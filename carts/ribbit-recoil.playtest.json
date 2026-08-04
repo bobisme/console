@@ -218,6 +218,13 @@
       "buttons": "DA"
     },
     {
+      "name": "fire_artifacts",
+      "op": "capture",
+      "screenshot": "03-fire-breath.png",
+      "zoom": 4,
+      "screen_text": "03-fire-breath.txt"
+    },
+    {
       "name": "fire_target_deleted",
       "op": "assert",
       "code": "return dev_enemy_hp(test_enemy) <= 0",
@@ -258,13 +265,6 @@
       "op": "assert",
       "code": "return dev_status().mutation == 'FIRE BREATH'",
       "equals": true
-    },
-    {
-      "name": "fire_artifacts",
-      "op": "capture",
-      "screenshot": "03-fire-breath.png",
-      "zoom": 4,
-      "screen_text": "03-fire-breath.txt"
     },
     {
       "name": "enter_boss_arena",
