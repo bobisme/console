@@ -295,19 +295,22 @@ Review renders show these sockets and rectangles over the native sprite.
 | Frog | laser eyes | `(-6,-22)` and `(6,-22)`; beam begins at both eyes. |
 | Frog | foot contacts | `(-5,0)` and `(5,0)`; grounded frames keep at least one planted. |
 | Boss | assembly anchor | `(0,0)` maps to current `(e.x+12,e.y+38)`. |
-| Boss | weapon envelope | `x=-46, y=-52, w=92, h=58`; visible wings/weapons reach its edges. |
-| Boss | contact pod | `x=-25, y=-50, w=50, h=52`; closed armor fills this silhouette. |
-| Boss | weak-point aim | `(0,-23)`, matching the current center of the weapon bounds. |
+| Boss | weapon envelope | Phases 1-2: `x=-46, y=-52, w=92, h=58`. Phase 3: `x=-46, y=-52, w=92, h=64`; the lowered claw reaches the new bottom while the surviving right upper wing reaches the top/right edges. |
+| Boss | contact pod | Phases 1-2: `x=-25, y=-50, w=50, h=52`. Phase 3: `x=-25, y=-44, w=50, h=52`; the collider follows the visibly lowered pod. |
+| Boss | weak-point aim | Phases 1-2: `(0,-23)`, matching the weapon-envelope center. Phase 3: `(0,-17)`, following the visibly lowered shutter rather than the taller damage-envelope center. |
 | Boss | current projectile spawn | `(0,-26)`; moving it to the authored cannon muzzle requires the attack code and playtest expectations to change atomically. |
 | Boss | pod-core centers | upper `(0,-38)`, lower `(0,-14)`; each `24x24` core uses center anchor `12,12`. |
-| Boss | module centers | upper wings `(-38,-44)/(38,-44)`, lower wings `(-36,-24)/(36,-24)`, side armor `(-17,-6)/(17,-6)`, weak-point shutter `(0,-23)`, claw `(-38,-2)`, cannon `(38,-2)`. |
+| Boss | module centers | Phases 1-2: upper wings `(-38,-44)/(38,-44)`, lower wings `(-36,-24)/(36,-24)`, side armor `(-17,-6)/(17,-6)`, weak-point shutter `(0,-23)`, claw `(-38,-2)`, cannon `(38,-2)`. Phase-3 deltas are specified below. |
 
-The boss geometry is exact, using half-open rectangles. The upper core spans
+The phase 1-2 boss geometry is exact, using half-open rectangles. The upper core spans
 `[-12,12) x [-50,-26)`; the lower spans `[-12,12) x [-26,-2)`;
 the side armor spans to `x=-25/25` and `y=2`. Their union therefore has bounding
 box `[-25,25) x [-50,2)`, the live `50x52` contact pod. Upper wings touch
 `x=-46/46` and `y=-52`; claw/cannon touch `x=-46/46` and `y=6`, giving the full
-assembly `[-46,46) x [-52,6)`, the live `92x58` weapon envelope. Opaque clusters
+assembly `[-46,46) x [-52,6)`, the live `92x58` weapon envelope. In phase 3,
+the contact pod moves down six pixels to `[-25,25) x [-44,8)` while the right
+upper wing remains at the top edge and the lowered left claw reaches the bottom,
+giving `[-46,46) x [-52,12)`, the live `92x64` damage envelope. Opaque clusters
 must visibly reach each stated edge even though the rounded silhouette leaves
 transparent corner pixels.
 
@@ -323,16 +326,16 @@ Boss composition follows live state without inventing asset choices:
 | dormant | Draw nothing. |
 | phase 1 | Both cores, both side armors, four wings at base sockets, claw, cannon, closed shutter; scoped boss accent stays green index `12`. |
 | phase 2 | Same envelope; lower wings move to `(-38,-20)/(34,-28)` and boss-only accent `12` remaps to cyan `6`, then identity is restored. |
-| phase 3 | Keep both cores, side armors, upper wings, claw and cannon; omit the lower-left wing, move lower-right to `(34,-30)`, remap boss-only accent `12` to red `36`, and add smoke at the missing root. Upper wings plus weapons still touch every weapon-envelope edge. |
-| vulnerable | Replace closed shutter ID `142` with open shutter ID `160`; shield VFX turns off and the aim socket stays `(0,-23)`. |
+| phase 3 | Lower the pod, side armors, shutter, and claw six pixels and cant the upper pod two pixels right; omit the entire left wing assembly; keep the right upper wing at `(38,-44)` and move the right lower wing to `(34,-30)`; replace the full cannon with a short sparking stump; remap boss-only accent `12` to red `36`; add smoke at the missing root. The surviving right upper wing and lowered left claw still touch every weapon-envelope edge, and collision follows the lowered pod. |
+| vulnerable | Replace closed shutter ID `142` with open shutter ID `160`; shield VFX turns off and fallback targeting uses the visible phase socket: `(0,-23)` in phases 1-2 or `(0,-17)` in phase 3. |
 | hurt | Preserve geometry and sockets; for two of five hurt frames, locally remap every boss-used index to the damage/white flash set, then restore the phase mapping. |
 | facing | Never flip the assembly or its world lighting. `e.dir` changes projectile aim only; claw remains left and cannon right. |
 | defeated | Disable contact first, force the open shutter, then move modules outward with deterministic offsets while explosion/smoke modules replace them; cores disappear last. |
 
-The phase-3 missing wing is cosmetic: the always-present upper wings,
-claw/cannon, cores, and side armor continue to define the accepted weapon and
-contact bounds. The transient shield and defeat blasts are VFX, not replacement
-pod geometry.
+The phase-3 left-wing loss and cannon break are persistent silhouette damage,
+not a cosmetic overlay. The right upper wing, left claw, cores, and side armor
+define the accepted dynamic weapon and contact bounds. The transient shield and
+defeat blasts are VFX, not replacement pod geometry.
 
 Every frog overlay is `8x8` with anchor `4,4`. Draw blink ID `15` or persistent
 laser-eye ID `47` once at each eye socket; draw victory ID `31` centered at

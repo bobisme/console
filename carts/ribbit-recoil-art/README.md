@@ -40,6 +40,20 @@ to refresh the checked-in source after an exact PNG import. The runtime scopes
 these exact-index sprites to the identity draw palette, then restores the legacy
 primitive palette for unmigrated art.
 
+## Production enemy atlas
+
+`enemy-atlas.pixels` stores the nine common-insect poses, ten `16x16`
+Buzzkill modules, and two `24x24` pod cores allocated by the art bible. Rebuild
+only those exact cells with:
+
+```bash
+bash carts/ribbit-recoil-art/build-enemy-atlas.sh carts/ribbit-recoil.cart
+```
+
+Use `--extract` after an exact PNG import to refresh the compact source. The
+runtime draws every insect and boss module inside a scoped identity palette;
+Buzzkill's green index `12` accent is the only phase-remapped material.
+
 ## Reproduce and inspect
 
 Run from the console repository root:

@@ -151,10 +151,16 @@ end
 local function enemy_bounds(e,contact)
   if e.kind==E_BOSS then
     -- Wings are valid weapon targets; only the closed command pod deals contact damage.
-    if contact then return e.x-13,e.y-12,50,52 end
-    return e.x-34,e.y-14,92,58
+    local phase3=e.phase_id==3
+    if contact then return e.x-13,e.y-12+(phase3 and 6 or 0),50,52 end
+    return e.x-34,e.y-14,92,phase3 and 64 or 58
   end
   return e.x,e.y,e.w,e.h
+end
+
+function boss_weak_point(e)
+  local phase_shift=e.phase_id==3 and 6 or 0
+  return e.x+12,e.y+38-23+phase_shift
 end
 
 local function aim_vector(default_up)
@@ -714,8 +720,7 @@ local function laser_attack()
   local boss=enemies[#enemies]
   if boss and boss.kind==E_BOSS and boss.alive and not boss.dormant
       and boss.vulnerable and boss.laser_stamp~=hit_stamp then
-    local hx,hy,hw,hh=enemy_bounds(boss,false)
-    local bx,by=hx+hw/2,hy+hh/2
+    local bx,by=boss_weak_point(boss)
     local dx,dy=bx-mx,by-my
     local d=math.sqrt(dx*dx+dy*dy)
     if d<170 and d>0 and (dx/d)*ax+(dy/d)*ay>0.76 then
@@ -1240,6 +1245,22 @@ local function reset_draw_state()
   rshift()
 end
 
+local function restore_legacy_palette()
+  pal()
+  for ink=0,15 do pal(ink,INK_MAP[ink+1]) end
+  palt()
+end
+
+local function begin_authored_sprite_scope(hurt,phase_ink)
+  pal()
+  palt()
+  palt(0,true)
+  if phase_ink then pal(12,phase_ink) end
+  if hurt then
+    for ink=1,63 do pal(ink,ink%2==0 and 63 or 38) end
+  end
+end
+
 local ZONE_ACCENT={6,4,10,45,31,36,14}
 
 local function scene_zone()
@@ -1425,7 +1446,9 @@ local function draw_secret(s,index)
   fillp()
   rectfill(s.x-6,s.y-6,s.x+6,s.y+6,41)
   rect(s.x-7,s.y-7,s.x+7,s.y+7,63)
+  begin_authored_sprite_scope(false)
   aspr("gnat.fly",s.x,s.y,-index*9,false,false)
+  restore_legacy_palette()
   print("BONUS",s.x-10,s.y-18,31)
 end
 
@@ -1463,136 +1486,99 @@ local function draw_bomb(b,index)
   pset(b.x+wob,b.y-15,31)
 end
 
-local function draw_gnat(cx,cy,flip,hurt)
-  local flap=(frame_now%6)<3 and 1 or -1
-  local dir=flip and -1 or 1
-  local body=hurt and 11 or 4
-  line(cx-2,cy-2,cx-9,cy-7-flap,12)
-  line(cx-1,cy,cx-10,cy+5+flap,10)
-  line(cx+2,cy-2,cx+8,cy-7-flap,12)
-  line(cx+2,cy,cx+9,cy+5+flap,10)
-  circfill(cx,cy,4,1)
-  rectfill(cx-3,cy-2,cx+4,cy+2,body)
-  rectfill(cx+dir*4,cy-1,cx+dir*7,cy+1,38)
-  circfill(cx-dir*3,cy-1,2,35)
-  pset(cx-dir*4,cy-2,11)
-  line(cx-2,cy+3,cx-6,cy+6,13)
-  line(cx+2,cy+3,cx+6,cy+6,13)
+local function draw_bug(anim,cx,anchor_y,flip,hurt)
+  begin_authored_sprite_scope(hurt)
+  aspr(anim,cx,anchor_y,0,flip,false)
+  restore_legacy_palette()
 end
 
-local function draw_beetle(cx,feet,flip,hurt)
-  local dir=flip and -1 or 1
-  local shell=hurt and 11 or 7
-  for lx=-7,7,7 do
-    line(cx+lx,feet-7,cx+lx-dir*4,feet,13)
-    line(cx+lx,feet-5,cx+lx+dir*5,feet-1,13)
-  end
-  circfill(cx,feet-9,9,1)
-  circfill(cx,feet-10,8,shell)
-  line(cx,feet-17,cx,feet-3,9)
-  line(cx-6,feet-14,cx+5,feet-7,6)
-  circfill(cx+dir*8,feet-10,4,1)
-  circfill(cx+dir*9,feet-11,2,35)
-  pset(cx+dir*10,feet-12,11)
-  line(cx+dir*9,feet-14,cx+dir*13,feet-18,13)
-  line(cx+dir*8,feet-14,cx+dir*9,feet-19,13)
+local function draw_gnat(cx,cy,flip,hurt,attack)
+  draw_bug(attack and "gnat.attack" or "gnat.fly",cx,cy,flip,hurt)
 end
 
-local function draw_wasp(cx,cy,flip,hurt)
-  local dir=flip and -1 or 1
-  local flap=(frame_now%8)<4 and -5 or -2
-  line(cx-3,cy-3,cx-10,cy+flap,12)
-  line(cx+2,cy-3,cx+9,cy+flap-1,10)
-  line(cx-4,cy+4,cx-9,cy+9,13)
-  line(cx+2,cy+4,cx+8,cy+9,13)
-  rectfill(cx-7,cy-3,cx+6,cy+3,1)
-  rectfill(cx-5,cy-2,cx-2,cy+2,hurt and 11 or 5)
-  rectfill(cx,cy-2,cx+3,cy+2,35)
-  rectfill(cx+5,cy-1,cx+8,cy+1,5)
-  circfill(cx-dir*7,cy-1,4,1)
-  circfill(cx-dir*8,cy-2,2,35)
-  pset(cx-dir*9,cy-3,11)
-  line(cx+dir*8,cy,cx+dir*14,cy,31)
+local function draw_beetle(cx,feet,flip,hurt,attack)
+  draw_bug(attack and "beetle.attack" or "beetle.walk",cx,feet,flip,hurt)
+end
+
+local function draw_wasp(cx,cy,flip,hurt,attack)
+  draw_bug(attack and "wasp.attack" or "wasp.fly",cx,cy,flip,hurt)
 end
 
 local function draw_buzzkill(e,hurt)
   local cx,feet=e.x+12,e.y+38
-  local wing=flr((sin(t()*4)+1)*3)
   local phase=e.phase_id or 1
-  local suit=phase==3 and 35 or hurt and 36 or 52
-  -- Four luminous wings make the executive mosquito readable at gameplay scale.
-  fillp(0xaaaa,55)
-  circfill(cx-22,feet-32,13+wing,59)
-  circfill(cx+22,feet-32,13+wing,59)
-  circfill(cx-20,feet-15,11+wing,55)
-  circfill(cx+20,feet-15,11+wing,55)
-  fillp()
-  line(cx-8,feet-29,cx-34,feet-43,63)
-  line(cx+8,feet-29,cx+34,feet-43,63)
-  line(cx-8,feet-20,cx-31,feet-8,59)
-  line(cx+8,feet-20,cx+31,feet-8,59)
-  line(cx-31,feet-42,cx-12,feet-26,10)
-  line(cx+31,feet-42,cx+12,feet-26,10)
-  -- One closed command-pod silhouette separates the rig from wings and scenery.
-  circfill(cx,feet-25,25,48)
-  rectfill(cx-25,feet-25,cx+25,feet-5,48)
-  circfill(cx,feet-7,25,48)
-  circ(cx,feet-25,25,59)
-  line(cx-21,feet-39,cx-24,feet-18,10)
-  line(cx-24,feet-18,cx-18,feet-4,10)
-  line(cx+22,feet-37,cx+24,feet-12,50)
-  line(cx-22,feet-10,cx+22,feet-10,55)
-  -- Command-chair backpack and bright hazard rails.
-  rectfill(cx-20,feet-35,cx+20,feet-6,48)
-  rect(cx-21,feet-36,cx+21,feet-5,59)
-  rectfill(cx-17,feet-33,cx+17,feet-8,suit)
-  rect(cx-14,feet-30,cx+14,feet-10,13)
-  rectfill(cx-25,feet-31,cx-18,feet-9,50)
-  rectfill(cx+18,feet-31,cx+25,feet-9,50)
-  line(cx-23,feet-28,cx-23,feet-12,59)
-  line(cx+23,feet-28,cx+23,feet-12,59)
-  for yy=feet-27,feet-12,5 do
-    circfill(cx-23,yy,1,phase==3 and 36 or 31)
-    circfill(cx+23,yy,1,phase==2 and 4 or 10)
+  local phase_ink=phase==1 and 12 or phase==2 and 6 or 36
+  local telegraph=(e.telegraph or 0)>0 and not boss_defeated
+  local defeated=boss_defeated
+  local death_progress=defeated and max(0,150-(boss_death_timer or 0)) or 0
+  local detach=min(8,flr(death_progress/12))
+
+  begin_authored_sprite_scope(hurt,phase_ink)
+  local function module(anim,x,y)
+    aspr(anim..".idle",cx+x,feet+y,0,false,false)
   end
-  -- Readable arms: one claw, one absurd compliance cannon.
-  line(cx-12,feet-24,cx-30,feet-18,48)
-  line(cx-30,feet-18,cx-34,feet-9,59)
-  line(cx-34,feet-9,cx-39,feet-13,36)
-  line(cx-34,feet-9,cx-29,feet-12,36)
-  line(cx+12,feet-23,cx+27,feet-17,48)
-  rectfill(cx+24,feet-22,cx+39,feet-13,48)
-  rect(cx+24,feet-22,cx+39,feet-13,59)
-  line(cx+39,feet-18,cx+45,feet-18,phase==3 and 36 or 31)
-  -- Armored head, compound eyes, proboscis and ridiculous necktie.
-  circfill(cx,feet-38,13,48)
-  circfill(cx,feet-38,11,hurt and 36 or 35)
-  line(cx-9,feet-43,cx-6,feet-48,38)
-  line(cx-9,feet-43,cx-10,feet-35,38)
-  line(cx+9,feet-43,cx+10,feet-34,33)
-  circfill(cx-6,feet-40,5,48) circfill(cx+6,feet-40,5,48)
-  circfill(cx-6,feet-40,3,phase==3 and 4 or 36)
-  circfill(cx+6,feet-40,3,phase==3 and 4 or 36)
-  pset(cx-7,feet-41,63) pset(cx+5,feet-41,63)
-  local nose=e.dir>0 and 1 or -1
-  line(cx+nose*2,feet-35,cx+nose*23,feet-27,46)
-  line(cx+nose*2,feet-34,cx+nose*23,feet-26,47)
-  line(cx+nose*23,feet-27,cx+nose*28,feet-28,31)
-  rectfill(cx-8,feet-26,cx+8,feet-8,48)
-  line(cx-6,feet-24,cx+6,feet-24,63)
-  rectfill(cx-3,feet-23,cx+3,feet-15,36)
-  line(cx-3,feet-14,cx,feet-9,36) line(cx+3,feet-14,cx,feet-9,36)
-  line(cx-7,feet-8,cx-13,feet,48) line(cx+7,feet-8,cx+13,feet,48)
-  rectfill(cx-15,feet-2,cx-5,feet,13) rectfill(cx+5,feet-2,cx+15,feet,13)
-  if phase>=2 then
-    line(cx-15,feet-29,cx-7,feet-20,31)
-    line(cx+15,feet-20,cx+7,feet-11,31)
+
+  -- Wings establish persistent phase silhouettes: brake together in P1,
+  -- cant asymmetrically in P2, and lose the entire left assembly in P3.
+  local brake=telegraph and 3 or 0
+  if phase<3 and not defeated then
+    module("buzz_upper_wing_l",-38-detach,-44+brake-detach)
   end
-  if phase==3 then
-    for i=0,5 do
-      local sx=cx-21+i*9
-      line(sx,feet-47-(i%2)*3,sx+2,feet-51-(i%2)*3,i%2==0 and 36 or 4)
-    end
+  module("buzz_upper_wing_r",38+detach,-44+brake-detach)
+  if phase<3 and not defeated then
+    local lx=phase==2 and -38 or -36
+    local ly=phase==2 and -20 or -24
+    module("buzz_lower_wing_l",lx,ly+brake)
+  end
+  if not defeated or death_progress<70 then
+    local rx=phase==2 and 34 or 36
+    if phase==3 then rx=34 end
+    local ry=phase==3 and -30 or phase==2 and -28 or -24
+    module("buzz_lower_wing_r",rx+detach,ry+brake+detach)
+  end
+
+  -- The two pods remain simultaneous; damage separates and slumps them rather
+  -- than replacing the whole boss with an intact circle plus red slash marks.
+  local phase_slump=phase==3 and 6 or 0
+  local slump=phase_slump+(defeated and min(7,flr(death_progress/18)) or 0)
+  module("buzz_upper_pod",phase==3 and 2 or 0,-38+slump)
+  if not defeated or death_progress<115 then
+    module("buzz_lower_pod",defeated and detach or 0,-14+slump)
+  end
+  module("buzz_side_armor_l",-17-detach,-6+slump)
+  if not defeated or death_progress<95 then
+    module("buzz_side_armor_r",17+detach,-6+slump)
+  end
+  module((e.vulnerable or defeated) and "buzz_weak_open" or "buzz_weak_closed",0,-23+slump)
+
+  -- Telegraphs have mechanical follow-through: claw winds up, cannon extends,
+  -- and the authored body moves with the weapon posture.
+  if not defeated or death_progress<55 then
+    module("buzz_claw",-38-(telegraph and 4 or 0),-2-(telegraph and 5 or 0)+slump)
+  end
+  if phase<3 and (not defeated or death_progress<40) then
+    module("buzz_cannon",38+(telegraph and 5 or 0),-2-(telegraph and 2 or 0)+slump)
+  elseif not defeated then
+    -- P3 keeps only a sparking, visibly shortened cannon stump.
+    restore_legacy_palette()
+    line(cx+23,feet-5+slump,cx+31,feet-2+slump,52)
+    line(cx+24,feet-7+slump,cx+29,feet-4+slump,36)
+    pset(cx+31,feet-2+slump,31)
+    begin_authored_sprite_scope(hurt,phase_ink)
+  end
+  restore_legacy_palette()
+
+  -- A short two-value proboscis keeps the front-facing authored head readable
+  -- while still tracking the live projectile direction.
+  local nose=e.dir and e.dir>0 and 1 or -1
+  local nx=cx+nose*8
+  local ny=feet-38+slump
+  line(nx,ny,nx+nose*(telegraph and 18 or 11),ny+(telegraph and -3 or 2),34)
+  line(nx,ny-1,nx+nose*(telegraph and 18 or 11),ny+(telegraph and -4 or 1),47)
+  if phase==3 and not defeated then
+    circfill(cx-27,feet-35,2,50)
+    pset(cx-29,feet-38,52)
+    pset(cx-24,feet-40,31)
   end
 end
 
@@ -1601,21 +1587,22 @@ local function draw_enemy(e,index)
   if e.kind==E_BOSS and e.dormant then return end
   local hurt=e.hurt>0 and e.hurt%2==0
   if e.kind==E_GNAT then
-    draw_gnat(e.x+8,e.y+8,e.dir>0,hurt)
+    draw_gnat(e.x+8,e.y+8,e.dir>0,hurt,(e.telegraph or 0)>0)
   elseif e.kind==E_BEETLE then
-    draw_beetle(e.x+8,e.y+15,e.dir<0,hurt)
+    draw_beetle(e.x+8,e.y+15,e.dir<0,hurt,(e.telegraph or 0)>0)
   elseif e.kind==E_WASP then
-    draw_wasp(e.x+8,e.y+8,e.x<player_x,hurt)
+    draw_wasp(e.x+8,e.y+8,e.x<player_x,hurt,(e.telegraph or 0)>0)
   else
     local phase_color=e.phase_id==1 and 10 or e.phase_id==2 and 4 or 36
-    fillp(0xaaaa)
-    circfill(e.x+12,e.y+10,31+flr((sin(t()*0.7)+1)*2),
-      e.vulnerable and phase_color or 35)
-    fillp()
+    if not e.vulnerable and not boss_defeated then
+      fillp(0x8888)
+      circfill(e.x+12,e.y+10,31+flr((sin(t()*0.7)+1)*2),49)
+      fillp()
+    end
     draw_buzzkill(e,hurt)
     if not boss_defeated and not e.vulnerable then
-      circ(e.x+12,e.y+10,34,10)
-      circ(e.x+12,e.y+10,31,59)
+      circ(e.x+12,e.y+10,34,phase_color)
+      circ(e.x+12,e.y+10,31,53)
       for a=0,7 do
         local aa=a/8+frame_now/180
         pset(e.x+12+cos(aa)*36,e.y+10+sin(aa)*36,a%2==0 and 31 or 10)
@@ -1626,8 +1613,6 @@ local function draw_enemy(e,index)
       print("AUDIT ME!",e.x+12,e.y-22,31,"center")
     end
     if boss_defeated then
-      line(e.x-20,e.y-17,e.x+44,e.y+43,36)
-      line(e.x+44,e.y-17,e.x-20,e.y+43,36)
       if boss_death_timer>0 then
         -- Three persistent, separated blast nodes make the destruction beat unmistakable.
         local bx={e.x-1,e.x+25,e.x+10}
@@ -1807,12 +1792,6 @@ local function draw_grapple_hint()
   end
   circ(x,y,4,10)
   pset(x,y,63)
-end
-
-local function restore_legacy_palette()
-  pal()
-  for ink=0,15 do pal(ink,INK_MAP[ink+1]) end
-  palt()
 end
 
 local function draw_frog_pose(cx,feet,pose,left,hero_scale,flicker)
@@ -2662,6 +2641,75 @@ function dev_spawn_enemy(kind,x,y)
   return #enemies-1
 end
 
+function dev_stage_enemy_art(kind,attack)
+  local code=kind=="beetle" and E_BEETLE or kind=="wasp" and E_WASP or E_GNAT
+  for i=1,#enemies-1 do enemies[i].alive=false end
+  local e=make_enemy({code,player_x+58,player_y-42,0})
+  e.home_x,e.home_y,e.range=e.x,e.y,0
+  e.stun=120
+  if attack then
+    local cycle=code==E_GNAT and 112 or code==E_BEETLE and 96 or 118
+    local target=code==E_GNAT and 96 or code==E_BEETLE and 80 or 102
+    e.phase=target-frame_now-1
+  else
+    e.phase=-frame_now-1
+  end
+  table.insert(enemies,#enemies,e)
+  return #enemies-1
+end
+
+function dev_stage_boss_art(phase,mode)
+  dev_warp(780,425)
+  start_boss()
+  boss_intro=0
+  local e=enemies[#enemies]
+  e.hp=phase==1 and 8 or phase==2 and 5 or 2
+  e.phase_id=phase
+  e.stun=0
+  e.vulnerable=false
+  e.telegraph=0
+  local cycle=phase==1 and 132 or phase==2 and 110 or 92
+  if mode=="attack" then
+    e.attack_clock=8
+  elseif mode=="open" then
+    e.stun=90
+    e.vulnerable=true
+  else
+    e.attack_clock=cycle-2
+  end
+end
+
+function dev_boss_bounds(contact)
+  local e=enemies[#enemies]
+  local x,y,w,h=enemy_bounds(e,contact)
+  return {x=x,y=y,w=w,h=h}
+end
+
+function dev_boss_weak_point()
+  local e=enemies[#enemies]
+  local x,y=boss_weak_point(e)
+  return {x=x,y=y}
+end
+
+function dev_render_secret_probe()
+  reset_draw_state()
+  cls(0)
+  draw_secret({alive=true,x=40,y=40},0)
+  local seen={}
+  for y=0,80 do
+    for x=0,80 do
+      local ink=pget(x,y)
+      if ink>0 then seen[ink]=true end
+    end
+  end
+  local colors={}
+  for ink=1,63 do
+    if seen[ink] then table.insert(colors,string.format("%d",ink)) end
+  end
+  pset(0,0,6)
+  return {colors=table.concat(colors,","),sentinel=pget(0,0)}
+end
+
 function dev_enemy_hp(index)
   local e=enemies[index]
   return e and e.hp or -1
@@ -2681,17 +2729,42 @@ anim frog.fire frames=9:3 fps=1 loop
 anim frog.hurt frames=12:3 fps=1
 anim frog.victory frames=9:0 fps=1 loop
 
-sprite gnat rect=0,4 size=2x2 anchor=8,8
-anim gnat.fly frames=0,1,2 fps=14 loop
+sprite gnat rect=0,6 size=2x2 anchor=8,8
+anim gnat.fly frames=0:6,2:6 fps=14 loop
+anim gnat.attack frames=4:6 fps=1
 
-sprite beetle rect=6,4 size=2x2 anchor=8,14
-anim beetle.walk frames=0,1,2 fps=7 loop
+sprite wasp rect=6,6 size=2x2 anchor=8,8
+anim wasp.fly frames=6:6,8:6 fps=12 loop
+anim wasp.attack frames=10:6 fps=1
 
-sprite wasp rect=12,4 size=2x2 anchor=8,8
-anim wasp.fly frames=0,1 fps=12 loop
+sprite beetle rect=12,6 size=2x2 anchor=8,15
+anim beetle.walk frames=12:6,14:6 fps=7 loop
+anim beetle.attack frames=0:8 fps=1
 
-sprite buzzkill rect=0,6 size=3x3 anchor=12,22
-anim buzzkill.rage frames=0,1,2 fps=8 loop
+sprite buzz_upper_wing_l rect=2,8 size=2x2 anchor=8,8
+anim buzz_upper_wing_l.idle frames=0 fps=1 loop
+sprite buzz_upper_wing_r rect=4,8 size=2x2 anchor=8,8
+anim buzz_upper_wing_r.idle frames=0 fps=1 loop
+sprite buzz_lower_wing_l rect=6,8 size=2x2 anchor=8,8
+anim buzz_lower_wing_l.idle frames=0 fps=1 loop
+sprite buzz_lower_wing_r rect=8,8 size=2x2 anchor=8,8
+anim buzz_lower_wing_r.idle frames=0 fps=1 loop
+sprite buzz_side_armor_l rect=10,8 size=2x2 anchor=8,8
+anim buzz_side_armor_l.idle frames=0 fps=1 loop
+sprite buzz_side_armor_r rect=12,8 size=2x2 anchor=8,8
+anim buzz_side_armor_r.idle frames=0 fps=1 loop
+sprite buzz_weak_closed rect=14,8 size=2x2 anchor=8,8
+anim buzz_weak_closed.idle frames=0 fps=1 loop
+sprite buzz_weak_open rect=0,10 size=2x2 anchor=8,8
+anim buzz_weak_open.idle frames=0 fps=1 loop
+sprite buzz_claw rect=2,10 size=2x2 anchor=8,8
+anim buzz_claw.idle frames=0 fps=1 loop
+sprite buzz_cannon rect=4,10 size=2x2 anchor=8,8
+anim buzz_cannon.idle frames=0 fps=1 loop
+sprite buzz_upper_pod rect=6,10 size=3x3 anchor=12,12
+anim buzz_upper_pod.idle frames=0 fps=1 loop
+sprite buzz_lower_pod rect=9,10 size=3x3 anchor=12,12
+anim buzz_lower_pod.idle frames=0 fps=1 loop
 
 __instruments__
 wavetable 0 89acdeef ffeedca9 76532110 00112356
@@ -4306,62 +4379,62 @@ __sprites__
 0000000cccccMc000000000000ccc000000000MMM0000000000c88M000000000McccM000000ccccMM0MMM0MMMcc000000cccccMMccMMcc8MMM8cccc00MDvvDM0
 0000000MMccMcMM0000000000cMc0000000000000000000000ccccc00000000McccMccM000cccM000000000McMM000000c88cccccccMMMMMCCM8ccc000MCCM00
 000000000MM0Mc000000000000MMM00000000000000000000MMMMMM00000000MMMMMMMM00MMMMMM00000000MMMMMM0000000000__MMM0000CC000000000MM000
-00001000000050000000100000001100000050000001100000001000000050000000100000000000000000000000000000000000000000000000000000000000
-0000010001111111000100000011a111011111110111a11000000100011111110001000000000000000000000000000000000000000000000000000000000000
-00001111144414441111100001aaaa1114441444111aaaa100000011144414441110000000000000000000000000000000000000000000000000000000000000
-0011aa11bb44144bb11aa11011aaaa11bb44144bb11aaaa100000011bb44144bb110000000000000000000000000000000000000000000000000000000000000
-01aaaabbbbb414bbbbbaaaa101aaaabbbbb414bbbbbaaaa1000000bbbbb414bbbbb0000000000000000000000000000000000000000000000000000000000000
-11aaa1bbb1b414b1bbb1aaa10011a1bbb1b414b1bbb1a110000011bbb1b414b1bbb1100000000000000000000000000000000000000000000000000000000000
-01aaa14bbb44144bbb41aaa10000114bbb44144bbb4110000011a14bbb44144bbb41a11000000000000000000000000000000000000000000000000000000000
-0011a114b4441444b411a11000000114b4441444b411000001aaa114b4441444b411aaa100000000000000000000000000000000000000000000000000000000
-00001111414414414111100000000111414414414111000011aaa111414414414111aaa100000000000000000000000000000000000000000000000000000000
-000001f1e4114114e1f10000000001f1e4114114e1f1000001aaa1f1e4114114e1f1aaa100000000000000000000000000000000000000000000000000000000
-000011fffee111eefff11000000011fffee111eefff11000001111fffee111eefff1111000000000000000000000000000000000000000000000000000000000
-00001f11111eee11111f100000001f11111eee11111f100000001f11111eee11111f100000000000000000000000000000000000000000000000000000000000
-00001f1111111111111f100000001f1111111111111f100003001f1111111111111f100300000000000000000000000000000000000000000000000000000000
-00001fffddddffffffff100000001fffddddffffffff100003001fffddddffffffff100300000000000000000000000000000000000000000000000000000000
-000011ffd3ddfffffff11000000011ffd3ddfffffff11000300011ffd3ddfffffff1100300000000000000000000000000000000000000000000000000000000
-00000155dd5d55555551000000000155dd5d55555551000030000155dd5d55555551000300000000000000000000000000000000000000000000000000000000
-00000115dddd55555511000000000115dddd55555511000000000115dddd55555511000000000000000000000000000000000000000000000000000000000000
-0000011fffffffffff1100000000011fffffffffff1100000000011fffffffffff11000000000000000000000000000000000000000000000000000000000000
-0000011fffffffffff1100000000011fffffffffff1100000000011fffffffffff11000000000000000000000000000000000000000000000000000000000000
-000010011fffffff11001000000010011fffffff11001000000010011fffffff1100100000000000000000000000000000000000000000000000000000000000
-0001000011fffff1100001000001000011fffff1100001000001000011fffff11000010000000000000000000000000000000000000000000000000000000000
-00010000001111100000010000010000001111100000010000010000001111100000010000000000000000000000000000000000000000000000000000000000
-05555500000000000005555505555500000000000005555505555500000000000005555500000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-eeeeeeeecccccccc66666666aaa000aa444344440000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-ebccccbedbdddddddddddddd888aaa8845d3ddd40000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-eddddddedd0000ee77777777888888884ddd3dd40000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-edccccde00ddee0076777777888888884ddd1dd40000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-edddddde00eedd0077777677868888884dd3d1140000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-eddddddeee0000dd7777777788888a884dd3ddd10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-ebeeeebeddddddbd777e7777888888884d3ddd540000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-eeeeeeeecccccccc7777777788898888444444440000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000660066000000000006000600000000000000660000000000066006600000000066006600000000660000660000000000000000000000000000000000000
+00006666666600000000066606660000000000066666000000000666666660000000666666660000000066006600000000000000000000000000000000000000
+0000066006600000000066666666000000000666666000000000666666666600000006666660000000000666600000000000vvv8800000000000000000000000
+0000000MM00M0M000000000MM00M0M000000000MM00M0M0000000660006660000000006MM60000000000006MM0000000000vvvvvvv8000800000000000000000
+000008MMMM0M0M00000008MMMM0M0M00000008MMMM0M0M00000vvvvM00MMMM00000vvvvM00MMMM00000vvvvM00MMMM0000vvv8CCvv88008000008vv880000000
+00008MMccMMMM00000008MMccMMMM00000008MMccMMMM000MMvvvvvMMMMMvM00MMvvvvvMMMMMvM00MMvvvvvMMMMMvMM008vvv8CC88880M80000vv8vvv8800C00
+00088MMccMccM00000088MMccMccM00000088MMccMccM0000MvvvvvM0MMMvM000MvvvvvM0MMMvM000MvvvvvM0MMMvMMM08888vvv8CC8MMM0008vvvvvv8C00800
+000888MccMMMMM00000888MccMMMMM00000888MccMMMMccc00MvvvM000MMMM0000MvvvM000MMMM0000MvvvM000MMMM00M88C8C88C8vvv800088vv8v88C808800
+000088McccM00000000088McccM00000000088McccM00000000MMM00000M0M00000MMM00000M0M00000MMM00000M0M00M8C8C888vvv88000088888vvvC888000
+0000088cMM0000000000088cMM0000000000088cMM0000000000M00000000000000M000000000000000M000000000000M88C8C888888880008CCC8888C880000
+00000M0M0M00000000000M0M0M00000000000M0M0M000000000M0000000000000000M000000000000000M000000000000M8888888MMM00000888888888888000
+0000M00000M000000000M00000M000000000M00000M00000000000000000000000000000000000000000000000000000008888888MM00000008888888MM00000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008808MM0MMM800000M8MM88MMMM00000
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000880M80000M080000MM00MM8000M00000
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000800MM0000M0MM000M000M08800000000
+0000000000000000MSSQ000000000000000000000000QSSQ00000000000000000000000000000000000000M000QM00000000MQ000M000000000000QQQQ000000
+0000000000000000MMQS5S50000000000000000005S5SQQQ000000000000000000000000000000000000QQQM00QM00000000MQ00MQQQQ0000000QQQQQQQQ0000
+0000000000000000000QS5555000000000000005555SQ0000000000000000000000000000000000000QQSSSQQMQQ00000000QQMQSSSSQQ00000QQQQSSQQQQ000
+000000000000000000QSSSS5SSS00cc00cc0QSSS5SSSSQ00000000000000000000000000000000000QSSSSSSQMMQ00000000QMMQSSSSSSQ0000QQQQQQQQQQ000
+0000000000000000000Q00SSSSSSQcc00ccQSSSSSS00S000000000000000000000000000000000000QSSSSSQQMQM00000000MQMQSSSSSSQ000MQQQQQQQQQQM00
+000000000000000000000SSSSSSSQQQQQQQQSSSSSSS000000SSSQQQQMM000000000000MMMQQQSSS00QQQQQQQQQQMQ000000QMQQQQQQQQQQ000MQSQQQQQQQQM00
+00008vv88000000000000000000MMQQMQQQMM00000000000SSSSS555SSSQQQQQQQQQQSSSSSQSQSSS0QQQQQQQQQQMQM0000MQMQQMQQQQQQQ000MQSQQQQQQQQM00
+0008vv8vvv00000000000000000000M00Q000000000000000SQQSSSSS55QMccMQccMQ55SSSSQQQS0MMQMQQQQMMQQMM0000MMQQMMQQQMMQMQ00MQQQQQQQQQQM00
+00vvv8CCvv8000000000000000000000000000000000000000SSQSQSS5Q0MccM0ccM0QSSQQQQSS00MMQMMMQQQQMQM000000MQMQQQQMMMQMM000QQQQQQQQQQ000
+088vv8C888MM8000000000000000000000000000000000000000QQSSS00000000000000QSSQQ0000MMMQMMQQQQQQM000000MQQQQQQMMQMMM000MQQQQQQQQM000
+088888888vv8800800000000000000000000000000000000000000000000000000000000000000000MMMQMMQQMMQM000000MMMMQMMMMMMM00000MMQQQQMM0000
+0888C888CC88008800000000000000000000000000000000000000000000000000000000000000000MMQQMMQQQMMMM0000MMMMQQQMMQQMM0000000MMMM000000
+0M88C8888CC8888000000000000000000000000000000000000000000000000000000000000000000MMMMMMQQQMMMM0000MMMMQQQMMMMMM00000000000000000
+08M8888888888800000000000000000000000000000000000000000000000000000000000000000000MQQQMQQMMMM000000MMMQQQMQQQM000000000000000000
+080M8M888888M0000000000000000000000000000000000000000000000000000000000000000000000MMMMMQMM000000000MMMQMMMMM0000000000M00000000
+8MMMMM08MMMM000000000000000000000000000000000000000000000000000000000000000000000000000MMM000000000000MQM00000000000000Q00000000
+000000QQQQ0000000000000000000000000000000000000000000000000QM00000000000000000MMQQQQQQQQMM00000000000000000000000000000000000000
+000QQSQSSQQQ000000000000000000000000000000000000000000000SQQQMM0000000000000QQQQQQQQQQQQQQQQM00000000000000000000000000000000000
+00SSSQMMMMQSSS0000QQQ000000000000000000000000000000000QSSSSQQQQQQQ000000000QQQQSSSQvvQSSQQQMQ00000000000000000000000000000000000
+0MSSQMQQQQMQSSM00QQQQQM000000000000000000000000000000QSSSSSSSSQQQQM0000000MQQQQQQQQSSMMQQQQQQM0000000000000000000000000000000000
+0MQQQMMQQMMQQQM00QQQQQMM0000000000000000000000000000MQQQMMMMMMQMMQQM000000MMMMQQQMMCCMMQQQMMMM0000000000000000000000000000000000
+0QQMMQSSSSQMMQQ00QQMQQM0000000000000000M00000000000MQMMMQQMMMMMMMMMMM00000MMMQQQSMMQMMMQQQQMMM0000000000000000000000000000000000
+MQMMQSSSSSSQMMQMMMQMMMQQM00000000000MM0M00000000000MMQQSSQQSQQQQMMMMM0000MMQQQQQSMQQQMMQQQQQQMM000000000000000000000000000000000
+MMQQQSSZZSSQQQQMMQQM00QQQMM0000000MMMQQM00000000000MQQQSSSSSSSSQQMQQM0000MQQQQQQSQQCCMMQQQQQQQM000000000000000000000000000000000
+MQMMQSSZZSSQMQQMMQMM00QQQQQM000000MMQQQQ000000Q00000QMSSSCSSQCCQQMMQ00000QMQQMQSQMQCCQMQQQMMQMQ000000000000000000000000000000000
+MQMMMSSSSSSQMMQMQQQM000QMMMQQ0000QQQQQQQQQW0SSQ0000QQMSSCCQQQCCCMMMQQ000MMMMMMQQQMCCCQMQQQMMMMMQ00000000000000000000000000000000
+0QQMMSSSSSQMMQM00QQMM0QQM000Q000SSSQSSSSWWWSSSQQ0000QQSSCQQQQCCQQMMQ0000M0MMMQQQQMCCCQMQQQQMMM0Q00000000000000000000000000000000
+0MQQQQMQQMMQQQM00QQQM0QQ0000Q000QQMQQQQQSSSQQQQQ000MQMQSQQQQQQQQMQMQM000M0MMQQQQQMCCCQMQQQQQMM0M00000000000000000000000000000000
+0MQQQMMQMMMQQQM000QQQ00QQ000Q000MMMQQMQQQSQMMQQQ00MMQMQQQQQMQQMMMMMQMM000MMMQQQQQQQCQMQQQQMMMMM000000000000000000000000000000000
+00MQMQQMMQQQQM00000QQQ00QQ0000000MMMMMMMQMM00MQ000MMQMMQMSQMMQQQMMQQMM0000MMQQSSQQQQMQQQQQQQMM0000000000000000000000000000000000
+000MMMMSSMMMM00000000Q0000000000000MMMMQMM0000000MMMQQMQMSSQQWQMMMQQMMM000MQQQSQQQQQQQQQQQQMQM0000000000000000000000000000000000
+000000MMMM000000000000Q000000000000000MQM00000000QQMQQQMQQSQWQQMMQQQMMM000QMMMQMMMMQMMMMMQMMQQ0000000000000000000000000000000000
+eeeeeeeecccccccc66666666aaa000aa44434444000000000QMQQQSSSQQSQQQQQQQQMMM000MMMMMMMMQQQMMMQMMMMM0000000000000000000000000000000000
+ebccccbedbdddddddddddddd888aaa8845d3ddd4000000000QMQQSSQQSSSSQQQQQQQMMM000MMQSQMMMQQQQMMMQQMMM0000000000000000000000000000000000
+eddddddedd0000ee77777777888888884ddd3dd4000000000MMQQQQSSSSSQQQQQQMMQMM0000MQSQMMMQQQMMMQQQQM00000000000000000000000000000000000
+edccccde00ddee0076777777888888884ddd1dd40000000000MQQQQQQQQQQQQQQQMMMM00000MSQSMMMSQQSMMQQSSM00000000000000000000000000000000000
+edddddde00eedd0077777677868888884dd3d11400000000000MQQQQQQQQQQQQQQQMM000000MMSMMMMMSSQQMMSSS000000000000000000000000000000000000
+eddddddeee0000dd7777777788888a884dd3ddd1000000000000MMQQQQQMMQQQQMMM000000000MMMSQMMMQQSMM00000000000000000000000000000000000000
+ebeeeebeddddddbd777e7777888888884d3ddd540000000000000MMMMMMMMMMMMMM0000000000000SS0000SS0000000000000000000000000000000000000000
+eeeeeeeecccccccc7777777788898888444444440000000000000000MMMMMMMM0000000000000000000000000000000000000000000000000000000000000000
 
 __map__
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
