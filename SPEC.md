@@ -573,7 +573,7 @@ Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback
 `console.toml`, or its project directory. Projects compile and validate in
 memory without writing `[build].output`. Low-level inspection and mutation
 commands continue to operate on a cart file directly (no stepping): `console sprite
-<render|strip|onion|diff|ghost|gif|lint|edit|dump|poke>`, `console map
+<render|atlas|strip|onion|diff|ghost|gif|lint|edit|dump|poke>`, `console map
 <render|dump|lint|edit|poke>`, `console music
 <score|lint|piano-roll|render|edit|import-abc>`.
 
@@ -588,7 +588,7 @@ are:
   comparison of the evaluated value;
 - `{"op":"capture",...}` — write one or more `screenshot`, `screen_text`,
   `wav`, `spectrogram`, `audio_events`, `audio_stats`, or `text_events`
-  artifacts.
+  artifacts, plus an optional nested `map` capture.
 
 Every stage may have a unique `name`. A scenario declares `version: 1` and an
 optional seed; `--seed` overrides it. Captures require `--artifacts`, use
@@ -607,6 +607,10 @@ current framebuffer. `zoom` is an integer from 1 through 16 (default 1) used by
 36000 (default 6). A scenario may step at most 36000 input frames in total.
 Each input stage requires `frames >= 1`; `buttons` is a string containing only
 `L R U D A B M` (whitespace and separators accepted by the input parser).
+The nested `map` object accepts `source` (`authored`, the default, or `live`),
+one or more of `png`, `dump`, and `lint`, plus optional `region`, `zoom` (1-16,
+default 4), `grid`, and `ids`. `live` observes map mutations made by earlier
+scenario stages; all three artifacts use one snapshot from that exact frame.
 
 Execution stops at the first failing stage and reports its index, frame range,
 expected/actual values, logs, and artifacts.
@@ -864,6 +868,7 @@ name, or raw rect `tx,ty,w,h`.
 | command | output |
 |---------|--------|
 | `sprite render <cart> <target> [--frame N] -o out.png` | one frame, zoomed |
+| `sprite atlas <cart> [--zoom Z] [--grid] -o out.png` | annotated full sheet plus JSON inventory on stdout: named sprite rects/anchors/palette counts, resolved animation frames, blank allocations, unused cells, and legal same-sprite aliases vs cross-sprite conflicts |
 | `sprite strip <cart> <anim> -o` | all frames side by side, baselines aligned through the anchor |
 | `sprite onion <cart> <anim> --frame N -o` | frame N full opacity; previous frame tinted red ~35%, next tinted green ~35% (loop-aware; color-0 pixels excluded from ghosts) |
 | `sprite diff <cart> <anim> <frameA> <frameB> -o` | frame B dimmed ~35%; pixels that differ from frame A in bright magenta |
@@ -886,7 +891,7 @@ Unique-color comparison requires at least two frames: one-frame animations
 report it as not applicable (`unique_colors=n/a` in summaries) and never
 violate `--no-unique-colors` merely for using colors.
 
-RPC mirrors: `sprite_render`, `sprite_strip`, `sprite_onion`, `sprite_diff`,
+RPC mirrors: `sprite_render`, `sprite_atlas`, `sprite_strip`, `sprite_onion`, `sprite_diff`,
 `sprite_ghost`, `sprite_lint` against the session's loaded cart.
 `sprite_lint` mirrors the CLI's threshold params (`max_drift`,
 `max_area_var`, `max_changed`, `no_unique_colors`) and `summary`; since
@@ -984,8 +989,9 @@ sprite tools' hex-glyph font.
 | `map dump <cart> [cx,cy,cw,ch]` | the region as hex rows (2 chars/cell), `#`-header naming the coordinates, mirroring `sprite dump` |
 | `map lint <cart>` | JSON over the whole map: used extent, cell counts by tile id (top N), tile ids referenced whose sprite-sheet region is entirely blank (the map analog of "color unique to one frame" — usually a typo), and % fill. Report-only; agents do the asserting. |
 
-RPC mirrors: `map_render`, `map_dump`, `map_lint` against the session's
-loaded cart — read-only, like the `sprite_*` mirrors: there is no
+RPC mirrors: `map_render`, `map_dump`, `map_lint` against either the session's
+authored cart (`source:"authored"`, the default) or a snapshot of its mutable
+runtime map (`source:"live"`) — read-only, like the `sprite_*` mirrors: there is no
 `map_poke`/`map_edit` RPC verb, since mutating a cart file is a CLI-only
 operation by design.
 

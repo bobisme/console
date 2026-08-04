@@ -187,6 +187,16 @@ console map render game.cart --zoom 4 --grid --ids -o /tmp/map.png
 console map dump game.cart > /tmp/map.hex
 ```
 
+For stateful maps, capture the runtime snapshot after the action that mutates
+it instead of inspecting only the source cart:
+
+```json
+{"op":"capture","map":{"source":"live","png":"map.png","dump":"map.txt","lint":"map.json","grid":true,"ids":true}}
+```
+
+The same choice is available to RPC `map_render`, `map_dump`, and `map_lint`
+through `source:"live"`; omitting it deliberately inspects authored state.
+
 Use `map poke` for exact region rows. Each row contains two hex digits per cell:
 
 ```bash

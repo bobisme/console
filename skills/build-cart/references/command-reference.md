@@ -35,7 +35,7 @@ console build <project|console.toml> ...
 console pack <cart|project> -o <out.html> ...
 console serve <cart|project> ...
 console palette <show|quantize> ...
-console sprite <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke|export|import> ...
+console sprite <render|atlas|strip|onion|diff|ghost|gif|lint|edit|dump|poke|export|import> ...
 console map <render|dump|lint|edit|poke> ...
 console music <score|lint|piano-roll|render|edit|import-abc> ...
 ```
@@ -160,6 +160,16 @@ Version 1 schema:
       "spectrogram":"jump-spectrum.png",
       "audio_events":"jump-events.json",
       "audio_stats":"jump-stats.json",
+      "map":{
+        "source":"live",
+        "png":"jump-map.png",
+        "dump":"jump-map.txt",
+        "lint":"jump-map.json",
+        "region":"0,0,32,16",
+        "zoom":4,
+        "grid":true,
+        "ids":true
+      },
       "from_frame":0,
       "to_frame":120,
       "window_frames":6,
@@ -174,6 +184,10 @@ Every stage permits an optional unique `name`. `input.frames` must be at least
 relative descendants of `--artifacts`, and cannot traverse `.`/`..`, absolute
 paths, or symlinks. Screenshot zoom is 1–16. Spectrogram cell is 1–8 and its
 range at most 3,600 frames. Audio-stat windows are 1–36,000 frames.
+Nested map captures accept `source: "authored"` (default) or `"live"` and one
+or more output paths: `png`, `dump`, `lint`. Optional `region` uses
+`cx,cy,cw,ch`; omitted regions use that snapshot's nonzero extent. Map zoom is
+1–16 (default 4). `grid` and `ids` affect only the PNG.
 
 ## `rpc`
 
@@ -222,6 +236,9 @@ Targets are a declared sprite name, declared animation name, or raw tile rect
 console sprite render <cart> <target> [--frame N] [--zoom Z]
   [--grid] [--indices] [--anchor] (-o|--out) out.png
 
+console sprite atlas <cart> [--zoom Z] [--grid]
+  (-o|--out) out.png
+
 console sprite strip <cart> <anim> [--zoom Z] [--anchor]
   (-o|--out) out.png
 
@@ -246,6 +263,9 @@ console sprite export <cart> <target> [--frame N]
 ```
 
 - `render`: one resolved frame/rect.
+- `atlas`: annotated full sheet; JSON on stdout inventories named allocations,
+  anchors, resolved frames, palette counts, blank/unused cells, and classifies
+  same-sprite aliases separately from cross-sprite conflicts.
 - `strip`: all frames side by side and anchor/baseline aligned.
 - `onion --frame`: current full opacity, previous red, next green; loop-aware.
 - `onion --all`: contact sheet centered on every frame.
@@ -490,13 +510,16 @@ All operate on the loaded cart and do not step it.
 | Method | Params |
 |---|---|
 | `sprite_render` | `{target,path,frame?,zoom?,grid?,indices?,anchor?}` |
+| `sprite_atlas` | `{path,zoom?,grid?}` |
 | `sprite_strip` | `{anim,path,zoom?,anchor?}` |
 | `sprite_onion` | `{anim,path,frame?=0,all?,zoom?,grid?,anchor?}` |
 | `sprite_diff` | `{anim,path,frame_a,frame_b,zoom?}` |
 | `sprite_ghost` | `{anim,path,zoom?,grid?,anchor?}` |
 | `sprite_lint` | `{anims?:[string],max_drift?,max_area_var?,max_changed?,no_unique_colors?,summary?}` |
 
-Image methods return `{ok,path,width,height,frames}`. `sprite_lint` returns
+Image methods return `{ok,path,width,height,frames}`. `sprite_atlas` instead
+returns the semantic report plus an `image` object containing its path and
+dimensions. `sprite_lint` returns
 `violated` because RPC has no process exit code; `violations` appears when
 thresholds are active. There is no RPC GIF, dump, poke, or edit method.
 
@@ -504,11 +527,13 @@ thresholds are active. There is no RPC GIF, dump, poke, or edit method.
 
 | Method | Params | Result |
 |---|---|---|
-| `map_render` | `{path,region?:"cx,cy,cw,ch",zoom?,grid?,ids?}` | Image result. |
-| `map_dump` | `{region?:"cx,cy,cw,ch"}` | `{text}` hex rows. |
-| `map_lint` | `{}` | Whole-map JSON lint object. |
+| `map_render` | `{path,source?:"authored"|"live",region?:"cx,cy,cw,ch",zoom?,grid?,ids?}` | Image result. |
+| `map_dump` | `{source?:"authored"|"live",region?:"cx,cy,cw,ch"}` | `{text}` hex rows. |
+| `map_lint` | `{source?:"authored"|"live"}` | Whole-map JSON lint object. |
 
-The optional region defaults to used extent. There is no RPC poke/edit method.
+The optional region defaults to used extent. Source defaults to the immutable
+authored map; `live` snapshots mutations from the current session. There is no
+RPC poke/edit method.
 
 ## Music RPC methods
 

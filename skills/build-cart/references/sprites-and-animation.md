@@ -278,7 +278,8 @@ composed body parts.
 
 Use all three evidence layers:
 
-1. **Data:** `sprite dump` confirms exact indices and dimensions;
+1. **Data:** `sprite atlas` checks sheet ownership, resolved frames, blank
+   allocations, aliases/conflicts, and unused cells; `sprite dump` confirms exact indices and dimensions;
    `sprite export` confirms the editor-facing source image round-trips.
 2. **Numbers:** `sprite lint` measures area, centroid/bbox drift, changed pixels,
    and one-frame-only colors.
@@ -290,6 +291,8 @@ Recommended loop:
 ```bash
 console sprite render game.cart hero --frame 0 \
   --zoom 12 --grid --indices --anchor -o /tmp/hero.png
+console sprite atlas game.cart --zoom 4 --grid -o /tmp/sprite-atlas.png \
+  > /tmp/sprite-atlas.json
 console sprite strip game.cart hero.run \
   --zoom 12 --anchor -o /tmp/hero-run.png
 console sprite onion game.cart hero.run --all \

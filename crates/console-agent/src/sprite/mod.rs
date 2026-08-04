@@ -13,8 +13,8 @@ use console_core::{Cart, GfxMeta, SpriteDef};
 
 /// Canonical command inventory used by generated top-level help.
 pub const COMMANDS: &[&str] = &[
-    "render", "strip", "onion", "diff", "ghost", "gif", "lint", "edit", "dump", "poke", "export",
-    "import",
+    "render", "atlas", "strip", "onion", "diff", "ghost", "gif", "lint", "edit", "dump", "poke",
+    "export", "import",
 ];
 
 /// What a `<target>` CLI argument resolved to: a named sprite (with its
@@ -151,8 +151,8 @@ pub fn cli_sprite(args: &[String]) -> i32 {
         return 0;
     }
     match args.first().map(String::as_str) {
-        Some("render") | Some("strip") | Some("onion") | Some("diff") | Some("ghost")
-        | Some("lint") | Some("dump") | Some("gif") => view::cli_view(args),
+        Some("render") | Some("atlas") | Some("strip") | Some("onion") | Some("diff")
+        | Some("ghost") | Some("lint") | Some("dump") | Some("gif") => view::cli_view(args),
         Some("edit") => transform::cli_edit(&args[1..]),
         Some("poke") => transform::cli_poke(&args[1..]),
         Some("export") => png_io::cli_export(&args[1..]),
@@ -167,6 +167,7 @@ pub fn cli_sprite(args: &[String]) -> i32 {
 pub const SPRITE_USAGE: &str = "\
 usage:
   console sprite render <cart> <target> [--frame N] [--zoom Z] [--grid] [--indices] [--anchor] -o out.png
+  console sprite atlas  <cart> [--zoom Z] [--grid] -o out.png
   console sprite strip  <cart> <anim> [--zoom Z] [--anchor] -o out.png
   console sprite onion  <cart> <anim> --frame N [--zoom Z] [--grid] [--anchor] -o out.png
   console sprite onion  <cart> <anim> --all [--zoom Z] [--grid] [--anchor] -o out.png

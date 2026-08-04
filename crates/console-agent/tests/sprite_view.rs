@@ -782,6 +782,93 @@ fn lint_with_no_names_reports_every_anim() {
 }
 
 // ---------------------------------------------------------------------------
+// semantic atlas
+// ---------------------------------------------------------------------------
+
+const ATLAS_CART: &str = "\
+__lua__
+function _init() end
+
+__sprites__
+30000000
+
+__gfx_meta__
+sprite alpha rect=0,0 size=1x1 anchor=3,7
+sprite beta rect=0,0 size=1x1
+sprite empty rect=4,0 size=1x1
+anim alpha.shift frames=0 frames_rect=2,0 fps=4
+anim alpha.blink frames=0 frames_rect=2,0 fps=4 loop
+";
+
+#[test]
+fn atlas_reports_declarations_frames_aliases_conflicts_blanks_and_unused_tiles() {
+    let cart = Cart::parse(ATLAS_CART).unwrap();
+    let atlas = view::atlas(&cart, 2, true).unwrap();
+    assert_eq!((atlas.image.width, atlas.image.height), (257, 257));
+    assert!(atlas.image.png.starts_with(b"\x89PNG"));
+
+    let report = atlas.report;
+    assert_eq!(report["sheet"]["tile_count"], 256);
+    assert_eq!(report["sprites"][0]["name"], "alpha");
+    assert_eq!(report["sprites"][0]["anchor"], json!({"x":3,"y":7}));
+    assert_eq!(report["sprites"][0]["palette_counts"]["3"], 1);
+    assert_eq!(report["sprites"][2]["blank"], true);
+    assert_eq!(report["animations"][0]["frames"][0]["rect"]["tx"], 2);
+    assert_eq!(report["animations"][0]["frames"][0]["blank"], true);
+
+    let overlaps = report["overlaps"].as_array().unwrap();
+    let tile0 = overlaps.iter().find(|item| item["tile"] == 0).unwrap();
+    assert_eq!(tile0["classification"], "conflict");
+    assert_eq!(tile0["sprites"], json!(["alpha", "beta"]));
+    let tile2 = overlaps.iter().find(|item| item["tile"] == 2).unwrap();
+    assert_eq!(tile2["classification"], "alias");
+    assert_eq!(tile2["sprites"], json!(["alpha"]));
+
+    assert_eq!(report["used_tiles"], json!([0, 2, 4]));
+    assert!(
+        report["unused_tiles"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(255))
+    );
+    let blanks = report["blank_allocations"].as_array().unwrap();
+    assert_eq!(blanks.len(), 3);
+    assert!(blanks.iter().any(|item| item["name"] == "empty"));
+}
+
+#[test]
+fn cli_atlas_writes_the_annotated_sheet() {
+    let cart = temp_path("atlas.cart");
+    let out = temp_path("atlas.png");
+    std::fs::write(&cart, ATLAS_CART).unwrap();
+    let args = [
+        "atlas".to_string(),
+        cart.display().to_string(),
+        "--zoom".to_string(),
+        "2".to_string(),
+        "--grid".to_string(),
+        "-o".to_string(),
+        out.display().to_string(),
+    ];
+    assert_eq!(view::cli_view(&args), 0);
+    assert!(std::fs::read(&out).unwrap().starts_with(b"\x89PNG"));
+}
+
+#[test]
+fn atlas_accepts_extreme_legal_anchors_without_overflowing() {
+    let cart = Cart::parse(
+        "__lua__\n\n__gfx_meta__\nsprite far rect=0,0 size=1x1 anchor=2147483647,-2147483648\n",
+    )
+    .unwrap();
+    let atlas = view::atlas(&cart, 2, true).expect("extreme anchors remain reportable");
+    assert_eq!(
+        atlas.report["sprites"][0]["anchor"],
+        json!({"x":i32::MAX,"y":i32::MIN})
+    );
+    assert_eq!((atlas.image.width, atlas.image.height), (257, 257));
+}
+
+// ---------------------------------------------------------------------------
 // target errors
 // ---------------------------------------------------------------------------
 
@@ -835,6 +922,19 @@ fn rpc_sprite_verbs_write_images_and_report_sizes() {
     assert_eq!(resp["result"]["width"], 33);
     assert_eq!(resp["result"]["height"], 33);
     assert!(std::fs::metadata(&path).expect("render png exists").len() > 0);
+    let _ = std::fs::remove_file(&path);
+
+    let path = temp_path("atlas-rpc.png");
+    let p = path.to_str().expect("utf-8 path");
+    let resp = call(
+        &mut session,
+        "sprite_atlas",
+        json!({"zoom": 2, "grid": true, "path": p}),
+    );
+    assert!(resp.get("error").is_none(), "sprite_atlas: {resp}");
+    assert_eq!(resp["result"]["image"]["width"], 257);
+    assert_eq!(resp["result"]["sprites"][0]["name"], "dot");
+    assert_eq!(resp["result"]["animations"].as_array().unwrap().len(), 4);
     let _ = std::fs::remove_file(&path);
 
     let path = temp_path("strip.png");
@@ -950,6 +1050,7 @@ fn rpc_sprite_verbs_report_bad_params_and_missing_carts() {
             "sprite_render",
             json!({"target": "dot", "path": "/dev/null"}),
         ),
+        ("sprite_atlas", json!({"path": "/dev/null"})),
         (
             "sprite_strip",
             json!({"anim": "dot.wave", "path": "/dev/null"}),

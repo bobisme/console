@@ -163,6 +163,7 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "text_events" => m_text_events(session, params),
         "spectrogram" => m_spectrogram(session, params),
         "sprite_render" => m_sprite_render(session, params),
+        "sprite_atlas" => m_sprite_atlas(session, params),
         "sprite_strip" => m_sprite_strip(session, params),
         "sprite_onion" => m_sprite_onion(session, params),
         "sprite_diff" => m_sprite_diff(session, params),
@@ -170,7 +171,7 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "sprite_lint" => m_sprite_lint(session, params),
         "map_render" => m_map_render(session, params),
         "map_dump" => m_map_dump(session, params),
-        "map_lint" => m_map_lint(session),
+        "map_lint" => m_map_lint(session, params),
         "music_score" => m_music_score(session, params),
         "music_lint" => m_music_lint(session),
         "music_piano_roll" => m_music_piano_roll(session, params),
@@ -443,6 +444,25 @@ fn m_sprite_render(session: &Session, params: &Value) -> Result<Value, RpcErr> {
     write_image(path, &image)
 }
 
+fn m_sprite_atlas(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let path = required_str(params, "sprite_atlas", "path")?;
+    let result = view::atlas(
+        session.console()?.cart(),
+        zoom_param(params),
+        bool_param(params, "grid"),
+    )
+    .map_err(RpcErr::bad_params)?;
+    crate::artifact::write(path, &result.image.png).map_err(RpcErr::bad_params)?;
+    let mut report = result.report;
+    report["image"] = json!({
+        "ok": true,
+        "path": path,
+        "width": result.image.width,
+        "height": result.image.height,
+    });
+    Ok(report)
+}
+
 fn m_sprite_strip(session: &Session, params: &Value) -> Result<Value, RpcErr> {
     let anim = required_str(params, "sprite_strip", "anim")?;
     let path = required_str(params, "sprite_strip", "path")?;
@@ -569,32 +589,62 @@ fn m_sprite_lint(session: &Session, params: &Value) -> Result<Value, RpcErr> {
 
 /// Optional `"region"` param (`"cx,cy,cw,ch"`), defaulting like the CLI does
 /// to the used extent when omitted.
-fn region_param(params: &Value, cart: &console_core::Cart) -> Result<(u32, u32, u32, u32), RpcErr> {
-    map::parse_region(string_param(params, "region"), cart.map()).map_err(RpcErr::bad_params)
+fn map_snapshot(
+    console: &console_core::Console,
+    params: &Value,
+) -> Result<console_core::TileMap, RpcErr> {
+    let source = match params.get("source") {
+        None | Some(Value::Null) => "authored",
+        Some(Value::String(source)) => source.as_str(),
+        Some(_) => {
+            return Err(RpcErr::bad_params(
+                "map source must be a string: \"authored\" or \"live\"",
+            ));
+        }
+    };
+    match source {
+        "authored" => Ok(*console.cart().map()),
+        "live" => Ok(console.live_map()),
+        other => Err(RpcErr::bad_params(format!(
+            "map source must be \"authored\" or \"live\", got {other:?}"
+        ))),
+    }
+}
+
+fn region_param(
+    params: &Value,
+    tiles: &console_core::TileMap,
+) -> Result<(u32, u32, u32, u32), RpcErr> {
+    map::parse_region(string_param(params, "region"), tiles).map_err(RpcErr::bad_params)
 }
 
 fn m_map_render(session: &Session, params: &Value) -> Result<Value, RpcErr> {
     let path = required_str(params, "map_render", "path")?;
-    let cart = session.console()?.cart();
-    let region = region_param(params, cart)?;
+    let console = session.console()?;
+    let cart = console.cart();
+    let tiles = map_snapshot(console, params)?;
+    let region = region_param(params, &tiles)?;
     let opts = map::view::MapRenderOpts {
         zoom: zoom_param(params),
         grid: bool_param(params, "grid"),
         ids: bool_param(params, "ids"),
     };
-    let image = map::view::render(cart, region, &opts).map_err(RpcErr::bad_params)?;
+    let image = map::view::render_tiles(cart, &tiles, region, &opts).map_err(RpcErr::bad_params)?;
     write_image(path, &image)
 }
 
 fn m_map_dump(session: &Session, params: &Value) -> Result<Value, RpcErr> {
-    let cart = session.console()?.cart();
-    let region = region_param(params, cart)?;
-    let text = map::view::dump(cart, region).map_err(RpcErr::bad_params)?;
+    let console = session.console()?;
+    let tiles = map_snapshot(console, params)?;
+    let region = region_param(params, &tiles)?;
+    let text = map::view::dump_tiles(&tiles, region).map_err(RpcErr::bad_params)?;
     Ok(json!({ "text": text }))
 }
 
-fn m_map_lint(session: &Session) -> Result<Value, RpcErr> {
-    Ok(map::view::lint(session.console()?.cart()))
+fn m_map_lint(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let console = session.console()?;
+    let tiles = map_snapshot(console, params)?;
+    Ok(map::view::lint_tiles(console.cart(), &tiles))
 }
 
 // ---------------------------------------------------------------------------

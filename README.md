@@ -176,6 +176,8 @@ console playtest carts/lantern-leap.cart \
 Scenario stages run in file order and can evaluate Lua, hold an input mask for
 an exact frame count, compare an evaluated value to JSON, and capture
 screenshots, screen text, WAVs, spectrograms, audio events, and signal stats.
+Captures can also emit authored or live-runtime map PNG, hex, and lint
+artifacts, so a scenario can preserve terrain after scripted `mset` mutations.
 
 ## Development
 

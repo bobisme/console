@@ -342,3 +342,130 @@ fn scenario_captures_text_layout_events() {
     assert_eq!(artifact["events"][0]["x"], 86);
     assert_eq!(artifact["events"][0]["width"], 20);
 }
+
+#[test]
+fn scenario_captures_authored_and_live_maps_from_one_session() {
+    let dir = scratch("live-map");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    let scenario = dir.join("map.json");
+    let artifacts = dir.join("artifacts");
+    fs::write(&cart, "__lua__\nfunction _init() end\n\n__map__\n0102\n").unwrap();
+    fs::write(
+        &scenario,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "stages": [
+                {"op":"eval", "code":"mset(0,0,3)"},
+                {"op":"capture", "map":{
+                    "dump":"authored.txt", "lint":"authored.json", "region":"0,0,2,1"
+                }},
+                {"op":"capture", "map":{
+                    "source":"live", "png":"live.png", "dump":"live.txt",
+                    "lint":"live.json", "region":"0,0,2,1", "zoom":2,
+                    "grid":true, "ids":true
+                }}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&[
+        "playtest",
+        as_str(&cart),
+        "--scenario",
+        as_str(&scenario),
+        "--artifacts",
+        as_str(&artifacts),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.status.success(),
+        "playtest failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["scenario"]["artifact_count"], 5);
+    assert_eq!(report["stages"][1]["artifacts"][0]["kind"], "map_dump");
+    assert_eq!(report["stages"][2]["artifacts"][0]["kind"], "map_png");
+
+    assert!(
+        fs::read_to_string(artifacts.join("authored.txt"))
+            .unwrap()
+            .contains("0102")
+    );
+    assert!(
+        fs::read_to_string(artifacts.join("live.txt"))
+            .unwrap()
+            .contains("0302")
+    );
+    assert!(
+        fs::read(artifacts.join("live.png"))
+            .unwrap()
+            .starts_with(b"\x89PNG")
+    );
+    let authored: Value =
+        serde_json::from_slice(&fs::read(artifacts.join("authored.json")).unwrap()).unwrap();
+    let live: Value =
+        serde_json::from_slice(&fs::read(artifacts.join("live.json")).unwrap()).unwrap();
+    assert_eq!(authored["tile_counts"][0]["tile"], 1);
+    assert_eq!(live["tile_counts"][0]["tile"], 2);
+    assert_eq!(live["tile_counts"][1]["tile"], 3);
+}
+
+#[test]
+fn invalid_nested_map_capture_is_rejected_before_writing() {
+    let dir = scratch("map-schema");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    let artifacts = dir.join("artifacts");
+    fs::write(&cart, "__lua__\n").unwrap();
+
+    for (file, capture, expected) in [
+        (
+            "empty.json",
+            json!({"map":{}}),
+            "map capture has no outputs",
+        ),
+        (
+            "source.json",
+            json!({"map":{"source":"snapshot", "dump":"map.txt"}}),
+            "unknown variant",
+        ),
+        (
+            "zoom.json",
+            json!({"map":{"dump":"map.txt", "zoom":u32::MAX}}),
+            "map capture zoom must be 1..=16",
+        ),
+        (
+            "alias.json",
+            json!({"screenshot":"same//out", "map":{"dump":"same/out"}}),
+            "aliases an earlier artifact",
+        ),
+    ] {
+        let scenario = dir.join(file);
+        fs::write(
+            &scenario,
+            serde_json::to_vec(&json!({
+                "version":1,
+                "stages":[{"op":"capture", "screenshot":capture["screenshot"], "map":capture["map"]}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let output = run(&[
+            "playtest",
+            as_str(&cart),
+            "--scenario",
+            as_str(&scenario),
+            "--artifacts",
+            as_str(&artifacts),
+        ]);
+        assert_eq!(output.status.code(), Some(2), "case {file}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "case {file}: {stderr}");
+    }
+    assert!(!artifacts.exists());
+}

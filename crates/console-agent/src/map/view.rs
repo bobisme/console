@@ -67,14 +67,24 @@ pub fn render(
     region: (u32, u32, u32, u32),
     opts: &MapRenderOpts,
 ) -> Result<Image, String> {
+    render_tiles(cart, cart.map(), region, opts)
+}
+
+/// Render an explicit map snapshot with `cart` supplying the sprite sheet and
+/// preview palette. This is the shared path for authored-cart and live-runtime
+/// map inspection; the pixel result differs only when the tile data differs.
+pub fn render_tiles(
+    cart: &Cart,
+    tiles: &TileMap,
+    region: (u32, u32, u32, u32),
+    opts: &MapRenderOpts,
+) -> Result<Image, String> {
     let zoom = view::check_zoom(opts.zoom)?;
     let (cx, cy, cw, ch) = region;
     super::validate_region(cx, cy, cw, ch)?;
     let extra = u32::from(opts.grid);
     let (pw, ph) = (cw * 8 * zoom + extra, ch * 8 * zoom + extra);
     let mut canvas = view::Canvas::new(pw, ph, zoom);
-    let tiles = cart.map();
-
     for j in 0..ch {
         for i in 0..cw {
             let t = tiles[((cy + j) as usize) * MAP_W + (cx + i) as usize];
@@ -174,9 +184,13 @@ fn draw_hex_glyph(canvas: &mut view::Canvas, x: u32, y: u32, digit: u8, scale: u
 /// `#`-prefixed lines for exactly this reason, mirroring `sprite dump`/
 /// `sprite poke`.
 pub fn dump(cart: &Cart, region: (u32, u32, u32, u32)) -> Result<String, String> {
+    dump_tiles(cart.map(), region)
+}
+
+/// Dump an explicit authored or live map snapshot as canonical hex rows.
+pub fn dump_tiles(tiles: &TileMap, region: (u32, u32, u32, u32)) -> Result<String, String> {
     let (cx, cy, cw, ch) = region;
     super::validate_region(cx, cy, cw, ch)?;
-    let tiles = cart.map();
     let mut out = format!("# cx={cx} cy={cy} cw={cw} ch={ch}\n");
     for j in 0..ch {
         let mut row = String::with_capacity((cw * 2) as usize);
@@ -197,7 +211,11 @@ pub fn dump(cart: &Cart, region: (u32, u32, u32, u32)) -> Result<String, String>
 /// almost always a typo'd id, since a real tile is drawn with something),
 /// and `%` fill.
 pub fn lint(cart: &Cart) -> Value {
-    let tiles = cart.map();
+    lint_tiles(cart, cart.map())
+}
+
+/// Lint an explicit authored or live map snapshot against `cart`'s sheet.
+pub fn lint_tiles(cart: &Cart, tiles: &TileMap) -> Value {
     let sheet = cart.sprites();
 
     let mut hist: BTreeMap<u8, u32> = BTreeMap::new();

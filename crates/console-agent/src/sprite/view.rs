@@ -1,4 +1,4 @@
-//! Inspection renders (render/strip/onion/diff/ghost) and numeric lints for
+//! Inspection renders (render/atlas/strip/onion/diff/ghost) and numeric lints for
 //! `__gfx_meta__` sprites and anims — SPEC.md "Sprite & animation authoring
 //! (PoC v1)", the inspection-tools table.
 //!
@@ -7,7 +7,8 @@
 //! [`cli_view`]) and the RPC verbs in `rpc.rs`, so the two surfaces can never
 //! drift: [`render`], [`strip`], [`onion`], [`diff`], [`ghost`], [`lint`].
 //! [`gif`] is CLI-only (an animated preview has no single-frame RPC shape to
-//! mirror) but otherwise follows the same conventions.
+//! mirror) but otherwise follows the same conventions. [`atlas`] pairs an
+//! annotated whole-sheet image with a semantic allocation report.
 //!
 //! Render conventions, shared by every image command:
 //!
@@ -25,7 +26,7 @@
 //!   the anim side by side, each with its own onion skin and a frame-number
 //!   caption (see [`onion_all`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use console_core::{
     AnimDef, COLOR_MASK, Cart, FrameSpec, PALETTE, PreviewPalette, SHEET_W, SpriteDef,
@@ -118,6 +119,13 @@ pub struct Image {
     pub height: u32,
     /// How many sprite frames the image depicts.
     pub frames: usize,
+}
+
+/// A semantic atlas: the annotated full sprite sheet plus a deterministic
+/// machine-readable inventory of every declaration and resolved frame.
+pub struct AtlasResult {
+    pub image: Image,
+    pub report: Value,
 }
 
 /// Debug by shape, not by content — the pixel buffers are far too big to
@@ -481,6 +489,269 @@ pub fn ghost(cart: &Cart, anim: &str, opts: &OverlayOpts) -> Result<Image, Strin
         );
     }
     Ok(canvas.finish(frames.len()))
+}
+
+/// `sprite atlas` — render the whole sheet as one annotated allocation map
+/// and report how `__gfx_meta__` declarations consume it. Multiple uses by
+/// one sprite namespace are intentional aliases; uses by different sprites
+/// are conflicts. This makes relocated/explicit animation frames visible
+/// without changing their runtime resolution rules.
+pub fn atlas(cart: &Cart, zoom: u32, grid: bool) -> Result<AtlasResult, String> {
+    let zoom = check_zoom(zoom)?;
+    let meta = cart.gfx_meta();
+    let mut owners: BTreeMap<u8, Vec<(String, String)>> = BTreeMap::new();
+    let mut sprites = Vec::new();
+    let mut animations = Vec::new();
+    let mut blank_allocations = Vec::new();
+
+    for sprite in meta.sprites() {
+        let rect = (
+            u32::from(sprite.rect.0) * 8,
+            u32::from(sprite.rect.1) * 8,
+            u32::from(sprite.size.0) * 8,
+            u32::from(sprite.size.1) * 8,
+        );
+        mark_atlas_rect(
+            &mut owners,
+            sprite.rect.0,
+            sprite.rect.1,
+            sprite.size.0,
+            sprite.size.1,
+            &sprite.name,
+            format!("sprite:{}", sprite.name),
+        );
+        let frame = read_rect(cart, rect);
+        let stats = frame_stats(&frame, (0, 0));
+        let blank = stats.area == 0;
+        if blank {
+            blank_allocations.push(json!({"kind":"sprite", "name":sprite.name}));
+        }
+        sprites.push(json!({
+            "name": sprite.name,
+            "rect": tile_rect_json(sprite.rect.0, sprite.rect.1, sprite.size.0, sprite.size.1),
+            "anchor": {"x":sprite.anchor.0, "y":sprite.anchor.1},
+            "blank": blank,
+            "palette_counts": hist_json(&stats.hist),
+        }));
+    }
+
+    for anim in meta.anims() {
+        let sprite = meta.sprite(&anim.sprite).ok_or_else(|| {
+            format!(
+                "anim {:?} names unknown sprite {:?}",
+                anim.name, anim.sprite
+            )
+        })?;
+        let mut frames = Vec::with_capacity(anim.frames.len());
+        for position in 0..anim.frames.len() {
+            let (x, y, w, h) = anim.resolve_frame(sprite, position).ok_or_else(|| {
+                format!(
+                    "frame {position} of anim {:?} falls off the sheet",
+                    anim.name
+                )
+            })?;
+            let (tx, ty, tw, th) = ((x / 8) as u8, (y / 8) as u8, (w / 8) as u8, (h / 8) as u8);
+            mark_atlas_rect(
+                &mut owners,
+                tx,
+                ty,
+                tw,
+                th,
+                &anim.sprite,
+                format!("anim:{}[{position}]", anim.name),
+            );
+            let frame = read_rect(cart, (x, y, w, h));
+            let stats = frame_stats(&frame, (0, 0));
+            let blank = stats.area == 0;
+            if blank {
+                blank_allocations.push(json!({
+                    "kind":"animation_frame", "name":anim.name, "position":position
+                }));
+            }
+            frames.push(json!({
+                "position": position,
+                "spec": frame_spec_json(anim.frames[position]),
+                "rect": tile_rect_json(tx, ty, tw, th),
+                "tiles": atlas_tile_ids(tx, ty, tw, th),
+                "blank": blank,
+                "palette_counts": hist_json(&stats.hist),
+            }));
+        }
+        animations.push(json!({
+            "name": anim.name,
+            "sprite": anim.sprite,
+            "fps": anim.fps,
+            "loop": anim.looped,
+            "frames": frames,
+        }));
+    }
+
+    let used_tiles: Vec<u8> = owners.keys().copied().collect();
+    let used_set: BTreeSet<u8> = used_tiles.iter().copied().collect();
+    let unused_tiles: Vec<u8> = (0..=u8::MAX)
+        .filter(|tile| !used_set.contains(tile))
+        .collect();
+    let mut overlaps = Vec::new();
+    let mut alias_tiles = BTreeSet::new();
+    let mut conflict_tiles = BTreeSet::new();
+    for (&tile, uses) in &owners {
+        if uses.len() < 2 {
+            continue;
+        }
+        let namespaces: BTreeSet<&str> = uses
+            .iter()
+            .map(|(namespace, _)| namespace.as_str())
+            .collect();
+        let conflict = namespaces.len() > 1;
+        if conflict {
+            conflict_tiles.insert(tile);
+        } else {
+            alias_tiles.insert(tile);
+        }
+        overlaps.push(json!({
+            "tile": tile,
+            "classification": if conflict { "conflict" } else { "alias" },
+            "sprites": namespaces,
+            "uses": uses.iter().map(|(_, usage)| usage).collect::<Vec<_>>(),
+        }));
+    }
+
+    let extra = u32::from(grid);
+    let mut canvas = Canvas::new(128 * zoom + extra, 128 * zoom + extra, zoom);
+    let sheet = read_rect(cart, (0, 0, 128, 128));
+    draw_frame(&mut canvas, &sheet, (0, 0), zoom, cart.preview_palette());
+    for tile in &unused_tiles {
+        canvas.blend_fill(atlas_tile_cell(*tile, zoom), [4, 7, 12], 0.58);
+    }
+    for tile in &alias_tiles {
+        canvas.blend_fill(atlas_tile_cell(*tile, zoom), [0, 210, 220], 0.16);
+    }
+    for tile in &conflict_tiles {
+        canvas.blend_fill(atlas_tile_cell(*tile, zoom), [255, 0, 190], 0.32);
+    }
+    if grid {
+        draw_grid(
+            &mut canvas,
+            Rect {
+                x: 0,
+                y: 0,
+                w: 128 * zoom,
+                h: 128 * zoom,
+            },
+            zoom,
+        );
+    }
+    for (index, sprite) in meta.sprites().enumerate() {
+        let cell = Rect {
+            x: u32::from(sprite.rect.0) * 8 * zoom,
+            y: u32::from(sprite.rect.1) * 8 * zoom,
+            w: u32::from(sprite.size.0) * 8 * zoom,
+            h: u32::from(sprite.size.1) * 8 * zoom,
+        };
+        outline(&mut canvas, cell, PALETTE[atlas_outline_color(index)]);
+        draw_anchor(&mut canvas, cell, sprite.anchor, zoom);
+    }
+    for tile in 0..=u8::MAX {
+        draw_atlas_tile_id(&mut canvas, tile, zoom);
+    }
+
+    let report = json!({
+        "sheet": {"tiles_w":16, "tiles_h":16, "tile_count":256},
+        "sprites": sprites,
+        "animations": animations,
+        "overlaps": overlaps,
+        "blank_allocations": blank_allocations,
+        "used_tiles": used_tiles,
+        "unused_tiles": unused_tiles,
+    });
+    Ok(AtlasResult {
+        image: canvas.finish(1),
+        report,
+    })
+}
+
+fn mark_atlas_rect(
+    owners: &mut BTreeMap<u8, Vec<(String, String)>>,
+    tx: u8,
+    ty: u8,
+    w: u8,
+    h: u8,
+    namespace: &str,
+    usage: String,
+) {
+    for tile in atlas_tile_ids(tx, ty, w, h) {
+        owners
+            .entry(tile)
+            .or_default()
+            .push((namespace.to_string(), usage.clone()));
+    }
+}
+
+fn atlas_tile_ids(tx: u8, ty: u8, w: u8, h: u8) -> Vec<u8> {
+    (0..h)
+        .flat_map(|dy| (0..w).map(move |dx| (ty + dy) * 16 + tx + dx))
+        .collect()
+}
+
+fn tile_rect_json(tx: u8, ty: u8, w: u8, h: u8) -> Value {
+    json!({"tx":tx, "ty":ty, "w":w, "h":h})
+}
+
+fn atlas_tile_cell(tile: u8, zoom: u32) -> Rect {
+    Rect {
+        x: u32::from(tile % 16) * 8 * zoom,
+        y: u32::from(tile / 16) * 8 * zoom,
+        w: 8 * zoom,
+        h: 8 * zoom,
+    }
+}
+
+fn atlas_outline_color(index: usize) -> usize {
+    const COLORS: [usize; 8] = [14, 21, 28, 33, 42, 48, 54, 60];
+    COLORS[index % COLORS.len()]
+}
+
+fn outline(canvas: &mut Canvas, rect: Rect, color: [u8; 3]) {
+    if rect.w == 0 || rect.h == 0 {
+        return;
+    }
+    for x in rect.x..=rect.x + rect.w {
+        canvas.set(x, rect.y, color);
+        canvas.set(x, rect.y + rect.h, color);
+    }
+    for y in rect.y..=rect.y + rect.h {
+        canvas.set(rect.x, y, color);
+        canvas.set(rect.x + rect.w, y, color);
+    }
+}
+
+fn draw_atlas_tile_id(canvas: &mut Canvas, tile: u8, zoom: u32) {
+    let cell = atlas_tile_cell(tile, zoom);
+    let scale = (zoom / 2).max(1);
+    let x = cell.x + scale;
+    let y = cell.y + scale;
+    let ink = if luminance(canvas.get(cell.x + cell.w / 2, cell.y + cell.h / 2)) < 128.0 {
+        INK_LIGHT
+    } else {
+        INK_DARK
+    };
+    for (digit, dx) in [(tile >> 4, 0), (tile & 0x0f, 4 * scale)] {
+        for (row, bits) in GLYPHS[usize::from(digit)].iter().enumerate() {
+            for bit in 0..3u32 {
+                if bits & (1 << (2 - bit)) != 0 {
+                    canvas.fill(
+                        Rect {
+                            x: x + dx + bit * scale,
+                            y: y + row as u32 * scale,
+                            w: scale,
+                            h: scale,
+                        },
+                        ink,
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// A finished GIF: the encoded bytes plus the dimensions/frame count it
@@ -1137,6 +1408,23 @@ fn run_view(args: &[String]) -> Result<i32, String> {
         return Ok(0);
     }
 
+    if cmd == "atlas" {
+        if !rest.is_empty() {
+            return Err(format!("sprite atlas takes no target, got {rest:?}"));
+        }
+        let out = flags
+            .out
+            .as_deref()
+            .ok_or("sprite atlas requires -o <out.png>")?;
+        let result = atlas(&cart, flags.zoom, flags.grid)?;
+        crate::artifact::write(out, &result.image.png)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result.report).map_err(|e| e.to_string())?
+        );
+        return Ok(0);
+    }
+
     let out = flags
         .out
         .as_deref()
@@ -1623,11 +1911,14 @@ pub(crate) fn draw_grid(canvas: &mut Canvas, cell: Rect, zoom: u32) {
 /// with the anchor's own pixel cell outlined.
 fn draw_anchor(canvas: &mut Canvas, cell: Rect, anchor: (i32, i32), zoom: u32) {
     let color = PALETTE[4];
-    let z = zoom as i32;
-    let cx = cell.x as i32 + anchor.0 * z + z / 2;
-    let cy = cell.y as i32 + anchor.1 * z + z / 2;
-    let (x0, x1) = (cell.x as i32, (cell.x + cell.w) as i32 - 1);
-    let (y0, y1) = (cell.y as i32, (cell.y + cell.h) as i32 - 1);
+    // Anchors deliberately accept the full i32 domain and may sit outside a
+    // sprite. Widen before multiplying by zoom so diagnostics never panic or
+    // wrap merely because metadata names a far-away anchor.
+    let z = i64::from(zoom);
+    let cx = i64::from(cell.x) + i64::from(anchor.0) * z + z / 2;
+    let cy = i64::from(cell.y) + i64::from(anchor.1) * z + z / 2;
+    let (x0, x1) = (i64::from(cell.x), i64::from(cell.x + cell.w) - 1);
+    let (y0, y1) = (i64::from(cell.y), i64::from(cell.y + cell.h) - 1);
     let arm = (z * 2).max(4);
 
     for d in -arm..=arm {
@@ -1641,7 +1932,10 @@ fn draw_anchor(canvas: &mut Canvas, cell: Rect, anchor: (i32, i32), zoom: u32) {
         }
     }
     // Outline of the anchor's pixel cell, so its exact pixel is unambiguous.
-    let (bx, by) = (cell.x as i32 + anchor.0 * z, cell.y as i32 + anchor.1 * z);
+    let (bx, by) = (
+        i64::from(cell.x) + i64::from(anchor.0) * z,
+        i64::from(cell.y) + i64::from(anchor.1) * z,
+    );
     for d in 0..z {
         for (px, py) in [
             (bx + d, by),

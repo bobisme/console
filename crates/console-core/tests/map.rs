@@ -508,8 +508,14 @@ fn mset_persists_across_frames_without_being_redrawn() {
 #[test]
 fn mset_does_not_touch_the_carts_own_map() {
     let mut con = run(CORNER, "cls(0)");
+    assert_eq!(con.live_map()[0], 1, "live map starts from authored data");
     con.eval("mset(0, 0, 99)").unwrap();
     assert_eq!(mget(&mut con, 0, 0), 99);
+    assert_eq!(
+        con.live_map()[0],
+        99,
+        "live map exposes the session mutation"
+    );
     assert_eq!(
         con.cart().map()[0],
         1,

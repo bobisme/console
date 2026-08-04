@@ -20,7 +20,7 @@ fn top_level_help_is_complete_and_successful() {
         let text = stdout(&output);
         assert!(text.contains("palette <show|quantize>"));
         assert!(text.contains(
-            "sprite <render|strip|onion|diff|ghost|gif|lint|edit|dump|poke|export|import>"
+            "sprite <render|atlas|strip|onion|diff|ghost|gif|lint|edit|dump|poke|export|import>"
         ));
         assert!(text.contains("map <render|dump|lint|edit|poke>"));
         assert!(text.contains("music <score|lint|piano-roll|render|edit|import-abc>"));

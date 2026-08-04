@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
 use crate::artifact;
+use crate::map;
 use crate::session::Session;
 use crate::value::lua_to_json;
 
@@ -21,6 +22,7 @@ const MAX_SCREENSHOT_ZOOM: u32 = 16;
 const MAX_SPECTROGRAM_CELL: u32 = 8;
 const MAX_SCENARIO_FRAMES: u64 = 36_000;
 const MAX_SPECTROGRAM_FRAMES: u64 = 3_600;
+const MAX_MAP_ZOOM: u32 = 16;
 
 pub const USAGE: &str = "\
 Run an ordered, deterministic cart playtest scenario
@@ -39,7 +41,8 @@ Scenario format (version 1):
     {\"op\":\"input\",\"frames\":1,\"buttons\":\"A\"},
     {\"op\":\"eval\",\"code\":\"dev_warp(48,449)\"},
     {\"op\":\"assert\",\"code\":\"return dev_status().embers\",\"equals\":1},
-    {\"op\":\"capture\",\"screenshot\":\"scene.png\",\"zoom\":4}
+    {\"op\":\"capture\",\"screenshot\":\"scene.png\",\"zoom\":4,
+      \"map\":{\"source\":\"live\",\"png\":\"map.png\",\"dump\":\"map.txt\"}}
   ]}
 
 Exit codes:
@@ -117,6 +120,8 @@ pub enum Stage {
         #[serde(default)]
         text_events: Option<String>,
         #[serde(default)]
+        map: Option<Box<MapCapture>>,
+        #[serde(default)]
         from_frame: Option<u64>,
         #[serde(default)]
         to_frame: Option<u64>,
@@ -125,6 +130,35 @@ pub enum Stage {
         #[serde(default = "default_cell")]
         cell: u32,
     },
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum MapSource {
+    #[default]
+    Authored,
+    Live,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MapCapture {
+    #[serde(default)]
+    source: MapSource,
+    #[serde(default)]
+    png: Option<String>,
+    #[serde(default)]
+    dump: Option<String>,
+    #[serde(default)]
+    lint: Option<String>,
+    #[serde(default)]
+    region: Option<String>,
+    #[serde(default = "default_map_zoom")]
+    zoom: u32,
+    #[serde(default)]
+    grid: bool,
+    #[serde(default)]
+    ids: bool,
 }
 
 fn default_zoom() -> u32 {
@@ -136,6 +170,10 @@ fn default_window_frames() -> u64 {
 }
 
 fn default_cell() -> u32 {
+    4
+}
+
+fn default_map_zoom() -> u32 {
     4
 }
 
@@ -470,13 +508,14 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                 audio_events,
                 audio_stats,
                 text_events,
+                map,
                 from_frame,
                 to_frame,
                 window_frames,
                 cell,
                 ..
             } => {
-                let outputs = [
+                let mut outputs = vec![
                     screenshot.as_deref(),
                     screen_text.as_deref(),
                     wav.as_deref(),
@@ -485,6 +524,20 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                     audio_stats.as_deref(),
                     text_events.as_deref(),
                 ];
+                if let Some(map) = map {
+                    let map_outputs =
+                        [map.png.as_deref(), map.dump.as_deref(), map.lint.as_deref()];
+                    if map_outputs.iter().all(Option::is_none) {
+                        return Err(format!("stage {index} map capture has no outputs"));
+                    }
+                    if !(1..=MAX_MAP_ZOOM).contains(&map.zoom) {
+                        return Err(format!(
+                            "stage {index} map capture zoom must be 1..={MAX_MAP_ZOOM}, got {}",
+                            map.zoom
+                        ));
+                    }
+                    outputs.extend(map_outputs);
+                }
                 if outputs.iter().all(Option::is_none) {
                     return Err(format!("stage {index} capture has no outputs"));
                 }
@@ -622,6 +675,7 @@ fn execute_stage(
             audio_events,
             audio_stats,
             text_events,
+            map,
             from_frame,
             to_frame,
             window_frames,
@@ -701,6 +755,51 @@ fn execute_stage(
                 report
                     .artifacts
                     .push(write_artifact(root, name, "text_events", &bytes)?);
+            }
+            if let Some(map_capture) = map {
+                let console = session.console().map_err(|error| error.to_string())?;
+                let live_tiles;
+                let tiles = match map_capture.source {
+                    MapSource::Authored => console.cart().map(),
+                    MapSource::Live => {
+                        live_tiles = console.live_map();
+                        &live_tiles
+                    }
+                };
+                let region = map::parse_region(map_capture.region.as_deref(), tiles)?;
+                if let Some(name) = &map_capture.png {
+                    let image = map::view::render_tiles(
+                        console.cart(),
+                        tiles,
+                        region,
+                        &map::view::MapRenderOpts {
+                            zoom: map_capture.zoom,
+                            grid: map_capture.grid,
+                            ids: map_capture.ids,
+                        },
+                    )?;
+                    report
+                        .artifacts
+                        .push(write_artifact(root, name, "map_png", &image.png)?);
+                }
+                if let Some(name) = &map_capture.dump {
+                    let bytes = map::view::dump_tiles(tiles, region)?;
+                    report.artifacts.push(write_artifact(
+                        root,
+                        name,
+                        "map_dump",
+                        bytes.as_bytes(),
+                    )?);
+                }
+                if let Some(name) = &map_capture.lint {
+                    let mut bytes =
+                        serde_json::to_vec_pretty(&map::view::lint_tiles(console.cart(), tiles))
+                            .map_err(|error| format!("serializing map lint: {error}"))?;
+                    bytes.push(b'\n');
+                    report
+                        .artifacts
+                        .push(write_artifact(root, name, "map_lint", &bytes)?);
+                }
             }
         }
     }

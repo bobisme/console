@@ -398,3 +398,72 @@ fn rpc_map_verbs_are_read_only_mirrors() {
         assert_eq!(resp["error"]["code"], -32002, "{method}: {resp}");
     }
 }
+
+#[test]
+fn rpc_map_verbs_select_authored_or_live_runtime_state() {
+    let mut session = loaded_session();
+    let resp = call(
+        &mut session,
+        "eval",
+        json!({"code": "mset(0,0,2); mset(4,0,1)"}),
+    );
+    assert!(resp.get("error").is_none(), "eval: {resp}");
+
+    let authored = call(
+        &mut session,
+        "map_dump",
+        json!({"source": "authored", "region": "0,0,5,1"}),
+    );
+    assert_eq!(
+        authored["result"]["text"].as_str().unwrap().lines().nth(1),
+        Some("0101000200")
+    );
+
+    let defaulted = call(&mut session, "map_dump", json!({"region": "0,0,5,1"}));
+    assert_eq!(defaulted["result"], authored["result"]);
+
+    let live = call(
+        &mut session,
+        "map_dump",
+        json!({"source": "live", "region": "0,0,5,1"}),
+    );
+    assert_eq!(
+        live["result"]["text"].as_str().unwrap().lines().nth(1),
+        Some("0201000201")
+    );
+
+    let live_lint = call(&mut session, "map_lint", json!({"source": "live"}));
+    assert_eq!(live_lint["result"]["nonzero_cells"], 5);
+    assert_eq!(
+        live_lint["result"]["used_extent"],
+        json!({"cx": 0, "cy": 0, "cw": 5, "ch": 2})
+    );
+
+    let bad = call(&mut session, "map_dump", json!({"source": "snapshot"}));
+    assert_eq!(bad["error"]["code"], -32602, "{bad}");
+    assert!(
+        bad["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("authored")
+    );
+
+    for (method, params) in [
+        (
+            "map_render",
+            json!({"source":17, "path":"/dev/null", "region":"0,0,1,1"}),
+        ),
+        ("map_dump", json!({"source":17, "region":"0,0,1,1"})),
+        ("map_lint", json!({"source":17})),
+    ] {
+        let bad_type = call(&mut session, method, params);
+        assert_eq!(bad_type["error"]["code"], -32602, "{method}: {bad_type}");
+        assert!(
+            bad_type["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("must be a string"),
+            "{method}: {bad_type}"
+        );
+    }
+}

@@ -308,6 +308,16 @@ impl Console {
         &self.cart
     }
 
+    /// A read-only snapshot of the live 128x64 tile map.
+    ///
+    /// This starts as [`Cart::map`] and then reflects every deterministic
+    /// `mset` performed by cart code. Returning a snapshot keeps the host
+    /// inspection surface read-only and avoids exposing the runtime's
+    /// interior `RefCell` borrow across API boundaries.
+    pub fn live_map(&self) -> TileMap {
+        *self.state.borrow().map
+    }
+
     /// Drain buffered `printh` output.
     pub fn take_logs(&mut self) -> Vec<String> {
         std::mem::take(&mut self.state.borrow_mut().logs)
