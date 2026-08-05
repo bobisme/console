@@ -11,3 +11,4 @@
 {"ts":"2026-08-04T20:27:26.258713555Z","author":"console-dev","event":"ReviewerVoted","data":{"review_id":"cr-f3muun","vote":"lgtm","reason":"Accidental author-side block vote superseded after verified fix."}}
 {"ts":"2026-08-04T20:27:26.324563796Z","author":"console-reviewer","event":"ReviewerVoted","data":{"review_id":"cr-f3muun","vote":"lgtm","reason":"Verified 946defb. Exit semantics are restored with focused regressions; focused integration suite and Clippy pass."}}
 {"ts":"2026-08-04T20:27:26.361908433Z","author":"console-reviewer","event":"ReviewApproved","data":{"review_id":"cr-f3muun"}}
+{"ts":"2026-08-04T20:28:13.854366184Z","author":"console-dev","event":"ReviewMerged","data":{"review_id":"cr-f3muun","final_commit":"d9f9d0f95bc3da7404b137f6d6d3736692f3e161"}}

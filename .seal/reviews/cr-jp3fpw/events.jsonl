@@ -2,3 +2,4 @@
 {"ts":"2026-08-04T20:09:55.767714666Z","author":"console-dev","event":"ReviewersRequested","data":{"review_id":"cr-jp3fpw","reviewers":["console-reviewer"]}}
 {"ts":"2026-08-04T20:12:44.396199015Z","author":"console-reviewer","event":"ReviewerVoted","data":{"review_id":"cr-jp3fpw","vote":"lgtm","reason":"Reviewed 65023a3 across manifest semantics, shared palette conversion, transparency/budgets, deterministic placement, confinement, sheet/gfx-meta composition, reports, tests, and docs. No substantive defects found; focused PNG project tests, palette tests, reference/skill validation, and diff hygiene pass."}}
 {"ts":"2026-08-04T20:12:44.434457950Z","author":"console-reviewer","event":"ReviewApproved","data":{"review_id":"cr-jp3fpw"}}
+{"ts":"2026-08-04T20:13:20.050051118Z","author":"console-dev","event":"ReviewMerged","data":{"review_id":"cr-jp3fpw","final_commit":"96a5053c1303a04ef2a6725030a48e95637caa0f"}}

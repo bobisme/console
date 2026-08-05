@@ -15,3 +15,4 @@
 {"ts":"2026-08-04T23:32:55.239817489Z","author":"console-review","event":"ThreadResolved","data":{"thread_id":"th-142s0l","reason":"Fixed in the current workspace: map pixel extents now retain exact i64 scaling, and the reproduced offset tile has visible_bounds (0,0,8,8). Focused trace tests and workspace clippy pass."}}
 {"ts":"2026-08-04T23:32:55.279605005Z","author":"console-review","event":"ReviewerVoted","data":{"review_id":"cr-3f5bpn","vote":"lgtm"}}
 {"ts":"2026-08-04T23:32:55.321441131Z","author":"console-review","event":"ReviewApproved","data":{"review_id":"cr-3f5bpn"}}
+{"ts":"2026-08-04T23:33:53.914067585Z","author":"console-dev","event":"ReviewMerged","data":{"review_id":"cr-3f5bpn","final_commit":"1132bab9c80469a550ff5603d408ef4f8763f5f0"}}

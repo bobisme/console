@@ -12,3 +12,4 @@
 {"ts":"2026-08-04T19:36:22.367936900Z","author":"console-reviewer","event":"ThreadResolved","data":{"thread_id":"th-35l4jr","reason":"Fixed in 0cd07b0: pretty output now includes the canonical manifest and every canonical input, with a CLI regression for manifest, Lua, and section provenance."}}
 {"ts":"2026-08-04T19:36:22.406502739Z","author":"console-reviewer","event":"ReviewerVoted","data":{"review_id":"cr-1kcr1a","vote":"lgtm","reason":"Re-reviewed 0cd07b0. Both blocking defects are fixed with meaningful regressions; focused project unit/CLI tests and diff hygiene pass."}}
 {"ts":"2026-08-04T19:36:22.444701928Z","author":"console-reviewer","event":"ReviewApproved","data":{"review_id":"cr-1kcr1a"}}
+{"ts":"2026-08-04T19:37:20.321461597Z","author":"console-dev","event":"ReviewMerged","data":{"review_id":"cr-1kcr1a","final_commit":"8eaedb02fd408a394d269d80f2990ec3d9a0a1af"}}
