@@ -1,0 +1,2018 @@
+__meta__
+title=Operation Lilybreaker - Bog Funk Field Mix
+author=OpenAI Codex
+version=0
+
+__lua__
+function _init()
+  music(0)
+end
+
+function _draw()
+  cls(1)
+  print("OPERATION LILYBREAKER", 68, 60, 11)
+  print("BOG FUNK FIELD MIX", 76, 72, 27)
+  print("SIX VOICES / ONE VERY BAD SWAMP", 48, 96, 6)
+end
+
+__instruments__
+# Hollow croak, woody brass and FM radio colors split the harmony into lanes.
+wavetable 0 89acdeef ffeedca9 76532110 00112356
+wavetable 1 8cefeede eedeefec 73101121 11211013
+inst croaklead wave=w1 vib=13,3,3 echo=3
+inst mudbass wave=6 fm=1,7 trem=2,2
+inst canopybrass wave=w0 env=0,5,0 trem=3,4 echo=2
+inst radioanswer wave=6 fm=3.5,6,7 env=0,10,0 echo=4
+inst kick wave=3 sweep=-19,5 env=0,6,0 duck=4,9
+inst snare wave=5 sweep=-8,3 env=0,5,0 echo=1
+inst hat wave=5 env=0,2,0
+inst bogtom wave=7 sweep=-10,6 env=0,8,0 duck=2,7
+master drive=2 tone=1 hiss=0
+echo delay=12 feedback=4 level=3
+
+__sfx__
+# Each sfx is two 4/4 bars: 32 sixteenth rows at 150 BPM.
+
+# voice 1
+sfx 0 speed=auto
+---
+---
+---
+---
+D4 croaklead 4
+D4 croaklead 4
+F4 croaklead 4 vib40,10
+F4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+C5 croaklead 4 arp4,7
+C5 croaklead 4
+A4 croaklead 4 sl+2
+A4 croaklead 4
+E4 croaklead 4
+E4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+E5 croaklead 4 vib40,10
+E5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+G4 croaklead 4 arp3,7
+G4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+
+# voice 1
+sfx 1 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+A4 croaklead 4
+A4 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+A5 croaklead 4 vib40,10
+A5 croaklead 4
+G5 croaklead 4
+G5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+
+# voice 1
+sfx 2 speed=auto
+D4 croaklead 4
+D4 croaklead 4
+F4 croaklead 4
+F4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+D5 croaklead 4 vib40,10
+D5 croaklead 4
+F5 croaklead 4
+F5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C5 croaklead 4 arp4,7
+C5 croaklead 4
+A4 croaklead 4 sl+2
+A4 croaklead 4
+E4 croaklead 4
+E4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+E5 croaklead 4 vib40,10
+E5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+G4 croaklead 4 arp3,7
+G4 croaklead 4
+E4 croaklead 4 sl+2
+E4 croaklead 4
+
+# voice 1
+sfx 3 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+A4 croaklead 4
+A4 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+A5 croaklead 4 vib40,10
+A5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A4 croaklead 4 sl+2
+A4 croaklead 4
+
+# voice 1
+sfx 4 speed=auto
+A4 croaklead 4
+A4 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+F5 croaklead 4
+F5 croaklead 4
+A5 croaklead 4 vib40,10
+A5 croaklead 4
+G5 croaklead 4
+G5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C5 croaklead 4 arp4,7
+C5 croaklead 4
+A4 croaklead 4 sl+2
+A4 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+G5 croaklead 4
+G5 croaklead 4
+A#5 croaklead 4 vib40,10
+A#5 croaklead 4
+A5 croaklead 4
+A5 croaklead 4
+F5 croaklead 4
+F5 croaklead 4
+D5 croaklead 4 arp3,7
+D5 croaklead 4
+A#4 croaklead 4 sl+2
+A#4 croaklead 4
+
+# voice 1
+sfx 5 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+A4 croaklead 4
+A4 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+A5 croaklead 4 vib40,10
+A5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+
+# voice 1
+sfx 6 speed=auto
+D4 croaklead 4
+F4 croaklead 4
+A4 croaklead 4
+C5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+F5 croaklead 4 vib40,10
+F5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+F4 croaklead 4 sl+2
+F4 croaklead 4
+E4 croaklead 4
+G4 croaklead 4
+C5 croaklead 4
+E5 croaklead 4
+G5 croaklead 4
+G5 croaklead 4
+E5 croaklead 4 vib40,10
+E5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+G4 croaklead 4 arp3,7
+G4 croaklead 4
+E4 croaklead 4 sl+2
+E4 croaklead 4
+
+# voice 1
+sfx 7 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+A4 croaklead 4
+A4 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+G5 croaklead 4 vib40,10
+G5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A4 croaklead 4 sl+2
+A4 croaklead 4
+
+# voice 1
+sfx 8 speed=auto
+G4 croaklead 4
+G4 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+G5 croaklead 4 vib40,10
+G5 croaklead 4
+F5 croaklead 4
+F5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+G4 croaklead 4 sl+2
+G4 croaklead 4
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+
+# voice 1
+sfx 9 speed=auto
+F4 croaklead 4
+F4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+F5 croaklead 4 vib40,10
+F5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+F4 croaklead 4 sl+2
+F4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+A5 croaklead 4 vib40,10
+A5 croaklead 4
+G5 croaklead 4
+G5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+A4 croaklead 4 sl+2
+A4 croaklead 4
+
+# voice 1
+sfx 10 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+E4 croaklead 4
+E4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+E5 croaklead 4 vib40,10
+E5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+G4 croaklead 4 arp3,7
+G4 croaklead 4
+E4 croaklead 4 sl+2
+E4 croaklead 4
+
+# voice 1
+sfx 11 speed=auto
+A#4 croaklead 4
+A#4 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+F5 croaklead 4
+F5 croaklead 4
+A#5 croaklead 4 vib40,10
+A#5 croaklead 4
+F5 croaklead 4
+F5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+F4 croaklead 4 sl+2
+F4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+G5 croaklead 4 vib40,10
+G5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A4 croaklead 4 sl+2
+A4 croaklead 4
+
+# voice 1
+sfx 12 speed=auto
+D4 croaklead 4
+D4 croaklead 4
+D4 croaklead 4
+D4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+C5 croaklead 4 arp4,7
+C5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+
+# voice 1
+sfx 13 speed=auto
+F4 croaklead 4
+F4 croaklead 4
+F4 croaklead 4
+F4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+
+# voice 1
+sfx 14 speed=auto
+D4 croaklead 4
+D4 croaklead 4
+D4 croaklead 4
+D4 croaklead 4
+D4 croaklead 4
+D4 croaklead 4
+---
+---
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+F4 croaklead 4 arp4,7
+F4 croaklead 4
+F4 croaklead 4
+F4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+
+# voice 1
+sfx 15 speed=auto
+E4 croaklead 4
+E4 croaklead 4
+E4 croaklead 4
+E4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+G4 croaklead 4 arp3,7
+G4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+
+# voice 1
+sfx 16 speed=auto
+D4 croaklead 4
+D4 croaklead 4
+F4 croaklead 4
+F4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+D5 croaklead 4 vib40,10
+D5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+F4 croaklead 4 arp4,7
+F4 croaklead 4
+E4 croaklead 4 sl+2
+E4 croaklead 4
+E4 croaklead 4
+E4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+E5 croaklead 4 vib40,10
+E5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+G4 croaklead 4 arp3,7
+G4 croaklead 4
+E4 croaklead 4 sl+2
+E4 croaklead 4
+
+# voice 1
+sfx 17 speed=auto
+A#4 croaklead 4
+A#4 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+F5 croaklead 4
+F5 croaklead 4
+A#5 croaklead 4 vib40,10
+A#5 croaklead 4
+F5 croaklead 4
+F5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+F4 croaklead 4 sl+2
+F4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+A5 croaklead 4 vib40,10
+A5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+A#4 croaklead 4
+A#4 croaklead 4
+A4 croaklead 4 sl+2
+A4 croaklead 4
+
+# voice 1
+sfx 18 speed=auto
+D4 croaklead 4
+D4 croaklead 4
+F4 croaklead 4
+F4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+C5 croaklead 4 vib40,10
+C5 croaklead 4
+D5 croaklead 4
+D5 croaklead 4
+F5 croaklead 4
+F5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C5 croaklead 4 sl+2
+C5 croaklead 4
+E4 croaklead 4
+E4 croaklead 4
+G4 croaklead 4
+G4 croaklead 4
+C5 croaklead 4
+C5 croaklead 4
+E5 croaklead 4 vib40,10
+E5 croaklead 4
+G5 croaklead 4
+G5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C5 croaklead 4 arp4,7
+C5 croaklead 4
+G4 croaklead 4 sl+2
+G4 croaklead 4
+
+# voice 1
+sfx 19 speed=auto
+A4 croaklead 4
+A4 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+A5 croaklead 4 vib40,10
+A5 croaklead 4
+G5 croaklead 4
+G5 croaklead 4
+E5 croaklead 4
+E5 croaklead 4
+C#5 croaklead 4
+C#5 croaklead 4
+A4 croaklead 4 sl+2
+A4 croaklead 4
+D4 croaklead 4
+D4 croaklead 4
+F4 croaklead 4
+F4 croaklead 4
+A4 croaklead 4
+A4 croaklead 4
+D5 croaklead 4 vib40,10
+D5 croaklead 4
+F5 croaklead 4
+F5 croaklead 4
+D6 croaklead 4
+D6 croaklead 4
+A5 croaklead 4
+A5 croaklead 4
+F5 croaklead 4 sl+2
+F5 croaklead 4
+
+# voice 2
+sfx 20 speed=auto
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4 sl-12
+C3 mudbass 4
+C3 mudbass 4
+C3 mudbass 4
+C3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4 sl-12
+
+# voice 2
+sfx 21 speed=auto
+A#2 mudbass 4
+A#2 mudbass 4
+A#2 mudbass 4
+A#2 mudbass 4
+F3 mudbass 4
+F3 mudbass 4
+F3 mudbass 4
+F3 mudbass 4
+A#3 mudbass 4
+A#3 mudbass 4
+A#3 mudbass 4
+A#3 mudbass 4
+F3 mudbass 4
+F3 mudbass 4
+F3 mudbass 4
+F3 mudbass 4 sl-12
+A2 mudbass 4
+A2 mudbass 4
+A2 mudbass 4
+A2 mudbass 4
+E3 mudbass 4
+E3 mudbass 4
+E3 mudbass 4
+E3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4 sl-12
+
+# voice 2
+sfx 22 speed=auto
+F3 mudbass 4
+F3 mudbass 4
+F3 mudbass 4
+F3 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+F4 mudbass 4
+F4 mudbass 4
+F4 mudbass 4
+F4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4 sl-12
+G2 mudbass 4
+G2 mudbass 4
+G2 mudbass 4
+G2 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4 sl-12
+
+# voice 2
+sfx 23 speed=auto
+C3 mudbass 4
+C3 mudbass 4
+C3 mudbass 4
+C3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4 sl-12
+A2 mudbass 4
+A2 mudbass 4
+A2 mudbass 4
+A2 mudbass 4
+E3 mudbass 4
+E3 mudbass 4
+E3 mudbass 4
+E3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4 sl-12
+
+# voice 2
+sfx 24 speed=auto
+G2 mudbass 4
+G2 mudbass 4
+G2 mudbass 4
+G2 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4 sl-12
+C3 mudbass 4
+C3 mudbass 4
+C3 mudbass 4
+C3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4 sl-12
+
+# voice 2
+sfx 25 speed=auto
+F3 mudbass 4
+F3 mudbass 4
+F3 mudbass 4
+F3 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+F4 mudbass 4
+F4 mudbass 4
+F4 mudbass 4
+F4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4 sl-12
+A2 mudbass 4
+A2 mudbass 4
+A2 mudbass 4
+A2 mudbass 4
+E3 mudbass 4
+E3 mudbass 4
+E3 mudbass 4
+E3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4 sl-12
+
+# voice 2
+sfx 26 speed=auto
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4 sl-12
+G2 mudbass 4
+G2 mudbass 4
+G2 mudbass 4
+G2 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4 sl-12
+
+# voice 2
+sfx 27 speed=auto
+D3 mudbass 4
+D3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+F4 mudbass 4
+F4 mudbass 4
+A4 mudbass 4
+A4 mudbass 4
+F4 mudbass 4
+F4 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+A3 mudbass 4
+A3 mudbass 4 sl-12
+C3 mudbass 4
+C3 mudbass 4
+G3 mudbass 4
+G3 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+E4 mudbass 4
+E4 mudbass 4
+G4 mudbass 4
+G4 mudbass 4
+E4 mudbass 4
+E4 mudbass 4
+C4 mudbass 4
+C4 mudbass 4
+G3 mudbass 4
+G3 mudbass 4 sl-12
+
+# voice 2
+sfx 28 speed=auto
+A#2 mudbass 4
+A#2 mudbass 4
+F3 mudbass 4
+F3 mudbass 4
+A#3 mudbass 4
+A#3 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+F4 mudbass 4
+F4 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+A#3 mudbass 4
+A#3 mudbass 4
+F3 mudbass 4
+F3 mudbass 4 sl-12
+A2 mudbass 4
+A2 mudbass 4
+E3 mudbass 4
+E3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4
+E4 mudbass 4
+E4 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+E3 mudbass 4
+E3 mudbass 4 sl-12
+
+# voice 2
+sfx 29 speed=auto
+A2 mudbass 4
+A2 mudbass 4
+E3 mudbass 4
+E3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4
+E4 mudbass 4
+E4 mudbass 4
+C#4 mudbass 4
+C#4 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+E3 mudbass 4
+E3 mudbass 4 sl-12
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+A3 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+D4 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4
+D3 mudbass 4 sl-12
+
+# voice 3
+sfx 30 speed=auto
+---
+---
+A4 canopybrass 3
+---
+---
+---
+---
+---
+F4 canopybrass 3
+---
+---
+---
+A4 canopybrass 3 sl-2
+---
+---
+---
+---
+---
+G4 canopybrass 3
+---
+---
+---
+---
+---
+E4 canopybrass 3
+---
+---
+---
+G4 canopybrass 3 sl-2
+---
+---
+---
+
+# voice 3
+sfx 31 speed=auto
+---
+---
+F4 canopybrass 3
+---
+---
+---
+---
+---
+D4 canopybrass 3
+---
+---
+---
+F4 canopybrass 3 sl-2
+---
+---
+---
+---
+---
+E4 canopybrass 3
+---
+---
+---
+---
+---
+C#4 canopybrass 3
+---
+---
+---
+E4 canopybrass 3 sl-2
+---
+---
+---
+
+# voice 3
+sfx 32 speed=auto
+---
+---
+C5 canopybrass 3
+---
+---
+---
+---
+---
+A4 canopybrass 3
+---
+---
+---
+C5 canopybrass 3 sl-2
+---
+---
+---
+---
+---
+D5 canopybrass 3
+---
+---
+---
+---
+---
+A#4 canopybrass 3
+---
+---
+---
+D5 canopybrass 3 sl-2
+---
+---
+---
+
+# voice 3
+sfx 33 speed=auto
+---
+---
+D5 canopybrass 3
+---
+---
+---
+---
+---
+A#4 canopybrass 3
+---
+---
+---
+D5 canopybrass 3 sl-2
+---
+---
+---
+---
+---
+G4 canopybrass 3
+---
+---
+---
+---
+---
+E4 canopybrass 3
+---
+---
+---
+G4 canopybrass 3 sl-2
+---
+---
+---
+
+# voice 3
+sfx 34 speed=auto
+A4 canopybrass 3
+---
+---
+---
+---
+---
+---
+---
+F4 canopybrass 3
+---
+---
+---
+---
+---
+---
+---
+D5 canopybrass 3
+---
+---
+---
+---
+---
+---
+---
+A#4 canopybrass 3
+---
+---
+---
+---
+---
+---
+---
+
+# voice 3
+sfx 35 speed=auto
+G4 canopybrass 3
+---
+---
+---
+---
+---
+---
+---
+E4 canopybrass 3
+---
+---
+---
+---
+---
+---
+---
+E4 canopybrass 3
+---
+---
+---
+---
+---
+---
+---
+C#4 canopybrass 3
+---
+---
+---
+---
+---
+---
+---
+
+# voice 3
+sfx 36 speed=auto
+---
+---
+A4 canopybrass 3
+---
+---
+---
+F4 canopybrass 3
+---
+---
+---
+A4 canopybrass 3
+---
+---
+---
+F4 canopybrass 3
+---
+---
+---
+G4 canopybrass 3
+---
+---
+---
+E4 canopybrass 3
+---
+---
+---
+G4 canopybrass 3
+---
+---
+---
+E4 canopybrass 3
+---
+
+# voice 3
+sfx 37 speed=auto
+---
+---
+E4 canopybrass 3
+---
+---
+---
+C#4 canopybrass 3
+---
+---
+---
+E4 canopybrass 3
+---
+---
+---
+C#4 canopybrass 3
+---
+---
+---
+A4 canopybrass 3
+---
+---
+---
+F4 canopybrass 3
+---
+---
+---
+A4 canopybrass 3
+---
+---
+---
+F4 canopybrass 3
+---
+
+# voice 4
+sfx 38 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+A4 radioanswer 3
+---
+D5 radioanswer 3 sl+3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+
+# voice 4
+sfx 39 speed=auto
+F4 radioanswer 3
+---
+A#4 radioanswer 3
+---
+D5 radioanswer 3
+---
+F5 radioanswer 3 arp4,7
+---
+D5 radioanswer 3
+---
+A#4 radioanswer 3
+---
+A4 radioanswer 3
+---
+F4 radioanswer 3 sl+3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+
+# voice 4
+sfx 40 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+C5 radioanswer 3
+---
+F5 radioanswer 3 sl+3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+
+# voice 4
+sfx 41 speed=auto
+G4 radioanswer 3
+---
+C5 radioanswer 3
+---
+E5 radioanswer 3
+---
+G5 radioanswer 3 arp3,7
+---
+E5 radioanswer 3
+---
+C5 radioanswer 3
+---
+G4 radioanswer 3
+---
+E4 radioanswer 3 sl+3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+
+# voice 4
+sfx 42 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+D5 radioanswer 3
+---
+G5 radioanswer 3 sl+3
+---
+G4 radioanswer 3
+---
+C5 radioanswer 3
+---
+E5 radioanswer 3
+---
+G5 radioanswer 3 arp3,7
+---
+E5 radioanswer 3
+---
+C5 radioanswer 3
+---
+G4 radioanswer 3
+---
+E4 radioanswer 3 sl+3
+---
+
+# voice 4
+sfx 43 speed=auto
+F4 radioanswer 3
+---
+A4 radioanswer 3
+---
+D5 radioanswer 3
+---
+F5 radioanswer 3 arp4,7
+---
+D5 radioanswer 3
+---
+A4 radioanswer 3
+---
+F4 radioanswer 3
+---
+D4 radioanswer 3 sl+3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+
+# voice 4
+sfx 44 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+F4 radioanswer 3
+---
+A#4 radioanswer 3 sl+3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+
+# voice 4
+sfx 45 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+A4 radioanswer 3
+---
+---
+---
+F4 radioanswer 3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+D5 radioanswer 3
+---
+---
+---
+A#4 radioanswer 3
+---
+---
+---
+
+# voice 4
+sfx 46 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+C5 radioanswer 3
+---
+---
+---
+A4 radioanswer 3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+E5 radioanswer 3
+---
+---
+---
+C#5 radioanswer 3
+---
+---
+---
+
+# voice 4
+sfx 47 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+G4 radioanswer 3
+---
+---
+---
+E4 radioanswer 3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+E5 radioanswer 3
+---
+---
+---
+C#5 radioanswer 3
+---
+---
+---
+
+# voice 4
+sfx 48 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+A4 radioanswer 3
+---
+D5 radioanswer 3 sl+3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+G4 radioanswer 3
+---
+C5 radioanswer 3
+---
+---
+---
+---
+---
+
+# voice 4
+sfx 49 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+F4 radioanswer 3
+---
+A#4 radioanswer 3 sl+3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+E4 radioanswer 3
+---
+A4 radioanswer 3
+---
+---
+---
+---
+---
+
+# voice 4
+sfx 50 speed=auto
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+---
+E4 radioanswer 3
+---
+C#5 radioanswer 3 sl+3
+---
+---
+---
+---
+---
+---
+---
+---
+---
+A4 radioanswer 3
+---
+D5 radioanswer 3
+---
+---
+---
+---
+---
+
+# voice 5
+sfx 51 speed=auto
+---
+---
+B6 hat 2
+---
+---
+---
+B6 hat 2
+---
+---
+---
+B6 hat 2
+---
+---
+---
+B6 hat 2
+---
+---
+---
+B6 hat 2
+---
+---
+---
+B6 hat 2
+---
+---
+---
+B6 hat 2
+---
+---
+---
+B6 hat 2
+---
+
+# voice 5
+sfx 52 speed=auto
+---
+B6 hat 2
+---
+B6 hat 2
+---
+B6 hat 2
+---
+B6 hat 3
+---
+B6 hat 2
+---
+B6 hat 2
+---
+B6 hat 2
+---
+B6 hat 3
+---
+B6 hat 2
+---
+B6 hat 2
+---
+B6 hat 2
+---
+B6 hat 3
+---
+B6 hat 2
+---
+B6 hat 2
+---
+B6 hat 2
+---
+B6 hat 3
+
+# voice 5
+sfx 53 speed=auto
+---
+---
+---
+---
+B6 hat 2
+---
+---
+---
+---
+---
+---
+---
+B6 hat 2
+---
+---
+---
+---
+---
+---
+---
+B6 hat 2
+---
+---
+---
+---
+---
+---
+---
+B6 hat 2
+---
+---
+---
+
+# voice 5
+sfx 54 speed=auto
+---
+B6 hat 2
+---
+B6 hat 2
+---
+---
+B6 hat 2
+---
+---
+B6 hat 2
+---
+B6 hat 2
+---
+---
+B6 hat 2
+---
+---
+B6 hat 2
+---
+B6 hat 2
+---
+---
+B6 hat 2
+---
+---
+B6 hat 2
+---
+B6 hat 2
+---
+---
+B6 hat 2
+---
+
+# voice 6
+sfx 55 speed=auto
+C3 kick 7
+---
+---
+---
+D5 snare 4
+---
+---
+---
+C3 kick 6
+---
+---
+---
+D5 snare 5
+---
+---
+---
+C3 kick 7
+---
+---
+---
+D5 snare 4
+---
+---
+---
+C3 kick 6
+---
+---
+---
+D5 snare 5
+---
+---
+---
+
+__music__
+bpm=150 rows_per_beat=4
+# Four-pattern insertion, then the full sixteen-pattern mission loop.
+pat 0 : 0 20 30 38 51 55
+pat 1 : 1 21 - 39 51 55
+pat 2 : 2 20 30 38 51 55
+pat 3 : 3 21 31 39 51 55
+pat 4 : 4 22 32 40 52 55
+pat 5 : 5 23 - 41 52 55
+pat 6 : 6 20 30 38 52 55
+pat 7 : 7 21 31 39 52 55
+pat 8 : 8 24 33 42 51 55
+pat 9 : 9 25 - 40 51 55
+pat 10 : 10 20 30 43 51 55
+pat 11 : 11 21 31 44 51 55
+pat 12 : 12 26 34 45 53 55
+pat 13 : 13 25 - 46 53 55
+pat 14 : 14 26 34 45 53 55
+pat 15 : 15 23 35 47 53 55
+pat 16 : 16 27 36 48 54 55
+pat 17 : 17 28 - 49 54 55
+pat 18 : 18 27 36 48 54 55
+pat 19 loop=4 : 19 29 37 50 54 55

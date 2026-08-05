@@ -1,9 +1,10 @@
 # Operation Lilybreaker
 
 `ribbit-recoil-jungle-assault.abc` is an original 64-second, six-channel source
-score for RIBBIT RECOIL. It treats the user-supplied
-`stage-1-the-jungle.abc` as a complexity reference, not as melodic source
-material.
+score for RIBBIT RECOIL. `ribbit-recoil-jungle-assault.cart` is its
+tracker-native "Bog Funk Field Mix," with Console instruments and effects that
+ABC cannot encode. Both treat the user-supplied `stage-1-the-jungle.abc` as a
+complexity reference, not as melodic source material.
 
 ## Console measurements
 
@@ -66,14 +67,52 @@ without a channel steal. A runtime cart arrangement would need to choose
 whether gameplay SFX may steal the sixth music channel; this source master
 intentionally demonstrates the full musical space requested for listening.
 
-Audition at a conservative host volume with:
+## Bog Funk Field Mix
+
+The cart preserves all 40 bars while replacing the ABC preview's fixed voice
+waveforms with eight named instruments:
+
+| Channel | Instrument lane | Treatment |
+|---|---|---|
+| 0 | hollow wavetable croak lead | delayed vibrato, phrase-end scoops, selective chord arpeggios, echo send |
+| 1 | FM mud bass | slow tremolo and an octave dive into each bar line |
+| 2 | woody wavetable brass | short envelope, tremolo, echo and falling stabs |
+| 3 | FM radio answer | pluck envelope, wider echo and upward answer-note slides |
+| 4 | white-noise hats | low-level offbeat ticks with restrained accents |
+| 5 | kick/snare/tom kit | pitch sweeps, noise snares and kick-triggered ducking |
+
+`master drive=2` supplies mild saturation and safe limiting; the global echo is
+a restrained two-row delay. Fifteen of the 20 patterns use all six channels.
+Patterns 1, 5, 9, 13 and 17 drop the brass lane, creating a regular breath and
+a real channel for auto-allocated gameplay SFX. SFX fired over the six-channel
+patterns can still steal channel 5, so an integrated gameplay version should
+either reserve a channel more aggressively or use explicit SFX allocation.
+
+The tracker uses 56 of the 64 SFX IDs. Four two-bar patterns form the 12.8-second
+insertion; the remaining 16 form a 51.2-second mission loop. One loop pass after
+the intro is exactly 64 seconds. Strict lint reports zero errors, warnings or
+info diagnostics, with no clipped samples; per-pattern peaks range from 0.517
+to 0.652.
+
+Regenerate and inspect the mix with:
+
+```bash
+node tools/lilybreaker-tracker.mjs
+console music score carts/ribbit-recoil-jungle-assault.cart --song 0
+console music lint carts/ribbit-recoil-jungle-assault.cart --strict
+console music piano-roll carts/ribbit-recoil-jungle-assault.cart --song 0 \
+  -o /tmp/operation-lilybreaker.png
+console music render carts/ribbit-recoil-jungle-assault.cart --song 0 --loops 1 \
+  --seed 1337 -o /tmp/operation-lilybreaker.wav
+pw-play --volume 0.22 /tmp/operation-lilybreaker.wav
+```
+
+Audition the effects-free ABC source at a conservative host volume with:
 
 ```bash
 console music play carts/ribbit-recoil-jungle-assault.abc --volume 0.25
 ```
 
-This is the source-score master. `console music play` previews all six voices;
-cart integration should arrange or import the voices into the existing tracker
-ID budget rather than replacing the current gameplay loop implicitly. At that
-stage the rim and boot parts can be assigned named noise/kick instruments while
-the source preview keeps its deterministic voice-order waveforms.
+The ABC remains the readable composition master and keeps deterministic
+voice-order waveforms. The generated cart is a standalone listening mix; it
+does not replace RIBBIT RECOIL's current gameplay loop implicitly.
