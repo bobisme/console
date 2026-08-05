@@ -170,6 +170,10 @@ console playtest carts/ribbit-recoil.cart \
 console playtest carts/ribbit-recoil.cart \
   --scenario carts/ribbit-recoil-environment-continuity.playtest.json \
   --artifacts /tmp/ribbit-recoil-environment-continuity
+
+console playtest carts/ribbit-recoil.cart \
+  --scenario carts/ribbit-recoil-readability.playtest.json \
+  --artifacts /tmp/ribbit-recoil-readability
 ```
 
 The first captures all seven districts plus reference comparison boards. The
@@ -177,9 +181,11 @@ second captures both sides of all six former camera-zone boundaries; clouds,
 moon, skyline, landmarks, light accents, and terrain materials must scroll
 through those pairs without a full-screen redraw. The Rust regression also
 limits every two-pixel boundary crossing to less than 35 percent framebuffer
-change and requires zero dropped draw-trace events. The final strict
-environment-only judge pass scored the native captures `7.5/10`; the acceptance
-threshold was `7.5`.
+change and requires zero dropped draw-trace events. The third places the live
+frog in five representative districts at native resolution and records a full
+hop arc, making actor silhouette and collision-edge readability explicit review
+gates. The latest strict blind actor-in-environment pass scored `7.8/10`; the
+acceptance threshold was `7.5`.
 
 ## Reproduce and inspect
 

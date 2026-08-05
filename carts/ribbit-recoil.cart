@@ -70,7 +70,7 @@ local LEVELS = {{
   bombs={{368,416}, {514,344}, {660,440}, {824,446}},
   secrets={{354,402,1500}},
   props={
-    {"lamp",56,488,0}, {"pipe",24,468,70}, {"fence",104,472,88},
+    {"lamp",80,488,0}, {"pipe",24,468,70}, {"fence",104,472,88},
     {"lamp",184,392,0}, {"vent",244,344,0},
     {"coil",404,464,0}, {"pipe",462,466,92}, {"lamp",536,368,0},
     {"sign",574,368,1}, {"fence",674,450,74},
@@ -1331,19 +1331,19 @@ local function begin_authored_sprite_scope(hurt,phase_ink)
 end
 
 -- Architecture renders through a stable draw-palette remap instead of a
--- screen-space halftone. Each eight-colour chromatic ramp is shifted toward
--- its darker end, while cool neutrals are compressed by roughly three steps.
+-- screen-space halftone. Chromatic ramps are shifted toward their darker end;
+-- cool neutrals keep a blue-black floor and compress their highlight range.
 -- Because this changes emitted palette indices rather than overlaying a
 -- pattern, a one-pixel camera move cannot make the backdrop shimmer.
 ENV_DIM={
-  0,0,1,1,2,3,4,5,
-  8,8,9,9,10,11,12,13,
-  16,16,17,18,18,19,20,21,
-  24,24,25,26,26,27,28,29,
-  32,32,33,34,34,35,36,37,
-  40,40,41,42,42,43,44,45,
-  48,48,48,49,50,50,51,52,
-  53,54,55,56,57,58,59,60
+  0,0,0,1,1,2,3,4,
+  8,8,8,9,9,9,10,11,
+  16,16,16,17,17,18,19,20,
+  24,24,24,24,25,25,26,27,
+  32,32,32,33,33,34,34,35,
+  40,40,40,40,41,41,42,42,
+  49,49,49,50,50,50,51,51,
+  51,52,53,54,55,56,56,56
 }
 
 function env_begin_dim_palette()
@@ -1366,9 +1366,9 @@ CLOUD_STRIP_A={{47,2,60,1},{32,3,39,1},{43,3,48,1},{49,3,58,3},{59,3,68,1},{18,4
 CLOUD_STRIP_B={{56,4,56,1},{57,4,63,3},{64,4,64,1},{30,5,30,1},{31,5,37,3},{38,5,38,1},{51,5,51,1},{52,5,58,3},{59,5,66,2},{67,5,70,1},{23,6,24,1},{25,6,29,3},{30,6,40,2},{41,6,42,1},{48,6,49,1},{50,6,67,2},{68,6,72,3},{73,6,74,1},{18,7,22,1},{23,7,44,2},{45,7,47,1},{48,7,75,2},{76,7,78,1},{14,8,18,1},{19,8,37,2},{38,8,42,1},{43,8,64,2},{65,8,81,1},{12,9,15,1},{16,9,32,2},{33,9,50,1},{51,9,76,2},{77,9,83,1},{11,10,21,1},{22,10,45,2},{46,10,57,1},{58,10,80,2},{81,10,84,1},{12,11,83,1},{14,12,14,1},{15,12,29,50},{30,12,38,1},{39,12,57,50},{58,12,66,1},{67,12,81,50},{17,13,34,50},{35,13,46,1},{47,13,63,50},{64,13,71,1},{72,13,78,50},{22,14,44,50},{50,14,73,50},{27,15,38,50},{56,15,68,50}}
 CLOUD_STRIP_C={{10,7,14,3},{6,8,8,1},{9,8,16,2},{17,8,19,1},{4,9,6,1},{7,9,13,2},{14,9,22,1},{7,10,7,1},{8,10,18,50},{54,12,61,3},{49,13,51,1},{52,13,65,2},{66,13,69,1},{45,14,48,1},{49,14,58,2},{59,14,73,1},{51,15,66,50}}
 MOON_SPANS={{18,2,30,1},{15,3,23,1},{24,3,24,50},{25,3,33,1},{13,4,17,1},{18,4,23,50},{24,4,24,57},{25,4,30,50},{31,4,35,1},{12,5,15,1},{16,5,17,50},{18,5,30,57},{31,5,32,50},{33,5,36,1},{10,6,13,1},{14,6,15,50},{16,6,23,57},{24,6,24,23},{25,6,32,57},{33,6,34,50},{35,6,38,1},{9,7,11,1},{12,7,13,50},{14,7,18,57},{19,7,29,23},{30,7,34,57},{35,7,36,50},{37,7,39,1},{8,8,10,1},{11,8,11,50},{12,8,19,15},{20,8,21,23},{22,8,22,58},{23,8,32,23},{33,8,37,57},{38,8,40,1},{7,9,9,1},{10,9,21,15},{22,9,26,23},{27,9,27,63},{28,9,31,23},{32,9,33,58},{34,9,34,56},{35,9,37,57},{38,9,38,50},{39,9,41,1},{6,10,8,1},{9,10,18,15},{19,10,29,23},{30,10,33,58},{34,10,36,56},{37,10,38,57},{39,10,39,50},{40,10,42,1},{6,11,7,1},{8,11,8,50},{9,11,9,57},{10,11,16,15},{17,11,29,23},{30,11,30,15},{31,11,35,56},{36,11,36,23},{37,11,39,57},{40,11,40,50},{41,11,42,1},{7,12,7,50},{8,12,10,57},{11,12,28,23},{29,12,31,15},{32,12,34,56},{35,12,36,15},{37,12,37,23},{38,12,40,57},{41,12,41,50},{42,12,43,1},{4,13,4,1},{7,13,7,50},{8,13,9,57},{10,13,14,23},{15,13,17,58},{18,13,18,56},{19,13,29,23},{30,13,34,15},{35,13,38,23},{39,13,40,57},{41,13,41,50},{42,13,44,1},{4,14,4,1},{7,14,9,57},{10,14,12,23},{13,14,16,58},{17,14,20,56},{21,14,38,23},{39,14,41,57},{42,14,42,50},{43,14,44,1},{3,15,4,1},{7,15,8,57},{9,15,11,23},{12,15,19,56},{20,15,39,23},{40,15,41,57},{42,15,45,1},{3,16,4,1},{7,16,7,57},{8,16,12,23},{13,16,18,56},{19,16,40,23},{41,16,42,57},{43,16,43,50},{44,16,45,1},{3,17,4,1},{5,17,5,50},{6,17,7,57},{8,17,14,23},{15,17,17,56},{18,17,40,23},{41,17,42,57},{43,17,43,50},{44,17,45,1},{2,18,3,1},{4,18,4,50},{5,18,7,57},{8,18,32,23},{33,18,33,63},{34,18,40,23},{41,18,43,57},{44,18,44,50},{45,18,46,1},{2,19,3,1},{4,19,4,50},{5,19,6,57},{7,19,34,23},{35,19,38,15},{39,19,41,23},{42,19,43,57},{44,19,44,50},{45,19,46,1},{2,20,3,1},{4,20,4,50},{5,20,6,57},{7,20,7,23},{8,20,8,58},{9,20,33,23},{34,20,39,15},{40,20,41,23},{42,20,43,57},{44,20,44,50},{45,20,46,1},{2,21,3,1},{4,21,4,50},{5,21,6,57},{7,21,21,23},{22,21,24,56},{25,21,34,23},{35,21,37,15},{38,21,41,23},{42,21,43,57},{44,21,44,50},{45,21,46,1},{2,22,3,1},{4,22,4,50},{5,22,6,57},{7,22,15,23},{16,22,16,15},{17,22,19,23},{20,22,20,56},{21,22,23,58},{24,22,25,56},{26,22,37,23},{38,22,40,56},{41,22,41,23},{42,22,43,57},{44,22,44,50},{45,22,46,1},{2,23,3,1},{4,23,4,50},{5,23,6,57},{7,23,20,23},{21,23,25,56},{26,23,35,23},{36,23,36,56},{37,23,39,58},{40,23,40,56},{41,23,41,23},{42,23,43,57},{44,23,44,50},{45,23,46,1},{1,24,2,1},{3,24,3,50},{4,24,5,57},{6,24,6,23},{7,24,7,15},{8,24,21,23},{22,24,23,56},{24,24,28,15},{29,24,36,23},{37,24,39,56},{40,24,42,23},{43,24,44,57},{45,24,45,50},{46,24,47,1},{2,25,3,1},{4,25,4,50},{5,25,6,57},{7,25,9,23},{10,25,15,15},{16,25,22,23},{23,25,30,15},{31,25,37,23},{38,25,39,56},{40,25,41,23},{42,25,43,57},{44,25,44,50},{45,25,46,1},{2,26,3,1},{4,26,4,50},{5,26,6,57},{7,26,8,23},{9,26,17,15},{18,26,24,23},{25,26,29,15},{30,26,41,23},{42,26,43,57},{44,26,44,50},{45,26,46,1},{2,27,3,1},{4,27,4,50},{5,27,6,57},{7,27,10,23},{11,27,16,15},{17,27,23,23},{24,27,24,58},{25,27,36,23},{37,27,37,15},{38,27,41,23},{42,27,43,57},{44,27,44,50},{45,27,46,1},{2,28,3,1},{4,28,4,50},{5,28,6,57},{7,28,11,23},{12,28,15,56},{16,28,40,23},{2,29,3,1},{4,29,4,50},{5,29,6,57},{7,29,9,23},{10,29,14,58},{15,29,17,56},{18,29,40,23},{2,30,3,1},{4,30,4,50},{5,30,7,57},{8,30,8,23},{9,30,18,56},{19,30,40,23},{3,31,4,1},{5,31,5,50},{6,31,7,57},{8,31,10,23},{11,31,17,56},{18,31,18,63},{19,31,40,23},{41,31,42,57},{43,31,43,50},{44,31,45,1},{3,32,4,1},{5,32,5,50},{6,32,7,57},{8,32,12,23},{13,32,15,56},{16,32,30,23},{31,32,35,56},{36,32,40,23},{41,32,42,57},{43,32,43,50},{44,32,45,1},{3,33,5,1},{6,33,6,50},{7,33,8,57},{9,33,28,23},{29,33,34,58},{35,33,37,56},{38,33,39,23},{40,33,41,57},{42,33,42,50},{43,33,45,1},{4,34,5,1},{6,34,6,50},{7,34,9,57},{10,34,27,23},{28,34,38,56},{39,34,41,57},{42,34,42,50},{43,34,44,1},{4,35,6,1},{7,35,7,50},{8,35,9,57},{10,35,18,23},{19,35,25,15},{26,35,29,23},{30,35,34,56},{35,35,35,63},{36,35,37,56},{38,35,38,23},{39,35,40,57},{41,35,41,50},{42,35,44,1},{5,36,6,1},{7,36,7,50},{8,36,10,57},{11,36,13,23},{14,36,14,58},{15,36,17,23},{18,36,27,15},{28,36,31,23},{32,36,35,56},{36,36,37,23},{38,36,40,57},{41,36,41,50},{42,36,43,1},{6,37,7,1},{8,37,8,50},{9,37,11,57},{12,37,20,23},{21,37,24,15},{25,37,25,58},{26,37,26,15},{27,37,36,23},{37,37,39,57},{40,37,40,50},{41,37,42,1},{6,38,8,1},{9,38,9,50},{10,38,12,57},{13,38,35,23},{36,38,38,57},{39,38,39,50},{40,38,42,1},{7,39,9,1},{10,39,10,50},{11,39,14,57},{15,39,33,23},{34,39,37,57},{38,39,38,50},{39,39,41,1},{8,40,10,1},{11,40,11,50},{12,40,15,57},{16,40,32,23},{33,40,36,57},{37,40,37,50},{38,40,40,1},{9,41,11,1},{12,41,13,50},{14,41,18,57},{19,41,29,23},{30,41,34,57},{35,41,36,50},{37,41,39,1},{10,42,13,1},{19,42,23,57},{24,42,24,23},{25,42,32,57},{33,42,34,50},{35,42,38,1},{12,43,13,1},{19,43,30,57},{31,43,32,50},{33,43,36,1},{13,44,13,1},{19,44,23,50},{24,44,24,57},{25,44,30,50},{31,44,35,1},{19,45,23,1},{24,45,24,50},{25,45,33,1},{19,46,30,1},{24,47,24,1}}
-ENV_LAMPS={{56,488,31},{184,392,31},{536,368,45},{792,472,36}}
+ENV_LAMPS={{80,488,31},{184,392,31},{536,368,45},{792,472,36}}
 ENV_SURFACE_LIGHTS={
-  {56,488,31,28},{184,392,31,25},{354,450,38,31},{404,464,10,24},
+  {80,488,31,24},{184,392,31,25},{354,450,38,31},{404,464,10,24},
   {536,368,45,25},{691,438,10,28},{760,456,36,27},{792,472,31,25},
   {884,472,36,29}
 }
@@ -1452,7 +1452,7 @@ function env_facade(x,top,w,bottom,accent,style)
         elseif style==3 and hash%7==0 then tile=VENT_GRILLE
         elseif style==3 and hash%11==0 then tile=PIPE_JUNCTION end
         spr(tile,px,py)
-        if hash%3==0 and px+16<x+w-4 and px+24>camera_x-2 and px+8<camera_x+SW+2 then
+        if hash%5==0 and px+16<x+w-4 and px+24>camera_x-2 and px+8<camera_x+SW+2 then
           local secondary=style==1 and RUST_FACE or style==2 and MASONRY_FACE or PIPEWORKS_FACE
           spr(secondary,px+8,py+8)
         end
@@ -1473,9 +1473,10 @@ function env_facade(x,top,w,bottom,accent,style)
         line(px+1,top+9,px+1,bottom-11,48)
       end
     end
-    for py=top+25,bottom-15,23 do
-      line(x+4,py,x+w-4,py,52)
-      line(x+5,py+1,x+w-5,py+1,48)
+    for py=top+27,bottom-15,31 do
+      local seam=max(8,flr(w*0.28))
+      line(x+4,py,x+seam,py,50)
+      line(x+w-seam,py,x+w-4,py,50)
       local wx=x+8+((py+top)%max(12,w-22))
       if wx+10>camera_x-2 and wx-1<camera_x+SW+2 then
         rectfill(wx,py-12,wx+8,py-5,48)
@@ -1505,25 +1506,25 @@ function env_facade(x,top,w,bottom,accent,style)
   elseif style==2 then
     -- Violet masonry: staggered courses, recessed vertical windows, cracked
     -- lintels, and deep jamb shadows rather than square panels.
-    for py=top+13,bottom-11,7 do
-      local offset=(flr(py/7)%2)*7
-      line(x+5,py,x+w-5,py,42)
-      for px=x+6+offset,x+w-7,14 do
-        if px>=camera_x-2 and px<camera_x+SW+2 then pset(px,py,43) end
+    for py=top+15,bottom-11,11 do
+      local offset=(flr(py/11)%2)*9
+      for px=x+5+offset,x+w-6,22 do
+        if px+8>=camera_x-2 and px<camera_x+SW+2 then
+          line(px,py,min(px+8,x+w-5),py,41)
+        end
       end
     end
-    for wx=x+11,x+w-17,22 do
+    for wx=x+11,x+w-17,28 do
       if wx+13>camera_x-2 and wx-2<camera_x+SW+2 then
-        for wy=top+17,bottom-25,27 do
+        for wy=top+19,bottom-25,34 do
           rectfill(wx,wy,wx+10,wy+14,48)
           rectfill(wx+2,wy+3,wx+8,wy+12,40)
           line(wx-2,wy-2,wx+12,wy-2,43)
           line(wx-1,wy-1,wx+11,wy-1,42)
           local lit=(flr(wx/11)+flr(wy/9))%5
-          if lit<2 then
-            rectfill(wx+3,wy+4,wx+7,wy+10,lit==0 and 31 or accent)
-            line(wx+2,wy+13,wx+8,wy+13,46)
-            line(wx+3,wy+15,wx+7,wy+15,43)
+          if lit==0 then
+            rectfill(wx+3,wy+4,wx+7,wy+10,accent)
+            line(wx+2,wy+13,wx+8,wy+13,42)
           else
             line(wx+3,wy+5,wx+7,wy+5,42)
             line(wx+5,wy+4,wx+5,wy+11,49)
@@ -1540,12 +1541,12 @@ function env_facade(x,top,w,bottom,accent,style)
   else
     -- Pipeworks: broad ribbed bays, external conduit, access hatches, clamps,
     -- and condensation. Bright marks stay confined to powered hardware.
-    for px=x+8,x+w-9,18 do
+    for px=x+8,x+w-9,24 do
       if px+12>camera_x-2 and px<camera_x+SW+2 then
         rect(px,top+9,px+11,bottom-12,50)
         line(px+1,top+10,px+1,bottom-13,52)
         line(px+10,top+11,px+10,bottom-14,48)
-        for py=top+19,bottom-18,24 do
+        for py=top+21,bottom-18,32 do
           rectfill(px+3,py,px+8,py+8,48)
           rect(px+2,py-1,px+9,py+9,54)
           pset(px+5,py+3,(px+py)%3==0 and accent or 31)
@@ -1752,7 +1753,10 @@ local function draw_backdrop()
   do
     local moon_x=146-flr(camera_x*0.16)
     local moon_y=54+flr((camera_y-208)/64)
+    pal(15,14) pal(23,22) pal(56,55) pal(57,56)
+    pal(58,57) pal(63,61)
     env_draw_cloud_strip(MOON_SPANS,moon_x-24,moon_y-24)
+    begin_authored_sprite_scope(false)
   end
 
   env_far_haze_city(zone)
@@ -1763,25 +1767,25 @@ local function draw_backdrop()
     local w=17+(i*11+zone*5)%20
     local h=52+(i*17+zone*7)%78
     local top=235-h
-    rectfill(x,top,x+w,SH,50)
-    rectfill(x+3,top+4,x+w-3,SH,49)
-    line(x+3,top+3,x+w-3,top+3,52)
+    rectfill(x,top,x+w,SH,1)
+    rectfill(x+3,top+4,x+w-3,SH,0)
+    line(x+3,top+3,x+w-3,top+3,2)
     if (i+zone)%4==0 then
-      rectfill(x+5,top-8,x+w-5,top,49)
-      line(x+w/2,top-8,x+w/2,top-17,52)
+      rectfill(x+5,top-8,x+w-5,top,1)
+      line(x+w/2,top-8,x+w/2,top-17,2)
       pset(x+w/2,top-15,accent)
     elseif (i+zone)%4==1 then
-      rectfill(x+w-8,top-12,x+w-4,top,49)
-      line(x+w-6,top-12,x+w-6,top-20,52)
+      rectfill(x+w-8,top-12,x+w-4,top,1)
+      line(x+w-6,top-12,x+w-6,top-20,2)
     elseif (i+zone)%4==2 then
-      line(x+3,top,x+w-3,top-9,52)
-      line(x+w-3,top,x+3,top-9,50)
+      line(x+3,top,x+w-3,top-9,2)
+      line(x+w-3,top,x+3,top-9,1)
     end
     for wy=top+11,230,12 do
       for wx=x+6,x+w-5,9 do
-        if (i+flr(wx/9)+flr(wy/12)+zone)%5<2 then
+        if (i+flr(wx/9)+flr(wy/12)+zone)%7==0 then
           pset(wx,wy,(wy+i)%7==0 and accent or 30)
-          if (wx+wy+i)%4==0 then pset(wx+1,wy,31) end
+          if (wx+wy+i)%6==0 then pset(wx+1,wy,31) end
         end
       end
     end
@@ -1805,10 +1809,10 @@ local function draw_backdrop()
     end
     for wy=top+15,278,14 do
       for wx=x+8,x+w-7,11 do
-        local lit=(i+flr(wy/13)+flr(wx/9)+zone)%5
-        if lit<2 then
-          rectfill(wx,wy,wx+2,wy+3,lit==0 and 31 or accent)
-          pset(wx,wy,63)
+        local lit=(i+flr(wy/13)+flr(wx/9)+zone)%7
+        if lit==0 then
+          rectfill(wx,wy,wx+2,wy+3,accent)
+          pset(wx,wy,31)
         else pset(wx,wy,49) end
       end
     end
@@ -2235,8 +2239,24 @@ local function draw_frog_pose(cx,feet,pose,left,hero_scale,flicker)
   pal()
   palt()
   palt(0,true)
+  if scale==1 then
+    -- A four-neighbour dark keyline protects the gameplay silhouette from
+    -- fences, lamps, and effects without enlarging or repainting the sprite.
+    for ink=1,63 do pal(ink,48) end
+    aspr("frog."..anim,cx-1,feet,0,left,false)
+    aspr("frog."..anim,cx+1,feet,0,left,false)
+    aspr("frog."..anim,cx,feet-1,0,left,false)
+    aspr("frog."..anim,cx,feet+1,0,left,false)
+    pal()
+    palt()
+    palt(0,true)
+  end
   if flicker then
     for ink=1,63 do pal(ink,ink%2==0 and 63 or 14) end
+  elseif scale==1 then
+    -- Gameplay greens sit one step above their atlas values so the frog's
+    -- body, not only its white eyes, survives grayscale against dark scenery.
+    pal(8,9) pal(12,13) pal(14,15)
   end
   if scale==1 then
     aspr("frog."..anim,cx,feet,0,left,false)
@@ -2665,11 +2685,13 @@ local function draw_fenced_machine(x,y,accent)
     line(x,y-22,ax,ay,54)
   end
   rectfill(x-21,y-8,x+21,y-3,52)
-  for px=x-22,x+22,11 do
-    line(px,y,px,y-44,55)
-    line(px,y-40,px+11,y-5,52)
+  for px=x-22,x+22,22 do
+    line(px,y,px,y-44,52)
   end
-  line(x-24,y-44,x+25,y-44,59)
+  line(x-22,y-35,x,y-9,50)
+  line(x,y-35,x+22,y-9,50)
+  line(x-24,y-44,x-7,y-44,54)
+  line(x+7,y-44,x+25,y-44,54)
   pset(x-20,y-37,accent) pset(x+20,y-37,31)
 end
 
@@ -2693,7 +2715,9 @@ function env_duct(x,y,w,h,accent)
   if x+w<camera_x-2 or x>camera_x+SW+2 then return end
   rectfill(x,y,x+w,y+h,50)
   rectfill(x+2,y+4,x+w-2,y+h,49)
-  line(x+2,y,x+w-2,y,58)
+  for sx=x+2,x+w-2,24 do
+    line(sx,y,min(sx+10,x+w-2),y,54)
+  end
   line(x+w,y+2,x+w,y+h-2,54)
   line(x+2,y+h,x+w-2,y+h,48)
   for px=x+8,x+w-6,14 do
@@ -2846,53 +2870,49 @@ function env_foreground_service_trench()
   -- a moving water/wave overlay.
   rectfill(x0,490,x1,511,48)
   line(x0,490,x1,490,50)
-  line(x0,492,x1,492,49)
-  for panel=flr(x0/32)*32,x1,32 do
+  for panel=flr(x0/64)*64,x1,64 do
     line(panel,496,panel,511,49)
-    line(panel+1,498,panel+1,509,50)
-    pset(panel+4,499,52)
-    rectfill(panel+19,506,panel+28,510,49)
-    line(panel+20,507,panel+27,507,50)
+    line(panel+1,500,panel+1,509,50)
+    rectfill(panel+43,507,panel+54,510,49)
   end
   -- Fixed-world drain mouths and pipe elbows supply foreground occlusion.
-  for x=48,944,128 do
+  for x=48,944,192 do
     if x>camera_x-20 and x<camera_x+SW+20 then
       rectfill(x-11,497,x+11,511,49)
       rectfill(x-8,494,x+8,511,49)
       rectfill(x-5,497,x+5,511,48)
-      line(x-8,494,x+8,494,52)
+      line(x-8,494,x+8,494,50)
       for gx=x-4,x+4,4 do line(gx,499,gx,511,50) end
-      pset(x,502,10)
+      pset(x,502,51)
     end
   end
-  for x=18,930,96 do
+  for x=18,930,192 do
     if x>camera_x-28 and x<camera_x+SW+28 then
       rectfill(x,503,x+30,508,49)
       rectfill(x+25,499,x+30,508,49)
-      line(x+2,503,x+26,503,52)
+      line(x+2,503,x+26,503,50)
       line(x+29,500,x+29,507,50)
-      pset(x+5,505,54) pset(x+27,501,54)
+      pset(x+5,505,51) pset(x+27,501,51)
     end
   end
   -- Broken, static puddle reflections: short clusters with empty gaps, never
   -- a full-width or animated wave. Accent follows the real world zone.
-  for x=8,950,47 do
+  for x=8,950,94 do
     if x>camera_x-18 and x<camera_x+SW+18 then
       local z=mid(0,flr(x/128),6)
-      local accent=z==1 and 5 or z==3 and 45 or z==5 and 10 or z==6 and 38 or 2
-      local w=7+(flr(x/47)%4)*3
+      local accent=z==1 and 1 or z==3 and 41 or z==5 and 9 or z==6 and 34 or 1
+      local w=8+(flr(x/94)%3)*4
       line(x,498,x+w,498,accent)
-      line(x+3,501,x+w-2,501,z==1 and 3 or z==5 and 7 or 1)
-      pset(x+w+3,500,accent)
+      line(x+4,501,x+w-3,501,49)
     end
   end
   -- Sparse fence posts live in the near plane and break the bottom silhouette.
-  for x=88,920,176 do
+  for x=88,920,352 do
     if x>camera_x-8 and x<camera_x+SW+8 then
       rectfill(x,486,x+2,500,49)
       line(x+1,486,x+1,498,52)
       line(x-5,489,x+7,501,50)
-      pset(x+1,485,54)
+      pset(x+1,485,51)
     end
   end
   -- Three authored near-plane vocabularies repeat only at district scale.
@@ -2903,34 +2923,32 @@ function env_foreground_service_trench()
         -- Waterworks: sewer header, square elbow, grate and cyan fragments.
         rectfill(ox+8,501,ox+54,506,49)
         rectfill(ox+49,496,ox+54,506,49)
-        line(ox+10,501,ox+51,501,52)
+        line(ox+10,501,ox+51,501,50)
         rectfill(ox+73,494,ox+91,511,49)
         rectfill(ox+77,498,ox+87,511,48)
         for gx=ox+78,ox+86,4 do line(gx,499,gx,511,50) end
-        line(ox+16,497,ox+34,497,5)
-        line(ox+22,500,ox+29,500,3)
+        line(ox+16,497,ox+34,497,1)
       elseif z<=4 then
         -- Commercial roofs: inset service door and neon puddle fragments.
         rectfill(ox+18,493,ox+39,511,49)
         rectfill(ox+22,497,ox+35,511,40)
-        rect(ox+21,496,ox+36,511,52)
-        pset(ox+33,503,z==3 and 45 or 31)
-        local neon=z==3 and 45 or z==2 and 36 or 10
+        rect(ox+21,496,ox+36,511,50)
+        pset(ox+33,503,z==3 and 41 or 49)
+        local neon=z==3 and 41 or z==2 and 33 or 9
         line(ox+51,498,ox+78,498,neon)
-        line(ox+58,501,ox+70,501,z==3 and 42 or 1)
-        pset(ox+82,500,neon)
+        line(ox+58,501,ox+70,501,49)
       else
         -- Mutagen/arena: dented plates, torn seams and foreground debris.
         rectfill(ox+10,495,ox+51,510,49)
-        line(ox+12,496,ox+49,496,52)
+        line(ox+12,496,ox+49,496,50)
         line(ox+24,496,ox+36,509,50)
-        line(ox+37,497,ox+30,508,54)
+        line(ox+37,497,ox+30,508,51)
         rectfill(ox+67,504,ox+73,509,50)
         rectfill(ox+76,501,ox+86,509,49)
         rectfill(ox+90,506,ox+96,510,50)
-        local spill=z==5 and 10 or 38
+        local spill=z==5 and 9 or 34
         line(ox+13,493,ox+29,493,spill)
-        pset(ox+33,494,spill) pset(ox+82,500,spill)
+        pset(ox+33,494,spill)
       end
     end
   end
@@ -3131,10 +3149,9 @@ local function draw_zone_architecture()
         pset(x+5,y-19,58) pset(x+w-6,y-14,54)
       end
       if y<424 and i%4==0 then
-        line(x+3,y-7,x+w-4,y-7,52)
         for rx=x+5,x+w-6,24 do
           line(rx,y-7,rx,y-1,50)
-          pset(rx,y-8,58)
+          pset(rx,y-8,52)
         end
       elseif y<424 and i%4==1 then
         line(x+4,y+10,x-8,y+depth,50)
@@ -3227,7 +3244,9 @@ end
 local function draw_prop(p)
   local kind,x,y,w=p[1],p[2],p[3],p[4]
   if kind=="pipe" then
-    begin_authored_sprite_scope(false)
+    -- Decorative props share the architectural value domain. Interactive
+    -- pickups, enemies, and the frog retain authored identity values.
+    env_begin_dim_palette()
     for px=x,x+w-8,8 do
       spr((px-x)%32==24 and PIPE_JUNCTION or PIPE_H,px,y-8)
     end
@@ -3238,49 +3257,50 @@ local function draw_prop(p)
       pset(px,y-5,31) pset(px+1,y-4,13)
     end
   elseif kind=="fence" then
-    begin_authored_sprite_scope(false)
-    pal(59,52) pal(52,50) pal(31,13)
-    for py=y-32,y-8,8 do
-      for px=x,x+w-8,8 do
-        local damaged=(px+py+flr(x/8))%40==0
-        spr(damaged and FENCE_DAMAGED or FENCE_WIRE,px,py)
+    -- Sparse, dark diamonds communicate a support plane without producing a
+    -- high-contrast screen of tiny Xs behind the frog and collision edges.
+    for py=y-29,y-13,16 do
+      for px=x+3,x+w-13,16 do
+        line(px,py+8,px+8,py,50)
+        line(px+8,py,px+16,py+8,50)
+        line(px+16,py+8,px+8,py+16,50)
+        line(px+8,py+16,px,py+8,50)
       end
     end
-    for px=x,x+w,16 do spr(FENCE_POST,px,y-32) end
-    restore_legacy_palette()
-    line(x,y-33,x+w,y-33,59)
+    for px=x,x+w,32 do
+      rectfill(px,y-32,px+1,y,49)
+      line(px+1,y-31,px+1,y-1,51)
+    end
+    for px=x,x+w-6,24 do line(px,y-33,min(px+8,x+w),y-33,50) end
   elseif kind=="sign" then
-    fillp(0xaaaa,p[4]==1 and 36 or 45)
-    rectfill(x-17,y-31,x+17,y+2,p[4]==1 and 36 or 45)
-    fillp()
-    begin_authored_sprite_scope(false)
+    rectfill(x-15,y-29,x+15,y,41)
+    rect(x-16,y-30,x+16,y+1,42)
+    env_begin_dim_palette()
     sspr((PROP_SIGN%16)*8,flr(PROP_SIGN/16)*8,8,8,x-12,y-28,24,24)
     restore_legacy_palette()
-    line(x-9,y-3,x-6,y+7,52) line(x+9,y-3,x+6,y+7,52)
-    line(x-16,y+2,x+16,y+2,p[4]==1 and 36 or 45)
+    line(x-8,y-3,x-6,y+7,50) line(x+8,y-3,x+6,y+7,50)
   elseif kind=="vent" then
     rectfill(x-17,y-25,x+17,y+2,48)
-    begin_authored_sprite_scope(false)
+    env_begin_dim_palette()
     sspr((PROP_VENT%16)*8,flr(PROP_VENT/16)*8,8,8,x-16,y-24,32,24)
     restore_legacy_palette()
-    rect(x-17,y-25,x+17,y+2,59)
+    rect(x-17,y-25,x+17,y+2,52)
     pset(x-14,y-22,31) pset(x+14,y-22,31)
   elseif kind=="lamp" then
-    fillp(0xaaaa,31)
-    line(x-3,y-13,x-14,y,31) line(x+3,y-13,x+14,y,31)
-    line(x-10,y-4,x+10,y-4,31)
-    rectfill(x-13,y-2,x+13,y,31)
-    fillp()
-    begin_authored_sprite_scope(false)
+    env_begin_dim_palette()
     spr(PROP_LAMP,x-8,y-16,2,2)
     restore_legacy_palette()
-    line(x-12,y,x+12,y,31)
-    pset(x-15,y,38) pset(x+15,y,38)
+    -- The architectural pool already carries this practical's light. Keep the
+    -- foreground fixture compact so it cannot masquerade as a platform or sit
+    -- as a bright triangle behind an actor.
+    line(x-7,y,x+7,y,52)
+    line(x-3,y-2,x+3,y-2,30)
+    pset(x,y-3,31)
   elseif kind=="coil" then
     fillp(0xaaaa,10)
     circfill(x,y-10,17,10)
     fillp()
-    begin_authored_sprite_scope(false)
+    env_begin_dim_palette()
     spr(PROP_COIL,x-8,y-16,2,2)
     restore_legacy_palette()
     circ(x,y-10,15,10)
@@ -3289,18 +3309,18 @@ local function draw_prop(p)
     end
   elseif kind=="crate" then
     rectfill(x-9,y-17,x+9,y+1,48)
-    begin_authored_sprite_scope(false)
+    env_begin_dim_palette()
     spr(PROP_CRATE,x-8,y-16,2,2)
     restore_legacy_palette()
-    line(x-8,y,x+8,y,31)
+    line(x-8,y,x+8,y,50)
   elseif kind=="tank" then
     rectfill(x-15,y-30,x+15,y,49)
     circfill(x,y-30,15,49)
-    rect(x-14,y-29,x+14,y,55)
-    circ(x,y-30,14,59)
+    rect(x-14,y-29,x+14,y,52)
+    circ(x,y-30,14,54)
     line(x-11,y-23,x+11,y-23,13)
     line(x-12,y-12,x+12,y-12,52)
-    line(x-9,y-35,x+9,y-35,56)
+    line(x-9,y-35,x+9,y-35,52)
     line(x,y-45,x,y-55,52)
     pset(x,y-56,36)
     line(x-10,y,x-14,y+8,52) line(x+10,y,x+14,y+8,52)
@@ -3372,8 +3392,13 @@ local function draw_terrain_detail()
               run_end=run_end+1
             end
             local right=run_end*8+7
-            line(x,y,right,y,59)
+            line(x,y,right,y,61)
             line(x+1,y+1,right-1,y+1,inner)
+            -- Repeated short pale plates make collision edges read as load-
+            -- bearing catwalks rather than the scenery's single-pixel trim.
+            for cap=x+2,right-2,8 do
+              line(cap,y+1,min(cap+3,right-1),y+1,58)
+            end
             line(x+2,y+2,right-2,y+2,49)
             if not solid(mget(cx-1,cy)) then line(x,y+1,x,y+4,55) end
             if not solid(mget(run_end+1,cy)) then line(right,y+1,right,y+4,55) end
@@ -3755,6 +3780,14 @@ end
 function dev_stage_environment(zone)
   zone=mid(0,flr(zone or 0),6)
   dev_stage_environment_at(zone*128)
+end
+
+function dev_stage_actor_review(x,y)
+  dev_stage_environment_at(mid(0,(x or 0)-SW*0.42,WORLD_W-SW))
+  dev_warp(x or 32,y or 472)
+  respawn_timer,hurt_timer,invuln=0,0,0
+  if (x or 0)>=760 then boss_started,boss_intro=true,0 end
+  grounded=true
 end
 
 function dev_grant(which)

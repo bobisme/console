@@ -320,12 +320,17 @@ fn gameplay_foreground_keeps_a_distinct_collision_value_hierarchy() {
                 .event
                 .draw_palette
                 .iter()
-                .any(|remap| remap.from == 59 && remap.to == 56)
+                .any(|remap| remap.from == 59 && remap.to == 54)
             && record
                 .event
                 .draw_palette
                 .iter()
-                .any(|remap| remap.from == 31 && remap.to == 29)
+                .any(|remap| remap.from == 31 && remap.to == 27)
+            && record
+                .event
+                .draw_palette
+                .iter()
+                .any(|remap| remap.from == 45 && remap.to == 41)
     });
     assert!(
         dimmed_architecture.is_some(),
@@ -334,6 +339,30 @@ fn gameplay_foreground_keeps_a_distinct_collision_value_hierarchy() {
     assert!(
         map.event.draw_palette.is_empty(),
         "the full-value collision map must restore the authored palette"
+    );
+    let bright_background_rails = trace.events.iter().filter(|record| {
+        if record.index >= map.index
+            || record.event.op != "line"
+            || record.event.world_bounds.h != 1
+            || record.event.world_bounds.w < 16
+        {
+            return false;
+        }
+        let Some(source) = record.event.details.color else {
+            return false;
+        };
+        let emitted = record
+            .event
+            .draw_palette
+            .iter()
+            .find(|remap| remap.from == source)
+            .map_or(source, |remap| remap.to);
+        emitted >= 61
+    });
+    assert_eq!(
+        bright_background_rails.count(),
+        0,
+        "only exposed collision terrain may own long high-value horizontal rails"
     );
 
     let framebuffer = session.console().unwrap().framebuffer();
@@ -347,13 +376,14 @@ fn gameplay_foreground_keeps_a_distinct_collision_value_hierarchy() {
 
     // A high optional-route platform must read as three deliberate bands:
     // contact highlight, material edge, and shadow undercut.
-    assert_eq!(palette_count(128, 104, 48, 59), 48);
-    assert!(palette_count(129, 104, 48, 54) >= 40);
+    assert_eq!(palette_count(128, 104, 48, 61), 48);
+    assert!(palette_count(129, 104, 48, 58) >= 18);
+    assert!(palette_count(129, 104, 48, 54) + palette_count(129, 104, 48, 58) >= 40);
     assert!(palette_count(130, 104, 48, 49) >= 24);
 
     // The long starting roof may contain props, but its playable edge must
     // still dominate the row rather than dissolve into background detail.
-    assert!(palette_count(296, 0, screen_width, 59) >= 150);
+    assert!(palette_count(296, 0, screen_width, 61) >= 150);
 }
 
 #[test]
@@ -1474,32 +1504,32 @@ fn frog_palette_scope_covers_all_render_modes_and_restores_legacy_ink() {
         (
             "normal",
             "return dev_render_frog_probe('idle',1,false,'NONE')",
-            "8,12,14,31,48,63",
+            "9,13,15,31,48,63",
         ),
         (
             "invulnerable",
             "return dev_render_frog_probe('idle',1,true,'NONE')",
-            "14,63",
+            "14,48,63",
         ),
         (
             "persistent laser mutation",
             "return dev_render_frog_probe('idle',1,false,'LASER EYES')",
-            "6,7,8,12,14,31,48,63",
+            "6,7,9,13,15,31,48,63",
         ),
         (
             "persistent fire mutation",
             "return dev_render_frog_probe('idle',1,false,'FIRE BREATH')",
-            "8,12,14,31,38,39,48,63",
+            "9,13,15,31,38,39,48,63",
         ),
         (
             "laser recoil",
             "return dev_render_frog_probe('recoil',1,false,'LASER EYES')",
-            "8,12,31,48,63",
+            "9,13,31,48,63",
         ),
         (
             "fire breath",
             "return dev_render_frog_probe('mutate',1,false,'FIRE BREATH')",
-            "8,12,14,31,48,63",
+            "9,13,15,31,48,63",
         ),
         (
             "title scale",
@@ -1529,6 +1559,60 @@ fn frog_palette_scope_covers_all_render_modes_and_restores_legacy_ink() {
             session.console().unwrap().draw_state().draw_palette()[6],
             14,
             "{name} left the draw palette in the wrong state"
+        );
+    }
+}
+
+#[test]
+fn gameplay_frog_gets_a_dark_keyline_before_its_authored_pixels() {
+    let mut session = Session::new();
+    session.set_draw_tracing(true);
+    session.load_cart(&cart_text(), 8_675_309).unwrap();
+    session.clear_draw_events();
+    request(
+        &mut session,
+        1,
+        "eval",
+        json!({"code": "return dev_render_frog_probe('idle',1,false,'NONE')"}),
+    );
+
+    let trace = session.draw_events(None, None).unwrap();
+    let frog_calls = trace
+        .events
+        .iter()
+        .filter(|record| record.event.details.animation.as_deref() == Some("frog.idle"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        frog_calls.len(),
+        5,
+        "four silhouette neighbours must precede the authored frog"
+    );
+    for outline in &frog_calls[..4] {
+        assert!(
+            outline
+                .event
+                .draw_palette
+                .iter()
+                .all(|remap| remap.to == 48),
+            "the silhouette pass may emit only the darkest neutral"
+        );
+        assert!(
+            outline
+                .event
+                .draw_palette
+                .iter()
+                .any(|remap| remap.from == 63 && remap.to == 48),
+            "the outline must cover even the frog's brightest authored ink"
+        );
+    }
+    for (from, to) in [(8, 9), (12, 13), (14, 15)] {
+        assert!(
+            frog_calls[4]
+                .event
+                .draw_palette
+                .iter()
+                .any(|remap| remap.from == from && remap.to == to),
+            "the visible frog must lift authored green {from} to {to}"
         );
     }
 }
