@@ -1,0 +1,131 @@
+X:1
+T:Operation Lilybreaker
+C:Original theme for RIBBIT RECOIL
+M:4/4
+L:1/16
+Q:1/4=150
+K:Dm
+
+V:1 name="Croak Lead"
+% 1-8: radio insertion
+z2 D,2 F2 A2 d2 c2 A2 F2 | E2 G2 B2 d2 c2 B2 G2 E2 |
+F2 A2 c2 f2 e2 c2 A2 G2 | E2 G2 ^G2 B2 d2 c2 A2 ^G2 |
+D2 F2 A2 c2 d2 f2 e2 c2 | A2 A c d2 c A2 G2 F2 E2 z |
+F2 A2 c2 d2 c2 A2 G3 E | D4 A2 c2 d2 c2 A2 F2 |
+
+% 9-16: canopy fireline
+A A c d c A G F E E F G A2 c2 | d d f g f d c A G G A c d2 f2 |
+e2 c2 A2 F2 G A B c d c A G | F2 A c2 d3 c A2 G2 E2 z |
+D F A c d2 f e d c2 A G F E2 | G2 B d f g2 f e d c2 B A G2 |
+A2 c2 e2 g2 f2 e2 c2 A2 | ^G2 B2 d2 f2 e2 d2 B2 ^G2 |
+
+% 17-24: mutation alarm
+G2 B2 d2 g2 f2 d2 B2 A2 | ^G B d f e d c B A2 ^G2 E2 D2 |
+F2 A2 c2 e2 ^d2 B2 G2 F2 | E G ^G B d c B ^G A2 c2 e2 ^d2 |
+D2 F2 A2 ^c2 d2 f2 e2 ^c2 | d d c A G F E D ^C D F A c2 A2 |
+B2 d2 g2 f2 d2 B2 A2 G2 | E2 ^G2 B2 d2 c2 A2 ^G2 E2 |
+
+% 25-32: moonlit breach
+D4 A4 d4 c4 | B4 G4 d4 B4 |
+F4 c4 e4 c4 | E4 B4 d4 ^G4 |
+D6 z2 A4 c4 | B4 d4 g4 f4 |
+e4 c4 A4 G4 | ^G4 B4 A4 E4 |
+
+% 33-40: extraction assault
+D2 F2 A2 d2 c2 A2 F2 E2 | F2 A2 c2 f2 e2 c2 A2 G2 |
+B2 d2 g2 f2 d2 B2 A2 ^G2 | A2 c2 e2 g2 f2 e2 c2 A2 |
+D2 F2 A2 c2 d2 f2 e2 c2 | G2 B2 d2 f2 g2 f2 d2 B2 |
+A2 c2 e2 g2 d'2 a2 g2 e2 | D2 F2 A2 d2 c2 A2 F2 D2 |
+
+V:2 name="Canopy Counterline"
+% 1-8: radio insertion
+D,4 A,2 D2 F2 E2 D2 A,2 | C4 G,2 C2 E2 D2 C2 G,2 |
+B,4 F2 B2 d2 c2 B2 F2 | A,4 E2 A2 c2 B2 A2 E2 |
+D2 A2 F2 A2 d2 A2 F2 E2 | C2 G2 E2 G2 c2 G2 E2 D2 |
+B,2 F2 D2 F2 B2 F2 D2 C2 | A,4 E2 ^G2 B2 A2 E2 C2 |
+
+% 9-16: canopy fireline
+F2 A2 c2 A2 F2 A2 c2 e2 | G2 B2 d2 B2 G2 B2 d2 f2 |
+A2 c2 e2 c2 A2 c2 e2 g2 | E2 ^G2 B2 ^G2 E2 ^G2 B2 d2 |
+D2 F2 A2 F2 D2 F2 A2 c2 | E2 G2 B2 G2 E2 G2 B2 d2 |
+F2 A2 c2 A2 F2 A2 c2 e2 | E2 ^G2 B2 d2 c2 B2 ^G2 E2 |
+
+% 17-24: mutation alarm
+G,2 D2 G2 B2 d2 B2 G2 D2 | E2 B2 e2 d2 B2 G2 E2 B,2 |
+F2 c2 f2 e2 c2 A2 F2 C2 | E2 B2 e2 d2 B2 ^G2 E2 B,2 |
+D2 A2 d2 ^c2 A2 F2 D2 A,2 | C2 G2 c2 B2 G2 E2 C2 G,2 |
+B,2 F2 B2 d2 f2 d2 B2 F2 | A,2 E2 A2 c2 e2 c2 A2 E2 |
+
+% 25-32: moonlit breach
+F4 A4 c4 A4 | G4 B4 d4 B4 |
+A4 c4 e4 c4 | E4 ^G4 B4 ^G4 |
+D4 F4 A4 c4 | G4 B4 d4 f4 |
+A4 c4 e4 g4 | E4 ^G4 B4 d4 |
+
+% 33-40: extraction assault
+F2 A2 c2 A2 F2 E2 D2 C2 | G2 B2 d2 B2 G2 F2 E2 D2 |
+A2 c2 e2 c2 A2 G2 F2 E2 | E2 ^G2 B2 d2 c2 B2 ^G2 E2 |
+D2 F2 A2 c2 d2 c2 A2 F2 | E2 G2 B2 d2 e2 d2 B2 G2 |
+F2 A2 c2 e2 f2 e2 c2 A2 | E2 ^G2 B2 d2 c2 A2 ^G2 E2 |
+
+V:3 name="Mud Bass"
+% 1-8: radio insertion
+D,,2 A,,2 D,2 A,,2 D,2 F,2 A,2 F,2 | C,2 G,,2 C,2 G,,2 C,2 E,2 G,2 E,2 |
+B,,2 F,2 B,2 F,2 B,2 D2 F2 D2 | A,,2 E,2 A,2 E,2 A,2 C2 E2 C2 |
+D,2 A,2 D2 A,2 D2 C2 A,2 F,2 | C,2 G,2 C2 G,2 C2 B,2 G,2 E,2 |
+B,,2 F,2 B,2 F,2 B,2 A,2 F,2 D,2 | A,,2 E,2 A,2 E,2 A,2 B,2 C2 ^C2 |
+
+% 9-16: canopy fireline
+F,2 C2 F2 C2 F2 A2 C3 A, | G,2 D2 G2 D2 G2 B2 D3 B, |
+A,2 E2 A2 E2 A2 C3 E2 C | E,2 B,2 E2 B,2 E2 ^G2 B3 ^G |
+D,2 A,2 D2 A,2 D2 F2 A2 F2 | E,2 B,2 E2 B,2 E2 G2 B2 G2 |
+F,2 C2 F2 C2 F2 A2 C3 A, | E,2 B,2 E2 B,2 E2 ^G2 B2 ^C2 |
+
+% 17-24: mutation alarm
+G,,2 D,2 G,2 D,2 G,2 B,2 D2 B,2 | E,2 B,2 E2 B,2 E2 G2 B2 G2 |
+F,2 C2 F2 C2 F2 A2 C3 A, | E,2 B,2 E2 B,2 E2 ^G2 B2 ^G2 |
+D,2 A,2 D2 A,2 D2 F2 A2 ^C2 | C,2 G,2 C2 G,2 C2 E2 G2 E2 |
+B,,2 F,2 B,2 F,2 B,2 D2 F2 D2 | A,,2 E,2 A,2 E,2 A,2 C2 E2 ^C2 |
+
+% 25-32: moonlit breach
+D,,4 A,,4 D,4 A,,4 | G,,4 D,4 G,4 D,4 |
+F,4 C4 F4 C4 | E,4 B,4 E4 ^G4 |
+D,4 A,4 D4 ^C4 | G,,4 D,4 G,4 B,4 |
+A,,4 E,4 A,4 C4 | A,,4 E,4 A,4 ^C4 |
+
+% 33-40: extraction assault
+D,,2 A,,2 D,2 A,,2 D,2 F,2 A,2 C2 | C,2 G,2 C2 G,2 C2 E2 G2 B2 |
+B,,2 F,2 B,2 F,2 B,2 D2 F2 A2 | A,,2 E,2 A,2 E,2 A,2 C2 E2 G2 |
+D,2 A,2 D2 A,2 D2 F2 A2 C2 | E,2 B,2 E2 B,2 E2 G2 B2 D2 |
+F,2 C2 F2 C2 F2 A2 C3 E | A,,2 E,2 A,2 E,2 A,2 ^C2 E2 A2 |
+
+V:4 name="Field Kit Percussion"
+% 1-8: radio insertion
+D,,2 z2 A,,2 z2 D,,2 A,,2 z2 A,,2 | D,,2 z2 A,,2 z2 D,,2 A,,2 D,,2 A,,2 |
+D,,2 z2 A,,2 D,2 z2 A,,2 D,,2 A,,2 | D,,2 z2 A,,2 z2 D,,2 A,,2 D,2 A,,2 |
+D,,2 z2 A,,2 z2 D,,2 A,,2 z2 A,,2 | D,,2 z2 A,,2 z2 D,, D,, A,,2 D,,2 A,,2 |
+D,,2 z2 A,,2 D,2 z2 A,,2 D,,2 A,,2 | D,,2 A,,2 D,2 A,,2 D,,2 A,,2 D,2 A,,2 |
+
+% 9-16: canopy fireline
+D,,2 z2 A,,2 z2 D,2 A,,2 z2 A,,2 | D,,2 z2 A,,2 z2 D,,2 A,,2 D,2 z2 |
+D,,2 z2 A,,2 D,2 z2 A,,2 D,,2 z2 | D,,2 z2 A,,2 z2 D,2 A,,2 z2 A,,2 |
+D,,2 z2 A,,2 z2 D,2 A,,2 D,,2 z2 | D,,2 z2 A,,2 D,2 z2 A,,2 D,,2 z2 |
+D,,2 z2 A,,2 z2 D,2 A,,2 z2 A,,2 | D,,2 A,,2 z2 D,2 A,,2 z2 D,,2 z2 |
+
+% 17-24: mutation alarm
+D,,2 z2 ^G,,2 z2 D,2 ^G,,2 z2 ^G,,2 | D,,2 ^G,,2 D,2 ^G,,2 D,, z ^G,,2 D,2 ^G,,2 |
+D,,2 z ^G,, z D,2 ^G,,2 D,, ^G,, D,2 ^G,,2 z | D,,2 ^G,,2 D, ^G,, D,,2 ^G,,2 D,2 ^G,,2 z2 |
+D,,2 z2 A,,2 z2 D,2 A,,2 z2 A,,2 | D,,2 A,,2 D,2 A,,2 D,, z A,,2 D,2 A,,2 |
+D,,2 z A,, z D,2 A,,2 D,, A,, D,2 A,,2 z | D,,2 A,,2 D, A,, D,,2 A,,2 D,2 A,,2 z2 |
+
+% 25-32: moonlit breach
+D,,4 z2 A,,2 D,4 z2 A,,2 | D,,4 z2 A,,2 D,2 A,,2 z2 A,,2 |
+D,,4 z2 A,,2 D,4 z2 A,,2 | D,,4 A,,4 D,4 A,,4 |
+D,,4 z2 A,,2 D,4 A,,4 | D,,4 z2 A,,2 D,2 A,,2 z2 A,,2 |
+D,,4 A,,4 D,4 A,,4 | D,,2 A,,2 D,2 A,,2 D,,2 A,,2 D,2 A,,2 |
+
+% 33-40: extraction assault
+D,,2 z2 A,,2 z2 D,2 A,,2 D,,2 A,,2 | D,,2 A,,2 z2 D,2 A,,2 D,,2 z2 A,,2 |
+D,,2 z2 A,,2 D,2 z2 A,,2 D,,2 A,,2 | D,,2 A,,2 D,2 z2 A,,2 D,,2 z2 A,,2 |
+D,,2 z2 A,,2 D,2 A,,2 z2 D,,2 A,,2 | D,,2 A,,2 z2 D,2 A,,2 D,,2 z2 A,,2 |
+D,,2 z2 A,,2 D,2 z2 A,,2 D,,2 A,,2 | D,,2 A,,2 z2 D,2 A,,2 D,,2 z2 A,,2 |
