@@ -143,6 +143,36 @@ console music play . --song 0 --seconds 10 --volume 0.35
 console music play . --song 0 --dry-run
 ```
 
+### Migrating a game's audio without breaking gameplay cues
+
+When a new `.cmusic` bundle replaces the audio sections of an existing cart,
+the bundle and Lua still share the same SFX ID namespace (0–63). Before
+building, inventory every `sfx(...)` and `music(...)` call in the old Lua:
+
+- reserve a documented range for gameplay cues after the music bank;
+- remap every conditional, bomb, death, boss, and pause branch, not only the
+  obvious literal calls;
+- rewrite song calls to pattern IDs that actually exist in the new bundle, and
+  keep `music(-1)` only where silence is intentional;
+- use a generator or checked-in mapping table so extraction is deterministic.
+
+Validate the integration in this order:
+
+```bash
+console music play my-game/audio/game.cmusic --song 0 --dry-run
+console build my-game
+console music play my-game --song 0 --dry-run
+console music lint my-game/build/game.cart --strict
+console run my-game --frames 120 --input '30:,20:R,10:RA,60:' \
+  --audio-events --eval 'return dev_status()'
+console build my-game --check
+```
+
+The first build creates the configured generated cart; `--check` is a second
+pass and is expected to fail on a clean checkout if run before that build.
+Keep generated `build/` output ignored when the source project and `.cmusic`
+bundle are authoritative.
+
 ## Split Lua into static modules
 
 Literal imports mirror paths beneath `[lua].root`:

@@ -255,6 +255,27 @@ console music piano-roll game.cart -o /tmp/music.png
 console music render game.cart --loops 2 -o /tmp/music.wav
 ```
 
+For a project with a native bundle, audition the lossless source first, then
+inspect the compiled cart. The static music tools operate on a cart, not on a
+standalone `.cmusic` file:
+
+```bash
+console music play my-game/audio/game.cmusic --song 0 --dry-run
+console build my-game
+console music play my-game --song 0 --dry-run
+console music score my-game/build/game.cart
+console music lint my-game/build/game.cart --strict
+console music piano-roll my-game/build/game.cart --song 0 -o /tmp/music.png
+console music render my-game/build/game.cart --song 0 --loops 1 -o /tmp/music.wav
+console build my-game --check
+```
+
+If the bundle replaced audio in an older cart, inspect `audio_events` during a
+gameplay action using the same seed/input as the old and new carts. This catches
+ID collisions where a legacy gameplay `sfx(id)` now triggers a music phrase, and
+remapped cues that steal all six music channels. A successful native bundle
+dry-run alone cannot catch runtime integration errors.
+
 Running checks:
 
 - `audio_events`: correct trigger frame, pattern, row, and SFX stealing;

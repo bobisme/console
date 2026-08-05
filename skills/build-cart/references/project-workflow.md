@@ -32,7 +32,8 @@ ignored `build/`, all rooted beside `console.toml`. Start from
 2. Run `console build PROJECT --format json` and inspect Lua/PNG provenance.
 3. Run a short `console run PROJECT` state and screenshot check.
 4. Run `console playtest PROJECT --scenario PROJECT/playtest.json`.
-5. Run `console build PROJECT --check` when the generated cart is versioned.
+5. Run a normal `console build PROJECT` first, then `console build PROJECT --check`;
+   `--check` never creates the configured output.
 6. Pack and browser-test the project before delivery.
 
 `run`, `playtest`, `pack`, and `serve` compile the directory or explicit
@@ -59,6 +60,39 @@ stale bundle after an invalid edit.
 Every input path is project-relative and confined after canonicalization. Do
 not use `..`, escaping symlinks, embedded `__section__` headers, overlapping
 assets, or both PNG assets and `[sections].sprites`.
+
+### Integrate a bundle into an existing game
+
+When migrating a monolithic cart whose music and gameplay SFX share one ID
+namespace, treat the bundle as an ownership change, not a file copy:
+
+1. Inventory literal and dynamic `sfx(...)` calls and every `music(...)` song ID
+   in the old Lua. The native bundle owns SFX IDs 0–63 and song entry points
+   are pattern IDs, so old gameplay IDs can silently become music phrases if
+   they are left unchanged.
+2. Reserve a contiguous range for gameplay cues outside the music bank, then
+   remap every old call (including conditional, bomb, death, and boss branches)
+   to that range. Keep the mapping in a small generator or documented table so
+   regeneration cannot drift.
+3. Decide which song is the game's runtime entry point. If the bundle has one
+   unified song, rewrite title/gameplay/boss calls to that entry point; retain
+   `music(-1)` for intentional silence. Do not assume old song IDs still exist.
+4. Build and exercise both the source project and generated cart. Confirm
+   `audio_events` show gameplay cues over the intended music and that no cue
+   plays a phrase from the music bank.
+
+For a fresh checkout, the expected order is:
+
+```bash
+console build my-game
+console build my-game --check
+console music play my-game --song 0 --dry-run
+console run my-game --frames 120 --input '30:,20:R,10:RA,60:' \
+  --audio-events --eval 'return dev_status()'
+```
+
+Running `--check` before the normal build is expected to fail when the output
+is ignored and has not been generated yet.
 
 ## Migration checklist
 

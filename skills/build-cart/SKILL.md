@@ -117,7 +117,10 @@ inspection methods never rewrite the cart file.
 - Keep lossless native arrangements in `.cmusic` when instruments, effects,
   and mix settings must travel with the notes. Register one as `[audio].bundle`
   for `console build`, and audition the file, cart, or project with `music play
-  --song N`.
+  --song N`. When replacing audio in an existing game, reserve/remap gameplay
+  SFX IDs and audit every `music(N)` call; the bundle and Lua share one numeric
+  namespace. Build once before `--check`, then lint the generated cart and run
+  an input trace that proves gameplay cues do not trigger music phrases.
 - Run write commands with `--dry-run` first when changing a nontrivial region.
   They reparse before writing, but the preview keeps intent reviewable.
 - Use `--help` as live syntax authority if the installed tool and this checked-out
