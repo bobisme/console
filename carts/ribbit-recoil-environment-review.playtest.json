@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "seed": 8675309,
+  "stages": [
+    {"name":"title","op":"input","frames":1,"buttons":""},
+    {"name":"deploy","op":"input","frames":1,"buttons":"A"},
+    {"name":"release","op":"input","frames":1,"buttons":""},
+
+    {"name":"stage_loading_roofs","op":"eval","code":"dev_stage_environment(0)"},
+    {"name":"draw_loading_roofs","op":"input","frames":1,"buttons":""},
+    {"name":"capture_loading_roofs","op":"capture","screenshot":"01-loading-roofs-native.png","zoom":1,"draw_trace":"01-loading-roofs.trace.json","map":{"source":"live","png":"01-loading-roofs-map.png","dump":"01-loading-roofs-map.txt"}},
+    {"name":"review_loading_roofs","op":"sequence","frames":1,"buttons":"","every":1,"crop":{"x":0,"y":0,"w":192,"h":320},"zoom":1,"columns":1,"board":"01-loading-roofs-board.png","reference":"frog-inspo-console.png"},
+
+    {"name":"stage_waterworks","op":"eval","code":"dev_stage_environment(1)"},
+    {"name":"draw_waterworks","op":"input","frames":1,"buttons":""},
+    {"name":"capture_waterworks","op":"capture","screenshot":"02-waterworks-native.png","zoom":1},
+
+    {"name":"stage_molt","op":"eval","code":"dev_stage_environment(2)"},
+    {"name":"draw_molt","op":"input","frames":1,"buttons":""},
+    {"name":"capture_molt","op":"capture","screenshot":"03-molt-native.png","zoom":1},
+
+    {"name":"stage_gene_bar","op":"eval","code":"dev_stage_environment(3)"},
+    {"name":"draw_gene_bar","op":"input","frames":1,"buttons":""},
+    {"name":"capture_gene_bar","op":"capture","screenshot":"04-gene-bar-native.png","zoom":1,"draw_trace":"04-gene-bar.trace.json"},
+    {"name":"review_gene_bar","op":"sequence","frames":1,"buttons":"","every":1,"crop":{"x":0,"y":0,"w":192,"h":320},"zoom":1,"columns":1,"board":"04-gene-bar-board.png","reference":"frog-inspo-console.png"},
+
+    {"name":"stage_croak_tower","op":"eval","code":"dev_stage_environment(4)"},
+    {"name":"draw_croak_tower","op":"input","frames":1,"buttons":""},
+    {"name":"capture_croak_tower","op":"capture","screenshot":"05-croak-tower-native.png","zoom":1},
+
+    {"name":"stage_mutagen_works","op":"eval","code":"dev_stage_environment(5)"},
+    {"name":"draw_mutagen_works","op":"input","frames":1,"buttons":""},
+    {"name":"capture_mutagen_works","op":"capture","screenshot":"06-mutagen-works-native.png","zoom":1},
+
+    {"name":"stage_arena","op":"eval","code":"dev_stage_environment(6)"},
+    {"name":"draw_arena","op":"input","frames":1,"buttons":""},
+    {"name":"capture_arena","op":"capture","screenshot":"07-arena-native.png","zoom":1,"draw_trace":"07-arena.trace.json","map":{"source":"live","png":"07-arena-map.png","dump":"07-arena-map.txt"}},
+    {"name":"review_arena","op":"sequence","frames":1,"buttons":"","every":1,"crop":{"x":0,"y":0,"w":192,"h":320},"zoom":1,"columns":1,"board":"07-arena-board.png","reference":"frog-inspo-console.png"}
+  ]
+}

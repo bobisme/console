@@ -146,6 +146,106 @@ fn start_game(session: &mut Session) {
     session.step(1, 0).unwrap();
 }
 
+fn environment_frame_at(cart: &str, camera_x: i32) -> (Vec<u8>, usize, u64) {
+    let mut session = Session::new();
+    session.set_draw_tracing(true);
+    session.load_cart(cart, 8_675_309).unwrap();
+    start_game(&mut session);
+    session.clear_draw_events();
+    request(
+        &mut session,
+        1,
+        "eval",
+        json!({"code": format!("dev_stage_environment_at({camera_x})")}),
+    );
+    session.step(1, 0).unwrap();
+    let trace = session.draw_events(None, None).unwrap();
+    (
+        session.console().unwrap().framebuffer().to_vec(),
+        trace.events.len(),
+        trace.dropped,
+    )
+}
+
+fn focal_trace_at(session: &mut Session, camera_x: i32, name: &str) -> usize {
+    session.clear_draw_events();
+    session
+        .eval(&format!(
+            "dev_stage_environment_cull_at({camera_x}); dev_draw_environment_focal('{name}')"
+        ))
+        .unwrap();
+    let trace = session.draw_events(None, None).unwrap();
+    trace.events.len()
+}
+
+#[test]
+fn environment_scrolls_across_every_former_camera_boundary_without_a_scene_swap() {
+    let cart = cart_text();
+    for boundary in [36, 164, 292, 420, 548, 676] {
+        let (before, before_events, before_dropped) = environment_frame_at(&cart, boundary - 1);
+        let (after, after_events, after_dropped) = environment_frame_at(&cart, boundary + 1);
+        let changed = before
+            .iter()
+            .zip(&after)
+            .filter(|(left, right)| left != right)
+            .count();
+
+        assert!(
+            changed > 0,
+            "camera motion at x={boundary} must move the city"
+        );
+        assert!(
+            changed * 100 < before.len() * 35,
+            "camera crossing x={boundary} changed {changed}/{} pixels; this looks like a full-scene swap",
+            before.len()
+        );
+        assert_eq!(
+            before_dropped, 0,
+            "draw trace overflowed before x={boundary} after {before_events} retained events"
+        );
+        assert_eq!(
+            after_dropped, 0,
+            "draw trace overflowed after x={boundary} after {after_events} retained events"
+        );
+    }
+}
+
+#[test]
+fn environment_focal_props_enter_and_exit_on_their_true_pixel_extents() {
+    let cart = cart_text();
+    let mut session = Session::new();
+    session.set_draw_tracing(true);
+    session.load_cart(&cart, 8_675_309).unwrap();
+    start_game(&mut session);
+
+    for (name, left, right) in [
+        ("lick_lab", 73, 130),
+        ("loading_pipes", 153, 185),
+        ("waterworks_machine", 267, 328),
+        ("molt_sign", 317, 392),
+        ("gene_pipes", 416, 448),
+        ("gene_bar", 465, 546),
+        ("croak_machine", 531, 592),
+        ("water_tower", 601, 646),
+        ("croak_sign", 654, 729),
+        ("hr_hive", 786, 851),
+    ] {
+        for (camera_x, should_draw, edge) in [
+            (left - console_core::SCREEN_W as i32, false, "before entry"),
+            (left - console_core::SCREEN_W as i32 + 1, true, "at entry"),
+            (right - 1, true, "before exit"),
+            (right, false, "at exit"),
+        ] {
+            let events = focal_trace_at(&mut session, camera_x, name);
+            assert_eq!(
+                events > 0,
+                should_draw,
+                "{name} trace was wrong {edge} at camera x={camera_x}"
+            );
+        }
+    }
+}
+
 #[test]
 fn controller_only_replay_traverses_the_authored_level() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

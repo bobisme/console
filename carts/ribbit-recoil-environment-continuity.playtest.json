@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "seed": 8675309,
+  "stages": [
+    {"name":"title","op":"input","frames":1,"buttons":""},
+    {"name":"deploy","op":"input","frames":1,"buttons":"A"},
+    {"name":"release","op":"input","frames":1,"buttons":""},
+
+    {"name":"before_boundary_036","op":"eval","code":"dev_stage_environment_at(35)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-036-before.png","zoom":1},
+    {"name":"after_boundary_036","op":"eval","code":"dev_stage_environment_at(37)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-036-after.png","zoom":1},
+
+    {"name":"before_boundary_164","op":"eval","code":"dev_stage_environment_at(163)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-164-before.png","zoom":1},
+    {"name":"after_boundary_164","op":"eval","code":"dev_stage_environment_at(165)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-164-after.png","zoom":1},
+
+    {"name":"before_boundary_292","op":"eval","code":"dev_stage_environment_at(291)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-292-before.png","zoom":1},
+    {"name":"after_boundary_292","op":"eval","code":"dev_stage_environment_at(293)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-292-after.png","zoom":1},
+
+    {"name":"before_boundary_420","op":"eval","code":"dev_stage_environment_at(419)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-420-before.png","zoom":1},
+    {"name":"after_boundary_420","op":"eval","code":"dev_stage_environment_at(421)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-420-after.png","zoom":1},
+
+    {"name":"before_boundary_548","op":"eval","code":"dev_stage_environment_at(547)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-548-before.png","zoom":1},
+    {"name":"after_boundary_548","op":"eval","code":"dev_stage_environment_at(549)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-548-after.png","zoom":1},
+
+    {"name":"before_boundary_676","op":"eval","code":"dev_stage_environment_at(675)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-676-before.png","zoom":1},
+    {"name":"after_boundary_676","op":"eval","code":"dev_stage_environment_at(677)"},
+    {"op":"input","frames":1,"buttons":""},
+    {"op":"capture","screenshot":"boundary-676-after.png","zoom":1}
+  ]
+}
