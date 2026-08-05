@@ -1396,6 +1396,7 @@ function env_windows(x,top,w,bottom,accent,phase)
 end
 
 function env_facade(x,top,w,bottom,accent,style)
+  if x+w<camera_x-2 or x>camera_x+SW+2 then return end
   rectfill(x,top,x+w,bottom,48)
   rectfill(x,bottom-7,x+w,bottom,48)
   local cap_tile=style==1 and RUST_CAP or style==2 and LAB_CAP or PIPEWORKS_CAP
@@ -1411,22 +1412,26 @@ function env_facade(x,top,w,bottom,accent,style)
   pal(14,12) pal(7,5) pal(31,30)
   for py=top+8,bottom-22,16 do
     for px=x+5,x+w-13,16 do
-      local hash=flr(px/8)*7+flr(py/8)*11+style*13
-      local tile=face_tile
-      if style==1 and hash%9==0 then tile=STEEL_DAMAGED
-      elseif style==1 and hash%13==0 then tile=VENT_GRILLE
-      elseif style==2 and hash%11==0 then tile=MASONRY_FACE
-      elseif style==2 and hash%17==0 then tile=CAVITY
-      elseif style==3 and hash%7==0 then tile=VENT_GRILLE
-      elseif style==3 and hash%11==0 then tile=PIPE_JUNCTION end
-      spr(tile,px,py)
-      if hash%3==0 and px+16<x+w-4 then
-        local secondary=style==1 and RUST_FACE or style==2 and MASONRY_FACE or PIPEWORKS_FACE
-        spr(secondary,px+8,py+8)
+      if px+16>camera_x-2 and px<camera_x+SW+2 then
+        local hash=flr(px/8)*7+flr(py/8)*11+style*13
+        local tile=face_tile
+        if style==1 and hash%9==0 then tile=STEEL_DAMAGED
+        elseif style==1 and hash%13==0 then tile=VENT_GRILLE
+        elseif style==2 and hash%11==0 then tile=MASONRY_FACE
+        elseif style==2 and hash%17==0 then tile=CAVITY
+        elseif style==3 and hash%7==0 then tile=VENT_GRILLE
+        elseif style==3 and hash%11==0 then tile=PIPE_JUNCTION end
+        spr(tile,px,py)
+        if hash%3==0 and px+16<x+w-4 and px+24>camera_x-2 and px+8<camera_x+SW+2 then
+          local secondary=style==1 and RUST_FACE or style==2 and MASONRY_FACE or PIPEWORKS_FACE
+          spr(secondary,px+8,py+8)
+        end
       end
     end
   end
-  for px=x+3,x+w-10,8 do spr(cap_tile,px,top) end
+  for px=x+3,x+w-10,8 do
+    if px+8>camera_x-2 and px<camera_x+SW+2 then spr(cap_tile,px,top) end
+  end
   pal()
   palt(0,true)
   if style==1 then
@@ -1434,29 +1439,35 @@ function env_facade(x,top,w,bottom,accent,style)
     -- beneath seams. It must read as sheet material, not a window checkerboard.
     line(x+3,top+3,x+w-3,top+3,58)
     for px=x+8,x+w-7,22 do
-      line(px,top+7,px,bottom-9,50)
-      line(px+1,top+9,px+1,bottom-11,48)
+      if px+1>=camera_x-2 and px<=camera_x+SW+2 then
+        line(px,top+7,px,bottom-9,50)
+        line(px+1,top+9,px+1,bottom-11,48)
+      end
     end
     for py=top+25,bottom-15,23 do
       line(x+4,py,x+w-4,py,52)
       line(x+5,py+1,x+w-5,py+1,48)
       local wx=x+8+((py+top)%max(12,w-22))
-      rectfill(wx,py-12,wx+8,py-5,48)
-      rect(wx-1,py-13,wx+9,py-4,52)
-      if (py+top)%3==0 then
-        rectfill(wx+2,py-10,wx+6,py-7,31)
-        line(wx+1,py-3,wx+7,py-3,28)
-      else
-        line(wx+2,py-9,wx+6,py-9,50)
+      if wx+10>camera_x-2 and wx-1<camera_x+SW+2 then
+        rectfill(wx,py-12,wx+8,py-5,48)
+        rect(wx-1,py-13,wx+9,py-4,52)
+        if (py+top)%3==0 then
+          rectfill(wx+2,py-10,wx+6,py-7,31)
+          line(wx+1,py-3,wx+7,py-3,28)
+        else
+          line(wx+2,py-9,wx+6,py-9,50)
+        end
+        line(wx+6,py+2,wx+6,py+7,26)
+        pset(wx+7,py+7,24)
       end
-      line(wx+6,py+2,wx+6,py+7,26)
-      pset(wx+7,py+7,24)
     end
     for n=0,3 do
       local px=x+6+(n*29+top)%max(11,w-17)
       local py=top+15+(n*31+x)%max(13,bottom-top-35)
-      rect(px,py,px+9,py+6,50)
-      pset(px+1,py+1,54) pset(px+8,py+5,24)
+      if px+10>camera_x-2 and px<camera_x+SW+2 then
+        rect(px,py,px+9,py+6,50)
+        pset(px+1,py+1,54) pset(px+8,py+5,24)
+      end
     end
     rectfill(x+5,top-8,x+w-6,top,49)
     line(x+8,top-9,x+w-9,top-9,55)
@@ -1469,23 +1480,25 @@ function env_facade(x,top,w,bottom,accent,style)
       local offset=(flr(py/7)%2)*7
       line(x+5,py,x+w-5,py,42)
       for px=x+6+offset,x+w-7,14 do
-        pset(px,py,43)
+        if px>=camera_x-2 and px<camera_x+SW+2 then pset(px,py,43) end
       end
     end
     for wx=x+11,x+w-17,22 do
-      for wy=top+17,bottom-25,27 do
-        rectfill(wx,wy,wx+10,wy+14,48)
-        rectfill(wx+2,wy+3,wx+8,wy+12,40)
-        line(wx-2,wy-2,wx+12,wy-2,43)
-        line(wx-1,wy-1,wx+11,wy-1,42)
-        local lit=(flr(wx/11)+flr(wy/9))%5
-        if lit<2 then
-          rectfill(wx+3,wy+4,wx+7,wy+10,lit==0 and 31 or accent)
-          line(wx+2,wy+13,wx+8,wy+13,46)
-          line(wx+3,wy+15,wx+7,wy+15,43)
-        else
-          line(wx+3,wy+5,wx+7,wy+5,42)
-          line(wx+5,wy+4,wx+5,wy+11,49)
+      if wx+13>camera_x-2 and wx-2<camera_x+SW+2 then
+        for wy=top+17,bottom-25,27 do
+          rectfill(wx,wy,wx+10,wy+14,48)
+          rectfill(wx+2,wy+3,wx+8,wy+12,40)
+          line(wx-2,wy-2,wx+12,wy-2,43)
+          line(wx-1,wy-1,wx+11,wy-1,42)
+          local lit=(flr(wx/11)+flr(wy/9))%5
+          if lit<2 then
+            rectfill(wx+3,wy+4,wx+7,wy+10,lit==0 and 31 or accent)
+            line(wx+2,wy+13,wx+8,wy+13,46)
+            line(wx+3,wy+15,wx+7,wy+15,43)
+          else
+            line(wx+3,wy+5,wx+7,wy+5,42)
+            line(wx+5,wy+4,wx+5,wy+11,49)
+          end
         end
       end
     end
@@ -1499,13 +1512,15 @@ function env_facade(x,top,w,bottom,accent,style)
     -- Pipeworks: broad ribbed bays, external conduit, access hatches, clamps,
     -- and condensation. Bright marks stay confined to powered hardware.
     for px=x+8,x+w-9,18 do
-      rect(px,top+9,px+11,bottom-12,50)
-      line(px+1,top+10,px+1,bottom-13,52)
-      line(px+10,top+11,px+10,bottom-14,48)
-      for py=top+19,bottom-18,24 do
-        rectfill(px+3,py,px+8,py+8,48)
-        rect(px+2,py-1,px+9,py+9,54)
-        pset(px+5,py+3,(px+py)%3==0 and accent or 31)
+      if px+12>camera_x-2 and px<camera_x+SW+2 then
+        rect(px,top+9,px+11,bottom-12,50)
+        line(px+1,top+10,px+1,bottom-13,52)
+        line(px+10,top+11,px+10,bottom-14,48)
+        for py=top+19,bottom-18,24 do
+          rectfill(px+3,py,px+8,py+8,48)
+          rect(px+2,py-1,px+9,py+9,54)
+          pset(px+5,py+3,(px+py)%3==0 and accent or 31)
+        end
       end
     end
     local pipe_x=x+w-11
@@ -1526,6 +1541,7 @@ function env_facade(x,top,w,bottom,accent,style)
 end
 
 function env_tank(x,base,r,h,accent)
+  if x+r+1<camera_x-2 or x-r-1>camera_x+SW+2 then return end
   rectfill(x-r,base-h,x+r,base,50)
   circfill(x,base-h,r,50)
   rectfill(x-r,base-h+3,x-2,base,49)
@@ -1558,6 +1574,7 @@ function env_tank(x,base,r,h,accent)
 end
 
 function env_pipe_screen(x0,y0,x1,y1,accent)
+  if max(x0,x1)+4<camera_x-2 or min(x0,x1)-4>camera_x+SW+2 then return end
   line(x0,y0,x1,y0,54)
   line(x0,y0+2,x1,y0+2,50)
   line(x1,y0,x1,y1,54)
@@ -1570,6 +1587,7 @@ function env_pipe_screen(x0,y0,x1,y1,accent)
 end
 
 function env_billboard(x,y,w,h,accent,mark)
+  if x+w+2<camera_x-2 or x-2>camera_x+SW+2 then return end
   rectfill(x,y,x+w,y+h,48)
   rect(x-1,y-1,x+w+1,y+h+1,55)
   rect(x+3,y+3,x+w-3,y+h-3,accent)
@@ -2628,6 +2646,7 @@ local function draw_fenced_machine(x,y,accent)
 end
 
 function env_fan(x,y,r,accent)
+  if x+r<camera_x-2 or x-r>camera_x+SW+2 then return end
   circfill(x,y,r,50)
   circfill(x-3,y+3,r-4,49)
   circ(x,y,r,58)
@@ -2643,6 +2662,7 @@ function env_fan(x,y,r,accent)
 end
 
 function env_duct(x,y,w,h,accent)
+  if x+w<camera_x-2 or x>camera_x+SW+2 then return end
   rectfill(x,y,x+w,y+h,50)
   rectfill(x+2,y+4,x+w-2,y+h,49)
   line(x+2,y,x+w-2,y,58)
@@ -2655,6 +2675,7 @@ function env_duct(x,y,w,h,accent)
 end
 
 function env_ladder(x,top,bottom,accent)
+  if x+7<camera_x-2 or x>camera_x+SW+2 then return end
   line(x,top,x,bottom,54)
   line(x+7,top,x+7,bottom,52)
   for py=top+4,bottom-2,7 do
@@ -2663,11 +2684,14 @@ function env_ladder(x,top,bottom,accent)
 end
 
 function env_growth(x,y,w)
+  if x+w+1<camera_x-2 or x-2>camera_x+SW+2 then return end
   for px=x,x+w,7 do
-    local h=2+(px*5)%7
-    line(px,y,px-1,y-h,12)
-    pset(px-2,y-h,14)
-    if px%3==0 then pset(px+1,y-h+2,11) end
+    if px+1>=camera_x-2 and px-2<camera_x+SW+2 then
+      local h=2+(px*5)%7
+      line(px,y,px-1,y-h,12)
+      pset(px-2,y-h,14)
+      if px%3==0 then pset(px+1,y-h+2,11) end
+    end
   end
 end
 
@@ -3173,6 +3197,15 @@ local function draw_zone_architecture()
   restore_legacy_palette()
 end
 
+function env_mute_backdrop()
+  -- Reserve the full-value palette for collision terrain, actors, pickups, and
+  -- effects. A stable half-tone veil compresses the architectural playfield
+  -- without touching the moon/sky or the map drawn immediately afterward.
+  fillp(0xaaaa)
+  rectfill(camera_x-2,300,camera_x+SW+1,WORLD_H-17,49)
+  fillp()
+end
+
 local function draw_prop(p)
   local kind,x,y,w=p[1],p[2],p[3],p[4]
   if kind=="pipe" then
@@ -3301,17 +3334,35 @@ local function draw_terrain_detail()
       local tile=mget(cx,cy)
       local x,y=cx*8,cy*8
       if solid(tile) then
-        -- The atlas carries the material drawing. Runtime accents are sparse,
-        -- directional responses to moon, lamps, damage, and slime motion.
+        -- Collision terrain owns a consistent value hierarchy over the atlas:
+        -- a bright unbroken contact lip, a quieter material-colored inner edge,
+        -- and dark undercut. Background architecture never receives this trio.
         if not solid(mget(cx,cy-1)) then
           local tile_zone=mid(0,flr((x+4)/128),6)
-          local rim=(tile_zone<=1 or tile_zone==6) and 2 or 1
-          if cx%4==0 then line(x+1,y,x+4,y,rim)
-          elseif cx%4==1 then pset(x+1,y,rim) end
+          local inner=54
+          if masonry_material(tile) then inner=14
+          elseif breakable(tile) then inner=30 end
+          local previous_surface=solid(mget(cx-1,cy)) and not solid(mget(cx-1,cy-1))
+          if cx==x0 or not previous_surface then
+            local run_end=cx
+            while run_end<x1 do
+              local next_tile=mget(run_end+1,cy)
+              local next_inner=54
+              if masonry_material(next_tile) then next_inner=14
+              elseif breakable(next_tile) then next_inner=30 end
+              if not solid(next_tile) or solid(mget(run_end+1,cy-1)) or next_inner~=inner then break end
+              run_end=run_end+1
+            end
+            local right=run_end*8+7
+            line(x,y,right,y,59)
+            line(x+1,y+1,right-1,y+1,inner)
+            line(x+2,y+2,right-2,y+2,49)
+            if not solid(mget(cx-1,cy)) then line(x,y+1,x,y+4,55) end
+            if not solid(mget(run_end+1,cy)) then line(right,y+1,right,y+4,55) end
+          end
           if masonry_material(tile) and (cx*3+cy)%7==0 then
             local stain=tile_zone==5 and 10 or tile_zone==3 and 42 or 26
-            line(x+4,y,x+4,y+2,stain)
-            pset(x+5,y+2,stain)
+            pset(x+4,y+1,stain)
           end
         end
         if steel_material(tile) and (cx*7+cy)%11==0 then
@@ -3325,6 +3376,8 @@ local function draw_terrain_detail()
           pset(x+3,y+3,31)
         end
       elseif hazardous(tile) then
+        line(x,y,x+7,y,10)
+        line(x+1,y+1,x+6,y+1,7)
         local bob=(frame_now+cx*7)%18
         if bob<5 then circ(x+2+(cx%3)*2,y+1,1,bob<2 and 31 or 10) end
       end
@@ -3338,6 +3391,7 @@ local function draw_world()
   clip(0,HUD_H,SW,SH-HUD_H)
   camera(camera_x-sx,camera_y-HUD_H-sy)
   draw_zone_architecture()
+  env_mute_backdrop()
   begin_authored_sprite_scope(false)
   map()
   restore_legacy_palette()

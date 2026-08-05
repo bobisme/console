@@ -211,6 +211,136 @@ fn environment_scrolls_across_every_former_camera_boundary_without_a_scene_swap(
 }
 
 #[test]
+fn environment_draw_trace_stays_complete_across_the_entire_level() {
+    let cart = cart_text();
+    let mut session = Session::new();
+    session.set_draw_tracing(true);
+    session.load_cart(&cart, 8_675_309).unwrap();
+    start_game(&mut session);
+
+    for camera_x in (0..=768).step_by(8) {
+        session.clear_draw_events();
+        request(
+            &mut session,
+            camera_x as u32 + 1,
+            "eval",
+            json!({"code": format!("dev_stage_environment_at({camera_x})")}),
+        );
+        session.step(1, 0).unwrap();
+        let trace = session.draw_events(None, None).unwrap();
+        assert_eq!(
+            trace.dropped,
+            0,
+            "draw trace overflowed at camera x={camera_x} after retaining {} events",
+            trace.events.len()
+        );
+    }
+}
+
+#[test]
+fn environment_culls_cover_the_maximum_screen_shake_envelope() {
+    let cart = cart_text();
+    let mut session = Session::new();
+    session.load_cart(&cart, 8_675_309).unwrap();
+    start_game(&mut session);
+
+    // draw_world may shift the render camera two pixels to either side. These
+    // synthetic facades live wholly outside the nominal viewport but touch the
+    // last visible column of each maximally shaken viewport.
+    session
+        .eval(
+            "dev_stage_environment_at(100); mosaic(); rshift(); cls(0); clip(); camera(102,0); \
+             pal(); palt(); palt(0,true); env_facade(293,100,20,200,10,2)",
+        )
+        .unwrap();
+    let framebuffer = session.console().unwrap().framebuffer();
+    let right_edge_pixels = (0..console_core::SCREEN_H)
+        .filter(|&y| framebuffer[y * console_core::SCREEN_W + 191] != 0)
+        .count();
+    assert!(
+        right_edge_pixels >= 100,
+        "right shaken edge retained only {right_edge_pixels} pixels"
+    );
+
+    session
+        .eval(
+            "dev_stage_environment_at(100); mosaic(); rshift(); cls(0); clip(); camera(98,0); \
+             pal(); palt(); palt(0,true); env_facade(79,100,20,200,10,2)",
+        )
+        .unwrap();
+    let framebuffer = session.console().unwrap().framebuffer();
+    let left_edge_pixels = (0..console_core::SCREEN_H)
+        .flat_map(|y| [y * console_core::SCREEN_W, y * console_core::SCREEN_W + 1])
+        .filter(|&index| framebuffer[index] != 0)
+        .count();
+    assert!(
+        left_edge_pixels >= 200,
+        "left shaken edge retained only {left_edge_pixels} pixels"
+    );
+}
+
+#[test]
+fn gameplay_foreground_keeps_a_distinct_collision_value_hierarchy() {
+    let cart = cart_text();
+    let mut session = Session::new();
+    session.set_draw_tracing(true);
+    session.load_cart(&cart, 8_675_309).unwrap();
+    start_game(&mut session);
+    session.clear_draw_events();
+    request(
+        &mut session,
+        1,
+        "eval",
+        json!({"code": "dev_stage_environment_at(0)"}),
+    );
+    session.step(1, 0).unwrap();
+
+    let trace = session.draw_events(None, None).unwrap();
+    assert_eq!(trace.dropped, 0, "readability trace must be complete");
+    let backdrop = trace
+        .events
+        .iter()
+        .find(|record| {
+            record.event.op == "rectfill"
+                && record.event.details.color == Some(49)
+                && record.event.fill_pattern == 0xaaaa
+                && record.event.world_bounds.x == -2
+                && record.event.world_bounds.y == 300
+                && record.event.world_bounds.w == 196
+        })
+        .expect("the half-tone backdrop mute must be drawn");
+    let map = trace
+        .events
+        .iter()
+        .find(|record| record.event.op == "map")
+        .expect("the collision map must be drawn");
+    assert_eq!(backdrop.frame, map.frame);
+    assert!(
+        backdrop.index < map.index,
+        "the full-value collision map must be drawn after the muted architecture"
+    );
+
+    let framebuffer = session.console().unwrap().framebuffer();
+    let screen_width = console_core::SCREEN_W;
+    let palette_count = |y: usize, x: usize, width: usize, color: u8| {
+        framebuffer[y * screen_width + x..y * screen_width + x + width]
+            .iter()
+            .filter(|&&pixel| pixel == color)
+            .count()
+    };
+
+    // A high optional-route platform must read as three deliberate bands:
+    // contact highlight, material edge, and shadow undercut.
+    assert_eq!(palette_count(128, 104, 48, 59), 48);
+    assert!(palette_count(129, 104, 48, 54) >= 40);
+    assert!(palette_count(130, 104, 48, 49) >= 24);
+
+    // The long starting roof may contain props, but its playable edge must
+    // still dominate the row rather than dissolve into background detail.
+    assert!(palette_count(296, 0, screen_width, 59) >= 150);
+}
+
+#[test]
 fn environment_focal_props_enter_and_exit_on_their_true_pixel_extents() {
     let cart = cart_text();
     let mut session = Session::new();
