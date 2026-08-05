@@ -1,0 +1,21 @@
+manifest_version = 1
+
+[cart]
+title = "Ribbit Recoil Scene Compiler Subset"
+author = "console agents"
+
+[lua]
+entry = "lua/main.lua"
+root = "."
+
+[build]
+output = "build/ribbit-recoil-scene.cart"
+
+[[sprites]]
+name = "compiled_environment"
+source = "generated/atlas.png"
+tile = [0, 12]
+mapping = "exact"
+
+[sections]
+map = "generated/map.txt"

@@ -148,7 +148,7 @@ impl RgbaImage {
     }
 }
 
-fn blank(width: u32, height: u32) -> Result<RgbaImage, String> {
+pub(crate) fn blank(width: u32, height: u32) -> Result<RgbaImage, String> {
     let [r, g, b] = PALETTE[48];
     let mut rgba = vec![0; rgba_len(width, height)?];
     for pixel in rgba.chunks_exact_mut(4) {
@@ -157,7 +157,7 @@ fn blank(width: u32, height: u32) -> Result<RgbaImage, String> {
     RgbaImage::new(width, height, rgba)
 }
 
-fn blit(dst: &mut RgbaImage, src: &RgbaImage, x: u32, y: u32) -> Result<(), String> {
+pub(crate) fn blit(dst: &mut RgbaImage, src: &RgbaImage, x: u32, y: u32) -> Result<(), String> {
     let right = x.checked_add(src.width).ok_or("blit x overflow")?;
     let bottom = y.checked_add(src.height).ok_or("blit y overflow")?;
     if right > dst.width || bottom > dst.height {
@@ -306,11 +306,11 @@ fn glyph(ch: char) -> [u8; 5] {
     }
 }
 
-fn text_width(text: &str) -> u32 {
+pub(crate) fn text_width(text: &str) -> u32 {
     text.chars().count() as u32 * 4 * FONT_SCALE
 }
 
-fn draw_text(image: &mut RgbaImage, x: u32, y: u32, text: &str) {
+pub(crate) fn draw_text(image: &mut RgbaImage, x: u32, y: u32, text: &str) {
     let [r, g, b] = PALETTE[63];
     for (char_index, ch) in text.chars().enumerate() {
         let rows = glyph(ch);

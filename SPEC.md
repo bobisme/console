@@ -507,6 +507,142 @@ See [docs/project-workflow.md](docs/project-workflow.md) for an operational
 authoring and migration guide; this section remains the normative schema and
 compiler contract.
 
+### Layered scene compiler (`console scene compile`)
+
+`console scene compile <scene.toml> --out <directory> [--check] [--format
+text|pretty|json]` compiles version-1 visual layers and semantic data into
+ordinary project inputs. It writes `atlas.png`, `map.txt`,
+`tile_classes.lua`, `decorative_layers.lua`, `objects.lua`,
+`provenance.json`, and six labeled `review/` PNGs. A project consumes those
+files through normal `[[sprites]]`, `[sections].map`, and literal Lua
+`require` declarations; the runtime has no scene-compiler dependency.
+
+The strict TOML root is:
+
+```toml
+scene_version = 1
+name = "factory_room"
+seed = 17
+
+[atlas]
+origin = [8, 8]                 # reserved native sheet cells
+size = [4, 2]
+mapping = "exact"              # exact, nearest, or quantize
+alpha_threshold = 128
+# max_colors = 8               # required only for quantize
+
+[[classes]]
+name = "solid"
+solid = true
+hazard = false
+tags = ["grapple"]
+
+[[layers]]
+name = "materials"
+source = "art/materials.png"
+semantics = "data/materials.semantic"
+role = "library"               # far, mid, play, foreground, or library
+offset = [0, 0]
+
+[[tiles]]
+name = "steel_cap"
+layer = "materials"
+rect = [0, 0, 8, 8]            # aligned pixel-space source rectangle
+class = "solid"
+edges = ["empty", "steel", "solid", "steel"] # N,E,S,W; `*` is wildcard
+
+[[metatiles]]
+name = "girder_post"
+rows = ["steel_cap", "steel_fill"]
+
+[[autotiles]]
+name = "steel_auto"
+class = "solid"
+lookup = {"2"="steel_left", "8"="steel_right", "10"="steel_mid"}
+
+[[variants]]
+name = "steel_wear"
+class = "solid"
+choices = [{tile="steel_clean",weight=3}, {tile="steel_rust",weight=1}]
+
+[play]
+grid = "data/play.grid"
+origin = [0, 0]
+
+[[stamps]]
+metatile = "girder_post"
+at = [12, 4]
+
+[[overrides]]
+at = [14, 4]
+tile = "steel_rust"
+
+[[objects]]
+name = "frog_spawn"
+kind = "spawn"
+at = [96, 48]                  # world-pixel anchor position
+anchor = [4, 7]
+size = [8, 8]
+```
+
+Layer PNG dimensions must be nonzero multiples of 8 and exactly match their
+semantic grid. Grid rows use comma or whitespace-separated tokens. A semantic
+`.` requires a fully transparent cell; every other token names a declared
+class. `play.grid` tokens are a named tile, `.`, `auto:<family>`, or
+`variant:<family>`. Four-neighbor autotile masks use N=1, E=2, S=4, W=8 and
+every mask actually encountered must have a lookup. Weighted selection hashes
+the explicit scene seed, coordinate, and family name; it does not depend on
+manifest or filesystem iteration order. Metatile stamps expand into native
+8x8 cells before per-cell overrides.
+
+Cells deduplicate only when both their exact 64 palette indices and semantic
+class match. Identical pixels with different collision meaning always receive
+different tile IDs and are reported as a semantic split. Packing uses only the
+declared contiguous atlas reservation, never tile 0, and fails closed with
+required/available capacity plus the largest exact reuse groups. Source,
+semantic, layout, tile, atlas, map, and anchored-object bounds are all checked
+before the first output is published. Object rectangles may not overlap.
+
+`exact` performs no resizing, filtering, dithering, or palette conversion and
+reports every used Apollo64 index. `nearest` and `quantize` are explicit lossy
+policies; they report per-layer source colors, partial alpha, palette indices,
+mean squared RGB error, and add `review/lossy-heatmap.png`. Quantize requires
+an explicit 1-63 `max_colors` budget. Layers are quantized deterministically
+and the union of their output Apollo64 indices must fit that atlas-wide budget;
+otherwise compilation fails instead of silently exceeding it. Reports and
+provenance record both `max_colors` and `alpha_threshold`.
+
+Retained scene work is capped at 32,768 source cells in aggregate, equivalent
+to four complete 128×64 native-map layers. Non-library layers are checked
+against map bounds immediately after their PNG dimensions are known. Exact mode
+does not allocate mapped-color or heatmap buffers that it cannot emit.
+
+Lint/provenance reports blank allocations, exact reuse, unused named tiles,
+semantic pixel splits, unsupported autotile masks, illegal used edge pairs,
+orphan corner/endcap names, variant repetition runs, atlas/map overflow, and
+overlapping object bounds. Review outputs are labeled atlas ownership, native
+live shape, 3x3 repetition, packed-order used-adjacency matrix, collision
+overlay, and unfiltered native map composition. These are diagnostics, not a
+numeric claim of artistic quality.
+
+All input paths are relative to the canonical manifest directory and may not
+escape through `..` or symlinks. Compilation builds and validates every output
+in memory before publication; each artifact is replaced through a same-folder
+temporary file and atomic rename. `--check` performs no writes and succeeds
+only when every expected artifact is byte-identical and no obsolete managed
+optional evidence remains. Recompiling exact output safely removes a previous
+`review/lossy-heatmap.png`. CLI misuse exits 2; manifest, compile, check, and
+I/O failures exit 1.
+
+The checked-in `carts/ribbit-recoil-scene` example compiles five real RIBBIT
+RECOIL environment cells from an ordinary exact PNG, exercises autotiles,
+weighted variants, a metatile, an override, collision classes, and object
+anchors, then builds/runs/playtests through the normal project path. Its
+regression compares named tile pixels, semantic classes, and production object
+anchors to the production cart. This vertical slice proves the replacement
+boundary; it does not claim the full cart's topology code or legacy atlas
+builder is retired.
+
 `__map__` follows the sprite grid's row conventions but keeps its own hex
 alphabet: `#` starts a comment line, blank lines and comments do not consume a row, and rows shorter
 than 128 cells pad with tile 0 (missing rows are all tile 0). Unlike

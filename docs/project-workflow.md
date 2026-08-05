@@ -16,6 +16,7 @@ manifest and compiler contract remains in
 - [Write the manifest](#write-the-manifest)
 - [Split Lua into static modules](#split-lua-into-static-modules)
 - [Import PNG sprite assets](#import-png-sprite-assets)
+- [Compile layered scenes](#compile-layered-scenes)
 - [Keep native sections separate](#keep-native-sections-separate)
 - [Build and iterate](#build-and-iterate)
 - [Migrate an existing cart](#migrate-an-existing-cart)
@@ -35,7 +36,10 @@ my-game/
 │   └── ui/hud.lua
 ├── art/
 │   ├── player.png
-│   └── terrain.png
+│   ├── terrain.png
+│   └── terrain.semantic
+├── scene.toml             # optional source for generated/
+├── generated/             # atlas, map, Lua, review evidence
 ├── data/
 │   ├── map.txt
 │   └── gfx-meta.txt
@@ -156,6 +160,34 @@ anim player.walk frames=2:4,3:4 fps=8 loop
 The compiler does not resize or dither PNGs. Prepare dimensions in an image
 editor, inspect the JSON build report, then render or play the compiled result.
 
+## Compile layered scenes
+
+Use `console scene compile` when an environment owns multiple tile-aligned PNG
+layers, semantic collision classes, repeated structures, or seeded layout
+families. The version-1 `scene.toml` is separate from `console.toml`: it turns
+authoring data into normal project inputs and does not add a runtime subsystem.
+
+```bash
+console scene compile my-game/scene.toml --out my-game/generated --format json
+console scene compile my-game/scene.toml --out my-game/generated --check
+```
+
+Point `console.toml` at `generated/atlas.png` with one `[[sprites]]` placement,
+at `generated/map.txt` with `[sections].map`, and load the generated Lua modules
+with literal `require` calls. The output also includes `provenance.json` and
+labeled review images for the packed atlas, live shape, 3×3 repetition, used
+adjacency, collision, and native map. Lossy nearest/quantized mappings add a
+heatmap; exact mapping is the default.
+
+The scene manifest declares atlas capacity and placement, semantic classes,
+named layers and tiles, edge metadata, metatiles, four-neighbor autotile tables,
+weighted deterministic variants, stamps, overrides, and anchored objects. All
+paths remain confined to the manifest directory, source PNGs stay at native
+resolution, and validation completes before any output is published. See the
+[normative schema](../SPEC.md#layered-scene-compiler-console-scene-compile) and
+the executable [RIBBIT RECOIL environment
+subset](../carts/ribbit-recoil-scene).
+
 ## Keep native sections separate
 
 The section body formats are unchanged from a cart:
@@ -235,8 +267,10 @@ useful edit back to its owning source file.
 
 At minimum, automation should:
 
-1. compile the project twice and compare bytes or content IDs;
-2. run `console build --check` when generated carts are committed;
+1. compile scene inputs twice and compare artifacts, when a scene manifest is
+   present;
+2. run `console scene compile --check` and `console build --check` when their
+   generated outputs are committed;
 3. parse and initialize the compiled cart;
 4. execute a versioned playtest with exact state assertions;
 5. verify representative PNG/audio artifacts exist and are deterministic;

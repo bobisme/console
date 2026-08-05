@@ -90,6 +90,10 @@ inspection methods never rewrite the cart file.
   with `aspr` instead of duplicating frame tables in Lua.
 - Keep terrain in the 8×8 map vocabulary and define larger metatiles as an
   authoring/gameplay convention. The runtime has no hidden metatile layer.
+- For layered environments, use `console scene compile` to turn semantic PNG
+  layers, named tile families, metatiles, autotiles, variants, and objects into
+  an ordinary atlas/map/Lua project input set. Review its labeled evidence;
+  gameplay still consumes only the native runtime APIs.
 - Define reusable timbres in `__instruments__`; let SFX rows name instruments
   and let `__music__` arrange SFX IDs into songs.
 - Put stable developer hooks in the cart when they make deterministic testing
@@ -105,6 +109,8 @@ inspection methods never rewrite the cart file.
   `console build` deterministically generates the sheet and named metadata.
   Keep exact mapping as the default; opt into nearest/quantize deliberately.
 - Use `map dump`/`poke` and `map edit` for cell grids and regions.
+- Use `scene compile ... --check` to gate deterministic generated environment
+  assets; keep exact Apollo64 mapping unless lossy conversion is intentional.
 - Use `music edit` and `music import-abc` instead of manually shifting tracker
   rows or respelling every note.
 - Run write commands with `--dry-run` first when changing a nontrivial region.

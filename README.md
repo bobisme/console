@@ -82,9 +82,12 @@ and compile the deterministic distribution cart:
 ```text
 my-game/
 ├── console.toml
+├── scene.toml             # optional layered scene source
 ├── lua/main.lua
 ├── art/player.png
 ├── art/enemies.png
+├── art/environment.png
+├── art/environment.semantic
 ├── map.txt
 ├── gfx-meta.txt
 ├── instruments.txt
@@ -96,6 +99,21 @@ my-game/
 console build my-game
 console build my-game --check
 ```
+
+For larger environments, compile tile-aligned Apollo64 layers, semantic grids,
+metatiles, seeded variants, autotiles, and anchored objects into those ordinary
+project inputs before building:
+
+```bash
+console scene compile my-game/scene.toml --out my-game/generated
+console scene compile my-game/scene.toml --out my-game/generated --check
+console build my-game
+```
+
+The compiler emits a packed atlas, native map, collision/decorative/object Lua,
+provenance, and labeled visual review sheets. It is an authoring tool only: the
+resulting game uses the existing sprite, map, and Lua runtime. A complete
+checked-in example is [carts/ribbit-recoil-scene](carts/ribbit-recoil-scene).
 
 The default output is `my-game/build/game.cart`; `[build].output` or `-o`
 selects another path. See the project-manifest contract in [SPEC.md](SPEC.md).

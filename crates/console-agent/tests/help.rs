@@ -24,6 +24,7 @@ fn top_level_help_is_complete_and_successful() {
         ));
         assert!(text.contains("map <render|dump|lint|edit|poke>"));
         assert!(text.contains("music <score|lint|piano-roll|render|edit|import-abc>"));
+        assert!(text.contains("scene <compile>"));
         assert!(text.contains("playtest <cart|project> --scenario <scenario.json>"));
         assert!(text.contains("rpc"));
         assert!(text.contains("build <project|console.toml>"));
@@ -50,6 +51,7 @@ fn command_family_and_leaf_help_use_stdout_and_exit_zero() {
         (&["map", "--help"][..], "console map render"),
         (&["music", "--help"][..], "console music import-abc"),
         (&["music", "edit", "--help"][..], "console music edit"),
+        (&["scene", "--help"][..], "console scene compile"),
     ] {
         let output = run(args);
         assert!(output.status.success(), "{args:?} should exit successfully");

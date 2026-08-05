@@ -29,6 +29,7 @@ pub mod palette;
 pub mod playtest;
 pub mod project;
 pub mod rpc;
+pub mod scene;
 pub mod serve;
 pub mod session;
 pub mod sprite;
@@ -47,7 +48,7 @@ pub const RPC_USAGE: &str = "usage:\n  console rpc";
 /// inventory so a newly-added leaf cannot silently disappear from discovery.
 pub fn usage() -> String {
     format!(
-        "{RUN_USAGE}\n  console playtest <cart|project> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console rpc\n  {}\n  console pack <cart|project> -o <out.html> [--engine FILE] [--template FILE]\n  console serve <cart|project> [--host HOST] [--port PORT] [--engine FILE] [--template FILE]\n  console palette <{}> ...\n  console sprite <{}> ...\n  console map <{}> ...\n  console music <{}> ...",
+        "{RUN_USAGE}\n  console playtest <cart|project> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console rpc\n  {}\n  console pack <cart|project> -o <out.html> [--engine FILE] [--template FILE]\n  console serve <cart|project> [--host HOST] [--port PORT] [--engine FILE] [--template FILE]\n  console palette <{}> ...\n  console sprite <{}> ...\n  console map <{}> ...\n  console music <{}> ...\n  console scene <{}> ...",
         project::BUILD_USAGE
             .lines()
             .next()
@@ -55,7 +56,8 @@ pub fn usage() -> String {
         palette::COMMANDS.join("|"),
         sprite::COMMANDS.join("|"),
         map::COMMANDS.join("|"),
-        music::COMMANDS.join("|")
+        music::COMMANDS.join("|"),
+        scene::COMMANDS.join("|")
     )
 }
 
@@ -90,6 +92,7 @@ pub fn cli_main(args: &[String]) -> i32 {
         Some("sprite") => sprite::cli_sprite(&args[2..]),
         Some("map") => map::cli_map(&args[2..]),
         Some("music") => music::cli_music(&args[2..]),
+        Some("scene") => scene::cli_scene(&args[2..]),
         Some("pack") => pack::cli_pack(&args[2..]),
         Some("serve") => serve::cli_serve(&args[2..]),
         Some("rpc") if help_requested(&args[2..]) => {

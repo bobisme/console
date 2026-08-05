@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "stages": [
+    {"op":"input", "frames":1},
+    {
+      "op":"assert",
+      "code":"return dev_scene_status()",
+      "equals":{"hazard":true,"objects":2,"solid":true}
+    },
+    {"op":"capture", "screenshot":"scene.png", "map":{"source":"live","png":"map.png","ids":true}}
+  ]
+}

@@ -9,6 +9,7 @@ scrolling rooms.
 - [Understand the native map](#understand-the-native-map)
 - [Plan tile families](#plan-tile-families)
 - [Build seamless terrain](#build-seamless-terrain)
+- [Compile a layered scene](#compile-a-layered-scene)
 - [Represent metatiles](#represent-metatiles)
 - [Collision and properties](#collision-and-properties)
 - [Author and transform maps](#author-and-transform-maps)
@@ -25,8 +26,9 @@ The map is exactly 128×64 cells of 8×8 pixels. Each cell stores one sprite ID
 24×40 cells; the full map covers 1024×512 world pixels.
 
 There is no native collision flag, tile property table, metatile ID, layer, or
-autotiler. Build those as explicit cart conventions. Keep them simple enough
-that tools can still render the ground-truth 8×8 map.
+autotiler. Build those as explicit cart conventions. `console scene compile`
+can compile the conventions into a native atlas, map, and Lua tables, but the
+runtime still sees only the ground-truth 8×8 map and ordinary draw calls.
 
 `map()` shares the sprite draw path, so camera, clip, `pal`, `palt`, and
 `preview_palette` behavior are predictable. `mget`/`mset` access the live map.
@@ -80,6 +82,40 @@ seams by rendering at least a 3×3 repetition, not one tile in isolation.
 
 Build a neutral base family first. Add variant tiles only after the base can
 fill a room without visible seams.
+
+## Compile a layered scene
+
+For a substantial environment, keep source composition and gameplay semantics
+explicit instead of manually coordinating atlas IDs and hex rows:
+
+```bash
+console scene compile game/scene.toml --out game/generated --format json
+console scene compile game/scene.toml --out game/generated --check
+```
+
+The scene manifest associates each tile-aligned PNG layer with a same-size
+semantic grid, then declares atlas capacity, classes, named tile aliases,
+metatiles, four-neighbor autotiles, seeded weighted variants, stamps, overrides,
+and anchored objects. The result is a packed `atlas.png`, native `map.txt`, Lua
+tables for collision/decorative layers/objects, provenance, and these mandatory
+review views:
+
+- atlas ownership and semantic class;
+- live-shape crops and 3×3 repetition;
+- only the adjacencies actually used by the compiled layout;
+- collision overlay and unfiltered native map composition.
+
+Exact Apollo64 mapping is the safe default. `nearest` and `quantize` are
+deliberate lossy choices and add an error heatmap. The compiler never resizes or
+filters source pixels. A quantize color budget covers the union of all layer
+outputs, and scene sources retain at most four full native-map layers of cells
+in aggregate. Deduplication includes semantic class, so the same pixels painted
+as hazard and solid keep distinct IDs. Atlas overflow, missing autotile
+masks, map bounds, path escapes, and overlapping object bounds are hard errors.
+
+Generated files are ordinary `console.toml` inputs and require no scene runtime.
+Use [carts/ribbit-recoil-scene](../../../carts/ribbit-recoil-scene) as a
+minimal executable pattern, and the command reference for the exact CLI.
 
 ## Represent metatiles
 
@@ -248,9 +284,11 @@ local function neighbor_mask(cx, cy)
 end
 ```
 
-Define a 16-entry numeric lookup table. Run autotiling during generation or as
-an authoring step, not every draw, unless terrain changes continuously. Inner
-corners may require diagonal tests or a second overlay layer drawn manually.
+Define a lookup for every mask that the authored layout can use. Run autotiling
+during generation—`console scene compile` does this from `auto:<family>` play
+grid tokens—or as another authoring step, not every draw, unless terrain changes
+continuously. Inner corners may require diagonal tests or a second overlay layer
+drawn manually.
 
 ## Animation and dynamic terrain
 

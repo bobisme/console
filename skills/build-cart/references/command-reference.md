@@ -11,6 +11,7 @@ may be newer than this skill.
 - [`playtest`](#playtest)
 - [`rpc`](#rpc)
 - [`build`](#build)
+- [`scene compile`](#scene-compile)
 - [`pack`](#pack)
 - [`serve`](#serve)
 - [`palette` commands](#palette-commands)
@@ -32,6 +33,7 @@ console run ...
 console playtest ...
 console rpc
 console build <project|console.toml> ...
+console scene compile <scene.toml> --out <directory> ...
 console pack <cart|project> -o <out.html> ...
 console serve <cart|project> ...
 console palette <show|quantize> ...
@@ -78,6 +80,36 @@ with module/source names plus original and generated line ranges; text emits
 one `lua_source=module|path|start-end` line per source. JSON `sprite_assets`
 entries record source, placement, dimensions, anchor, conversion policy, color
 budget and final palette indices; text emits one `sprite_asset=` line each.
+
+## `scene compile`
+
+```text
+console scene compile <scene.toml> --out <directory>
+  [--check]
+  [--format text|pretty|json]
+```
+
+Compile a strict version-1 layered-scene manifest into `atlas.png`, `map.txt`,
+`tile_classes.lua`, `decorative_layers.lua`, `objects.lua`,
+`provenance.json`, and labeled `review/*.png` evidence. The declared atlas
+rectangle is the only sprite-sheet region allocated. Tiles with identical
+pixels and semantic class share an ID; different classes never deduplicate.
+
+Inputs are relative, confined PNG/semantic-grid/play-grid paths. PNG dimensions
+must be tile aligned and are never resized. Exact Apollo64 mapping is the
+default; nearest and quantize are explicit and produce error evidence. Quantize
+requires an atlas-wide color budget; the union of every layer output must fit
+it, and reports preserve that budget plus the alpha threshold. The
+manifest can declare tile edges, metatiles, N/E/S/W autotile mask lookups,
+seeded weighted variants, stamps, overrides, and nonoverlapping anchored
+objects. Invalid masks, capacity, bounds, or paths fail before publication.
+
+`--out` is mandatory. A normal compile atomically replaces each finished
+artifact after full validation. `--check` never writes and succeeds only when
+every expected artifact is byte-identical and no obsolete managed lossy heatmap
+remains. Scene layers retain at most 32,768 cells in aggregate. See the [maps
+guide](maps-and-metatiles.md#compile-a-layered-scene) and the normative schema
+in the repository `SPEC.md`.
 
 ## `run`
 
