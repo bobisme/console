@@ -116,3 +116,22 @@ console music play carts/ribbit-recoil-jungle-assault.abc --volume 0.25
 The ABC remains the readable composition master and keeps deterministic
 voice-order waveforms. The generated cart is a standalone listening mix; it
 does not replace RIBBIT RECOIL's current gameplay loop implicitly.
+
+## Build integration
+
+The buildable game project at `carts/ribbit-recoil-project/` registers the
+lossless `audio/game.cmusic` bundle through `[audio].bundle`. It keeps the
+effects-rich song at music song 0, remaps the game's old combat cue calls to
+seven dedicated SFX IDs (56–62), and preserves the sprite, graphics metadata,
+map, and Lua sources extracted from the real game cart.
+
+```bash
+console music play carts/ribbit-recoil-project/audio/game.cmusic --song 0
+console music play carts/ribbit-recoil-project --song 0 --dry-run
+console build carts/ribbit-recoil-project
+console build carts/ribbit-recoil-project --check
+```
+
+The `--check` command is a second pass after the normal build creates the
+configured `build/ribbit-recoil.cart` output; that generated file is ignored
+because the project sources and `.cmusic` bundle are authoritative.
