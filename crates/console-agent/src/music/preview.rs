@@ -414,6 +414,7 @@ struct PlayArgs {
     input: PathBuf,
     seconds: Option<f64>,
     volume: f32,
+    repeat: bool,
     dry_run: bool,
 }
 
@@ -422,11 +423,13 @@ impl PlayArgs {
         let mut input = None;
         let mut seconds = None;
         let mut volume = DEFAULT_PLAYBACK_VOLUME;
+        let mut repeat = false;
         let mut dry_run = false;
         let mut index = 0usize;
         while index < args.len() {
             match args[index].as_str() {
                 "--dry-run" => dry_run = true,
+                "--repeat" => repeat = true,
                 "--seconds" => {
                     index += 1;
                     let value = args.get(index).ok_or("--seconds requires a value")?;
@@ -462,13 +465,14 @@ impl PlayArgs {
             input: input.ok_or("missing ABC or MIDI file")?,
             seconds,
             volume,
+            repeat,
             dry_run,
         })
     }
 }
 
 const PLAY_USAGE: &str = "usage: console music play <file.abc|file.mid|file.midi> \
-    [--seconds N] [--volume 0..1] [--dry-run]";
+    [--seconds N] [--volume 0..1] [--repeat] [--dry-run]";
 
 pub fn cli_play(args: &[String]) -> i32 {
     if crate::help_requested(args) {
@@ -500,6 +504,12 @@ fn run_play(args: PlayArgs) -> Result<(), String> {
         .len()
         .saturating_sub(stats.release_frames as usize * SAMPLES_PER_FRAME);
     let rendered_seconds = program_samples as f64 / f64::from(SAMPLE_RATE);
+    let mode = match (args.dry_run, args.repeat) {
+        (true, true) => " (dry run, repeat)",
+        (true, false) => " (dry run)",
+        (false, true) => " (repeat; Ctrl-C to stop)",
+        (false, false) => "",
+    };
     eprintln!(
         "{}: {:.2}s + {} release frame(s), {} note(s), {} channel steal(s), volume {:.2}{}",
         score.title,
@@ -508,14 +518,14 @@ fn run_play(args: PlayArgs) -> Result<(), String> {
         stats.notes_started,
         stats.channel_steals,
         args.volume,
-        if args.dry_run { " (dry run)" } else { "" }
+        mode
     );
     for warning in &score.warnings {
         eprintln!("warning: {warning}");
     }
     if !args.dry_run {
         apply_playback_volume(&mut samples, args.volume);
-        play_samples(Arc::from(samples))?;
+        play_samples(Arc::from(samples), args.repeat)?;
     }
     Ok(())
 }
@@ -526,7 +536,7 @@ fn apply_playback_volume(samples: &mut [f32], volume: f32) {
     }
 }
 
-fn play_samples(samples: Arc<[f32]>) -> Result<(), String> {
+fn play_samples(samples: Arc<[f32]>, repeat: bool) -> Result<(), String> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -537,23 +547,64 @@ fn play_samples(samples: Arc<[f32]>) -> Result<(), String> {
     let format = supported.sample_format();
     let config: StreamConfig = supported.into();
     match format {
-        SampleFormat::I8 => play_typed::<i8>(&device, config, samples),
-        SampleFormat::I16 => play_typed::<i16>(&device, config, samples),
-        SampleFormat::I24 => play_typed::<I24>(&device, config, samples),
-        SampleFormat::I32 => play_typed::<i32>(&device, config, samples),
-        SampleFormat::I64 => play_typed::<i64>(&device, config, samples),
-        SampleFormat::U8 => play_typed::<u8>(&device, config, samples),
-        SampleFormat::U16 => play_typed::<u16>(&device, config, samples),
-        SampleFormat::U24 => play_typed::<U24>(&device, config, samples),
-        SampleFormat::U32 => play_typed::<u32>(&device, config, samples),
-        SampleFormat::U64 => play_typed::<u64>(&device, config, samples),
-        SampleFormat::F32 => play_typed::<f32>(&device, config, samples),
-        SampleFormat::F64 => play_typed::<f64>(&device, config, samples),
+        SampleFormat::I8 => play_typed::<i8>(&device, config, samples, repeat),
+        SampleFormat::I16 => play_typed::<i16>(&device, config, samples, repeat),
+        SampleFormat::I24 => play_typed::<I24>(&device, config, samples, repeat),
+        SampleFormat::I32 => play_typed::<i32>(&device, config, samples, repeat),
+        SampleFormat::I64 => play_typed::<i64>(&device, config, samples, repeat),
+        SampleFormat::U8 => play_typed::<u8>(&device, config, samples, repeat),
+        SampleFormat::U16 => play_typed::<u16>(&device, config, samples, repeat),
+        SampleFormat::U24 => play_typed::<U24>(&device, config, samples, repeat),
+        SampleFormat::U32 => play_typed::<u32>(&device, config, samples, repeat),
+        SampleFormat::U64 => play_typed::<u64>(&device, config, samples, repeat),
+        SampleFormat::F32 => play_typed::<f32>(&device, config, samples, repeat),
+        SampleFormat::F64 => play_typed::<f64>(&device, config, samples, repeat),
         other => Err(format!("unsupported output sample format {other}")),
     }
 }
 
-fn play_typed<T>(device: &Device, config: StreamConfig, samples: Arc<[f32]>) -> Result<(), String>
+#[derive(Debug)]
+struct SampleCursor {
+    position: f64,
+    step: f64,
+    repeat: bool,
+}
+
+impl SampleCursor {
+    fn new(step: f64, repeat: bool) -> SampleCursor {
+        SampleCursor {
+            position: 0.0,
+            step,
+            repeat,
+        }
+    }
+
+    fn next(&mut self, samples: &[f32]) -> Option<f32> {
+        if samples.is_empty() {
+            return None;
+        }
+        let len = samples.len() as f64;
+        if self.repeat && self.position >= len {
+            self.position %= len;
+        }
+        let index = self.position.floor() as usize;
+        let a = *samples.get(index)?;
+        let b = samples
+            .get(index + 1)
+            .copied()
+            .unwrap_or_else(|| if self.repeat { samples[0] } else { a });
+        let fraction = (self.position - index as f64) as f32;
+        self.position += self.step;
+        Some(a + (b - a) * fraction)
+    }
+}
+
+fn play_typed<T>(
+    device: &Device,
+    config: StreamConfig,
+    samples: Arc<[f32]>,
+    repeat: bool,
+) -> Result<(), String>
 where
     T: SizedSample + FromSample<f32>,
 {
@@ -565,29 +616,24 @@ where
         ));
     }
     let step = f64::from(SAMPLE_RATE) / f64::from(config.sample_rate);
-    let deadline = Instant::now()
-        + Duration::from_secs_f64(samples.len() as f64 / f64::from(SAMPLE_RATE) + 5.0);
+    let deadline = (!repeat).then(|| {
+        Instant::now()
+            + Duration::from_secs_f64(samples.len() as f64 / f64::from(SAMPLE_RATE) + 5.0)
+    });
     let done = Arc::new(AtomicBool::new(false));
     let callback_done = Arc::clone(&done);
     let error = Arc::new(Mutex::new(None::<String>));
     let callback_error = Arc::clone(&error);
-    let mut position = 0.0f64;
+    let mut cursor = SampleCursor::new(step, repeat);
     let stream = device
         .build_output_stream(
             config,
             move |output: &mut [T], _: &OutputCallbackInfo| {
                 for frame in output.chunks_mut(channels) {
-                    let index = position.floor() as usize;
-                    let value = if index < samples.len() {
-                        let fraction = (position - index as f64) as f32;
-                        let a = samples[index];
-                        let b = samples.get(index + 1).copied().unwrap_or(a);
-                        position += step;
-                        a + (b - a) * fraction
-                    } else {
+                    let value = cursor.next(&samples).unwrap_or_else(|| {
                         callback_done.store(true, Ordering::Release);
                         0.0
-                    };
+                    });
                     let value = T::from_sample(value);
                     for sample in frame {
                         *sample = value;
@@ -609,7 +655,7 @@ where
         if playback_status(&done, &error)? {
             break;
         }
-        if Instant::now() >= deadline {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             return Err("audio output did not consume samples before its deadline".to_string());
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -664,6 +710,40 @@ mod tests {
             let error = PlayArgs::parse(&args(&["tune.mid", "--volume", value])).unwrap_err();
             assert!(error.contains("--volume"), "{value}: {error}");
         }
+    }
+
+    #[test]
+    fn repeat_is_opt_in_and_combines_with_other_playback_flags() {
+        assert!(!PlayArgs::parse(&args(&["tune.mid"])).unwrap().repeat);
+        let parsed = PlayArgs::parse(&args(&[
+            "--repeat",
+            "tune.mid",
+            "--seconds",
+            "2",
+            "--volume",
+            "0.25",
+        ]))
+        .unwrap();
+        assert!(parsed.repeat);
+        assert_eq!(parsed.seconds, Some(2.0));
+        assert_eq!(parsed.volume, 0.25);
+    }
+
+    #[test]
+    fn repeating_sample_cursor_wraps_and_interpolates_across_the_seam() {
+        let samples = [1.0, -1.0];
+        let mut once = SampleCursor::new(1.0, false);
+        assert_eq!(once.next(&samples), Some(1.0));
+        assert_eq!(once.next(&samples), Some(-1.0));
+        assert_eq!(once.next(&samples), None);
+
+        let mut repeat = SampleCursor::new(0.5, true);
+        assert_eq!(repeat.next(&samples), Some(1.0));
+        assert_eq!(repeat.next(&samples), Some(0.0));
+        assert_eq!(repeat.next(&samples), Some(-1.0));
+        assert_eq!(repeat.next(&samples), Some(0.0));
+        assert_eq!(repeat.next(&samples), Some(1.0));
+        assert_eq!(repeat.next(&[]), None);
     }
 
     #[test]

@@ -100,11 +100,17 @@ fn play_dry_run_decodes_midi_and_abc_without_an_audio_device() {
         abc.to_str().unwrap(),
         "--volume",
         "0.25",
+        "--repeat",
         "--dry-run",
     ]);
     assert!(explicit.status.success());
     assert!(
         String::from_utf8_lossy(&explicit.stderr).contains("volume 0.25"),
+        "{}",
+        String::from_utf8_lossy(&explicit.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&explicit.stderr).contains("(dry run, repeat)"),
         "{}",
         String::from_utf8_lossy(&explicit.stderr)
     );
@@ -118,6 +124,7 @@ fn play_usage_errors_are_distinct_from_runtime_errors() {
     let help = run(&["music", "play", "--help"]);
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains("--volume 0..1"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--repeat"));
     assert!(help.stderr.is_empty());
 
     let usage = run(&["music", "play", "--seconds", "nope"]);
