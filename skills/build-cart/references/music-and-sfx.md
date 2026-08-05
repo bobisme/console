@@ -15,6 +15,7 @@ create responsive game SFX, mix safely, and inspect audio without guessing.
 - [Mixing, ducking, master, and echo](#mixing-ducking-master-and-echo)
 - [Wavetable and FM recipes](#wavetable-and-fm-recipes)
 - [Authoring tools](#authoring-tools)
+- [Native console music bundles](#native-console-music-bundles)
 - [MIDI and ABC source preview](#midi-and-abc-source-preview)
 - [ABC import](#abc-import)
 - [Inspection and acceptance](#inspection-and-acceptance)
@@ -328,6 +329,72 @@ Then run the chosen command without `--dry-run`, reread score, and lint again.
 Every write operation preserves unrelated text and reparses before commit.
 Only `transpose` accepts an ID/range/list selection; the other edit verbs take
 the single IDs in their syntax, so repeat the command for multiple SFX.
+
+## Native console music bundles
+
+ABC and MIDI are interchange formats; they cannot losslessly carry the
+console's named instruments, wavetables, row effects, master bus, echo bus, or
+pattern chain. Use `.cmusic` when those details are part of the authored track:
+
+```text
+console-music 1
+__instruments__
+wavetable 0 89acdeef ffeedca9 76532110 00112356
+inst lead wave=w0 env=0,8,3 vib=12,3,2 echo=3
+master drive=1 tone=1 hiss=0
+echo delay=12 feedback=4 level=3
+__sfx__
+sfx 0 speed=auto
+C4 lead 6 vib
+E4 lead 6 arp4,7
+G4 lead 6 fade-2
+__music__
+bpm=120 rows_per_beat=4
+pat 0 loop=0 : 0 - - -
+```
+
+The first line versions the container. Everything after it is the same native
+grammar documented above; section order is irrelevant and unsupported or
+duplicate sections fail. A bundle may be played directly or through the cart
+or project that contains it:
+
+```bash
+console music play audio/game.cmusic --song 0
+console music play game.cart --song 8 --volume 0.35
+console music play my-project --song 0 --seconds 10
+console music play my-project --song 0 --dry-run
+```
+
+Native playback uses an audio-only cart, so all synth/effect behavior matches
+the game while game menus, `_update`, and incidental SFX cannot interfere.
+`--song` defaults to the lowest pattern. Without `--seconds`, an authored song
+loop plays its intro once and repeats its loop body; `--repeat` restarts a
+one-shot. The runtime remains stateful across loop passes rather than repeating
+cached PCM. One-shots drain the core release frame and taper its final
+click-ramp span so echo also reaches silence before ending/restarting; explicit
+time cuts use the same taper. `--dry-run` validates and plans the song without
+opening an audio device or allocating rendered PCM.
+
+In a multi-file project, use one of these mutually exclusive forms:
+
+```toml
+[audio]
+bundle = "audio/game.cmusic"
+```
+
+or:
+
+```toml
+[sections]
+instruments = "audio/instruments.txt"
+sfx = "audio/sfx.txt"
+music = "audio/music.txt"
+```
+
+`console build` expands the bundle into the same three canonical cart sections
+and records it as an input. Prefer a bundle when the whole audio bank should be
+directly playable/shareable; prefer split bodies when independent file review
+matters more.
 
 ## MIDI and ABC source preview
 

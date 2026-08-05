@@ -157,6 +157,94 @@ fn pretty_report_includes_manifest_and_canonical_inputs() {
     }
 }
 
+#[test]
+fn build_expands_a_native_music_bundle_and_tracks_it_as_an_input() {
+    let project = Project::new();
+    project.write(
+        "console.toml",
+        "manifest_version = 1\n\
+         \n\
+         [cart]\n\
+         title = \"Native Music Build\"\n\
+         \n\
+         [lua]\n\
+         entry = \"lua/main.lua\"\n\
+         \n\
+         [audio]\n\
+         bundle = \"audio/game.cmusic\"\n\
+         \n\
+         [build]\n\
+         output = \"dist/native.cart\"\n",
+    );
+    project.write(
+        "audio/game.cmusic",
+        "console-music 1\n\
+         __instruments__\n\
+         inst lead wave=6 fm=2,6,5 env=0,12,1 echo=3\n\
+         master drive=1 tone=1 hiss=0\n\
+         echo delay=10 feedback=3 level=2\n\
+         __sfx__\n\
+         sfx 0 speed=auto\n\
+         C4 lead 6 vib8,2\n\
+         E4 lead 6 arp4,7\n\
+         __music__\n\
+         bpm=120 rows_per_beat=4\n\
+         pat 0 loop=0 : 0 - - -\n",
+    );
+
+    let built = run(&["build", path(&project.0), "--format", "json"]);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
+    let bundle = std::fs::canonicalize(project.0.join("audio/game.cmusic")).unwrap();
+    assert!(
+        report["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|input| input == path(&bundle))
+    );
+    let cart_text = std::fs::read_to_string(project.0.join("dist/native.cart")).unwrap();
+    let cart = console_core::Cart::parse(&cart_text).unwrap();
+    assert!(cart.audio().instrument("lead").is_some());
+    assert_eq!(cart.audio().master().drive, 1);
+    assert_eq!(cart.audio().echo().delay, 10);
+    assert!(cart.audio().pattern(0).is_some());
+}
+
+#[test]
+fn build_rejects_mixing_audio_bundle_and_raw_audio_sections() {
+    let project = Project::new();
+    project.write(
+        "console.toml",
+        "manifest_version = 1\n\
+         [cart]\n\
+         title = \"Conflicting Music Build\"\n\
+         [lua]\n\
+         entry = \"lua/main.lua\"\n\
+         [audio]\n\
+         bundle = \"audio/game.cmusic\"\n\
+         [sections]\n\
+         music = \"audio/music.txt\"\n",
+    );
+    project.write(
+        "audio/game.cmusic",
+        "console-music 1\n__music__\nbpm=120\npat 0 stop : - - - -\n",
+    );
+    project.write("audio/music.txt", "bpm=120\npat 0 stop : - - - -\n");
+
+    let built = run(&["build", path(&project.0)]);
+    assert_eq!(built.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&built.stderr);
+    assert!(
+        error.contains("[audio].bundle cannot be combined"),
+        "{error}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn configured_output_symlink_is_rejected_without_reading_or_replacing_target() {

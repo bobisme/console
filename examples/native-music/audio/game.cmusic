@@ -1,0 +1,40 @@
+console-music 1
+
+__instruments__
+wavetable 0 89acdeef ffeedca9 76532110 00112356
+inst lead wave=w0 env=0,8,3 vib=12,3,2 echo=3
+inst bass wave=6 fm=1,7,12 env=0,10,3
+inst kick wave=3 sweep=-18,5 env=0,6,0 duck=3,8
+inst hat wave=5 env=0,3,0
+master drive=1 tone=1 hiss=0
+echo delay=12 feedback=4 level=3
+
+__sfx__
+sfx 0 speed=auto
+C4 lead 6 vib
+E4 lead 6 arp4,7
+G4 lead 6 fade-2
+E4 lead 5
+
+sfx 1 speed=auto
+C2 bass 5 sl-12
+C2 bass 5
+G1 bass 5
+C2 bass 5
+
+sfx 2 speed=auto
+C3 kick 7
+---
+C3 kick 6
+---
+
+sfx 3 speed=auto
+---
+C5 hat 3
+---
+C5 hat 2
+
+__music__
+bpm=120 rows_per_beat=4
+pat 0 : 0 1 2 3
+pat 1 loop=1 : 0 1 2 3

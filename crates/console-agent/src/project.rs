@@ -35,12 +35,19 @@ pub(crate) struct Manifest {
     pub manifest_version: u32,
     pub cart: CartConfig,
     pub lua: LuaConfig,
+    pub audio: Option<AudioConfig>,
     #[serde(default)]
     pub sprites: Vec<SpriteAssetConfig>,
     #[serde(default)]
     pub build: BuildConfig,
     #[serde(default)]
     pub sections: BTreeMap<String, PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AudioConfig {
+    pub bundle: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -343,6 +350,25 @@ pub fn compile_project(input: &Path) -> Result<CompiledProject, String> {
         reject_section_markers(&body, &path)?;
         inputs.push(path);
         sections.insert(name.clone(), body);
+    }
+
+    if let Some(audio) = &manifest.audio {
+        let conflicts = ["instruments", "sfx", "music"]
+            .into_iter()
+            .filter(|name| sections.contains_key(*name))
+            .collect::<Vec<_>>();
+        if !conflicts.is_empty() {
+            return Err(format!(
+                "[audio].bundle cannot be combined with raw audio entries in [sections] (found: {})",
+                conflicts.join(", ")
+            ));
+        }
+        let path = resolve_input(&project_root, &audio.bundle, "audio.bundle")?;
+        let source = read_source(&path, "console-music bundle")?;
+        let bundle = crate::music::native::NativeMusic::parse(&source)
+            .map_err(|error| format!("invalid audio.bundle {}: {error}", path.display()))?;
+        inputs.push(path);
+        sections.extend(bundle.into_sections());
     }
 
     let sprite_assets = if manifest.sprites.is_empty() {
@@ -886,6 +912,70 @@ mod tests {
                 .contains("-- console entry\nfunction _draw() end")
         );
         assert_eq!(cart.section("z_notes").unwrap().trim_end(), "hello\nworld");
+    }
+
+    #[test]
+    fn compiles_native_music_bundle_into_canonical_audio_sections() {
+        let project = TempProject::new();
+        project.write(
+            "console.toml",
+            &manifest("[audio]\nbundle = \"audio/game.cmusic\"\n"),
+        );
+        project.write("lua/main.lua", "function _draw() end\n");
+        project.write(
+            "audio/game.cmusic",
+            "console-music 1\n\n\
+             __instruments__\n\
+             inst lead wave=1 env=0,8,3 echo=2\n\
+             echo delay=10 feedback=3 level=2\n\
+             __sfx__\n\
+             sfx 0 speed=auto\n\
+             C4 lead 6 vib8,2\n\
+             __music__\n\
+             bpm=120 rows_per_beat=4\n\
+             pat 0 loop=0 : 0 - - -\n",
+        );
+
+        let compiled = compile_project(&project.0).unwrap();
+        let cart = Cart::parse(&compiled.cart_text).unwrap();
+        assert!(cart.audio().instrument("lead").is_some());
+        assert_eq!(cart.audio().echo().delay, 10);
+        assert!(cart.audio().pattern(0).is_some());
+        assert!(
+            compiled
+                .inputs
+                .contains(&std::fs::canonicalize(project.0.join("audio/game.cmusic")).unwrap())
+        );
+    }
+
+    #[test]
+    fn rejects_audio_bundle_conflicts_and_invalid_native_music() {
+        let project = TempProject::new();
+        project.write("lua/main.lua", "function _draw() end\n");
+        project.write(
+            "console.toml",
+            &manifest(
+                "[audio]\nbundle = \"audio/game.cmusic\"\n\n[sections]\nmusic = \"audio/music.txt\"\n",
+            ),
+        );
+        project.write(
+            "audio/game.cmusic",
+            "console-music 1\n__music__\nbpm=120\npat 0 stop : - - - -\n",
+        );
+        project.write("audio/music.txt", "bpm=90\npat 0 stop : - - - -\n");
+        let error = compile_project(&project.0).unwrap_err();
+        assert!(error.contains("cannot be combined"), "{error}");
+
+        project.write(
+            "console.toml",
+            &manifest("[audio]\nbundle = \"audio/game.cmusic\"\n"),
+        );
+        project.write("audio/game.cmusic", "X:1\nK:C\nC\n");
+        let error = compile_project(&project.0).unwrap_err();
+        assert!(
+            error.contains("missing \"console-music 1\" header"),
+            "{error}"
+        );
     }
 
     #[test]

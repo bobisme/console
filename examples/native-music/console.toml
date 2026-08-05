@@ -1,0 +1,16 @@
+manifest_version = 1
+
+[cart]
+title = "Native Music"
+author = "console agents"
+version = "1"
+
+[lua]
+entry = "lua/main.lua"
+root = "lua"
+
+[audio]
+bundle = "audio/game.cmusic"
+
+[build]
+output = "build/native-music.cart"

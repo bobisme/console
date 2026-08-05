@@ -130,6 +130,13 @@ and HEAD refresh. The complete setup and single-cart migration walkthrough is
 uses every native cart section is in
 [examples/agent-platformer](examples/agent-platformer).
 
+Native instruments, SFX, effects, and pattern chains can stay in one playable
+`console-music 1` bundle. Point `[audio].bundle` at a `.cmusic` file and
+`console build` expands its `__instruments__`, `__sfx__`, and `__music__`
+sections into the cart. This replaces, and cannot be mixed with, the three raw
+audio entries under `[sections]`. A minimal buildable example is in
+[examples/native-music](examples/native-music).
+
 MIDI and ABC sources can be auditioned through the console's own six-channel
 synth before they are reduced to cart rows. MIDI converts to pipeable ABC on
 stdout by default:
@@ -140,14 +147,23 @@ console music midi-to-abc theme.mid -o theme.abc
 console music play theme.mid
 console music play theme.abc --seconds 15 --volume 0.35
 console music play theme.abc --repeat
+console music play audio/game.cmusic --song 0 --volume 0.35
+console music play my-game --song 0 --dry-run
 ```
 
-`music play --dry-run` decodes and renders without opening an audio device,
-which makes source validation usable in CI. Playback defaults to `--volume
-0.5`; pass a value from 0 (silent) to 1 (full synth output) to change its
-linear output gain. Cart import remains an explicit later step via `music
-import-abc`. `--repeat` loops the rendered track until Ctrl-C; with `--seconds`
-it loops that selected prefix, while `--dry-run` validates one pass and exits.
+`music play --dry-run` decodes and validates without opening an audio device,
+which makes source validation usable in CI. ABC/MIDI previews render a bounded
+pass; native inputs are parsed and planned without allocating PCM. Playback
+defaults to `--volume 0.5`; pass a value from 0 (silent) to 1 (full synth
+output) to change its linear output gain. Cart import remains an explicit later
+step via `music import-abc`. `--repeat` loops the rendered track until Ctrl-C;
+with `--seconds` it loops that selected prefix, while `--dry-run` validates one
+pass and exits.
+For `.cmusic`, cart, and project inputs, playback uses the exact native
+instrument/effect grammar and song chain. Authored loops repeat naturally;
+the renderer preserves oscillator and effect state between passes. `--repeat`
+restarts a native one-shot after a release frame tapered to silence, including
+when echo remains active.
 
 Run a cart headlessly for 90 frames (idle 30, hold right 30, idle 30) and
 take a 4x screenshot — this is exactly how an agent iterates on a cart:

@@ -51,6 +51,9 @@ stale bundle after an invalid edit.
   Never combine it with `[[sprites]]`.
 - `[sections]` also points at headerless bodies for map, graphics metadata,
   instruments, SFX, music, or custom sections.
+- Alternatively, `[audio].bundle = "audio/game.cmusic"` expands one versioned,
+  directly playable native audio bundle into instruments, SFX, and music. Do
+  not combine it with the three audio keys under `[sections]`.
 - `[build].output` is generated. Put lasting changes in sources, not the cart.
 
 Every input path is project-relative and confined after canonicalization. Do
@@ -61,6 +64,8 @@ assets, or both PNG assets and `[sections].sprites`.
 
 - Move `__lua__` into the entry and return tables from extracted modules.
 - Move each native section body into a file without its header.
+- Or put the three audio sections behind a `console-music 1` header in one
+  `.cmusic` file and register it as `[audio].bundle`.
 - Preserve the raw sheet through `[sections].sprites`, or export/redraw
   tile-aligned PNG regions and register explicit placements.
 - Preserve animation declarations in the graphics-metadata body.

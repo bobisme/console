@@ -1,13 +1,16 @@
-//! Source-file preview through the console's real six-channel synthesizer.
+//! ABC/MIDI preview and exact native-music playback through the console's
+//! real six-channel synthesizer.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    Arc, Mutex,
+    Arc, Condvar, Mutex,
     atomic::{AtomicBool, Ordering},
 };
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use console_core::{CHANNEL_COUNT, PreviewSynth, SAMPLE_RATE, SAMPLES_PER_FRAME};
+use console_core::{CHANNEL_COUNT, Cart, Console, PreviewSynth, SAMPLE_RATE, SAMPLES_PER_FRAME};
 use cpal::{
     Device, FromSample, I24, OutputCallbackInfo, SampleFormat, SizedSample, StreamConfig, U24,
     traits::{DeviceTrait, HostTrait, StreamTrait},
@@ -21,6 +24,9 @@ const MAX_ABC_HEADER_BYTES: usize = 64 * 1024;
 const MAX_ABC_VOICES: usize = 64;
 const MAX_ABC_EVENTS: usize = 250_000;
 const DEFAULT_PLAYBACK_VOLUME: f32 = 0.5;
+const NATIVE_BUFFER_FRAMES: usize = 120;
+const NATIVE_PREFILL_FRAMES: usize = 4;
+const CLICK_RAMP_SAMPLES: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimedNote {
@@ -394,24 +400,58 @@ fn choose_channel(active: &[Option<Active>; CHANNEL_COUNT], note: &TimedNote) ->
         .unwrap_or(0)
 }
 
-fn read_score(path: &Path) -> Result<TimedScore, String> {
+enum PlayInput {
+    Source(TimedScore),
+    Native { label: String, cart: Box<Cart> },
+}
+
+fn read_play_input(path: &Path) -> Result<PlayInput, String> {
+    if path.is_dir() || path.file_name().and_then(|name| name.to_str()) == Some("console.toml") {
+        let cart_text = crate::project::load_cart_text(path).map_err(|error| error.to_string())?;
+        return native_cart(path, cart_text);
+    }
+
     let bytes = super::read_bounded(path, "music source")?;
-    let midi = bytes.starts_with(b"MThd")
-        || path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("mid") || ext.eq_ignore_ascii_case("midi"));
+    let midi = bytes.starts_with(b"MThd") || has_extension(path, &["mid", "midi"]);
     if midi {
-        return parse_midi(&bytes).map(|song| score_from_midi(&song));
+        return parse_midi(&bytes).map(|song| PlayInput::Source(score_from_midi(&song)));
     }
     let text = std::str::from_utf8(&bytes)
-        .map_err(|_| format!("ABC source {} is not UTF-8", path.display()))?;
-    score_from_abc(text)
+        .map_err(|_| format!("music source {} is not UTF-8", path.display()))?;
+    if has_extension(path, &["cmusic"]) || super::native::has_magic(text) {
+        let bundle = super::native::NativeMusic::parse(text)
+            .map_err(|error| format!("invalid {}: {error}", path.display()))?;
+        return native_cart(path, bundle.cart_text());
+    }
+    if has_extension(path, &["cart"]) {
+        return native_cart(path, text.to_string());
+    }
+    score_from_abc(text).map(PlayInput::Source)
+}
+
+fn native_cart(path: &Path, cart_text: String) -> Result<PlayInput, String> {
+    let cart = Cart::parse(&cart_text)
+        .map_err(|error| format!("invalid native music input {}: {error}", path.display()))?;
+    Ok(PlayInput::Native {
+        label: path.display().to_string(),
+        cart: Box::new(cart),
+    })
+}
+
+fn has_extension(path: &Path, extensions: &[&str]) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extensions
+                .iter()
+                .any(|expected| extension.eq_ignore_ascii_case(expected))
+        })
 }
 
 #[derive(Debug)]
 struct PlayArgs {
     input: PathBuf,
+    song: Option<u8>,
     seconds: Option<f64>,
     volume: f32,
     repeat: bool,
@@ -421,6 +461,7 @@ struct PlayArgs {
 impl PlayArgs {
     fn parse(args: &[String]) -> Result<PlayArgs, String> {
         let mut input = None;
+        let mut song = None;
         let mut seconds = None;
         let mut volume = DEFAULT_PLAYBACK_VOLUME;
         let mut repeat = false;
@@ -430,6 +471,17 @@ impl PlayArgs {
             match args[index].as_str() {
                 "--dry-run" => dry_run = true,
                 "--repeat" => repeat = true,
+                "--song" => {
+                    index += 1;
+                    let value = args.get(index).ok_or("--song requires a value")?;
+                    let parsed = value
+                        .parse::<u8>()
+                        .map_err(|_| format!("invalid --song value {value:?} (want 0-63)"))?;
+                    if parsed > 63 {
+                        return Err("--song must be from 0 to 63".to_string());
+                    }
+                    song = Some(parsed);
+                }
                 "--seconds" => {
                     index += 1;
                     let value = args.get(index).ok_or("--seconds requires a value")?;
@@ -455,14 +507,15 @@ impl PlayArgs {
                 value if value.starts_with('-') => return Err(format!("unknown flag {value:?}")),
                 value => {
                     if input.replace(PathBuf::from(value)).is_some() {
-                        return Err("expected exactly one ABC or MIDI file".to_string());
+                        return Err("expected exactly one music input".to_string());
                     }
                 }
             }
             index += 1;
         }
         Ok(PlayArgs {
-            input: input.ok_or("missing ABC or MIDI file")?,
+            input: input.ok_or("missing music input")?,
+            song,
             seconds,
             volume,
             repeat,
@@ -471,8 +524,8 @@ impl PlayArgs {
     }
 }
 
-const PLAY_USAGE: &str = "usage: console music play <file.abc|file.mid|file.midi> \
-    [--seconds N] [--volume 0..1] [--repeat] [--dry-run]";
+const PLAY_USAGE: &str = "usage: console music play <file.abc|file.mid|file.cmusic|file.cart|project> \
+    [--song N] [--seconds N] [--volume 0..1] [--repeat] [--dry-run]";
 
 pub fn cli_play(args: &[String]) -> i32 {
     if crate::help_requested(args) {
@@ -497,7 +550,16 @@ pub fn cli_play(args: &[String]) -> i32 {
 }
 
 fn run_play(args: PlayArgs) -> Result<(), String> {
-    let score = read_score(&args.input)?;
+    match read_play_input(&args.input)? {
+        PlayInput::Source(score) => run_source_play(score, &args),
+        PlayInput::Native { label, cart } => run_native_play(&label, &cart, &args),
+    }
+}
+
+fn run_source_play(score: TimedScore, args: &PlayArgs) -> Result<(), String> {
+    if args.song.is_some() {
+        return Err("--song is only valid for .cmusic, .cart, or project inputs".to_string());
+    }
     let max_frames = args.seconds.map(|seconds| (seconds * 60.0).ceil() as u64);
     let (mut samples, stats) = render_score(&score, max_frames)?;
     let program_samples = samples
@@ -528,6 +590,477 @@ fn run_play(args: PlayArgs) -> Result<(), String> {
         play_samples(Arc::from(samples), args.repeat)?;
     }
     Ok(())
+}
+
+fn run_native_play(label: &str, cart: &Cart, args: &PlayArgs) -> Result<(), String> {
+    let song = match args.song {
+        Some(song) => song,
+        None => super::default_song(cart)?,
+    };
+    let plan = super::plan_song(cart, song)?;
+    let frames = args
+        .seconds
+        .map(|seconds| (seconds * super::FPS).ceil() as u64);
+    // The plan gives us the exact duration to report. Do not render a whole
+    // pass merely to learn it: device playback below is deliberately streamed
+    // through a bounded queue, and a legal large song or --seconds value must
+    // not first allocate an unbounded PCM cache.
+    let report_frames = frames.unwrap_or_else(|| plan.frames_for(1));
+
+    let authored_loop = args.seconds.is_none() && plan.loop_index.is_some();
+    let mode = match (args.dry_run, args.repeat, authored_loop) {
+        (true, true, _) => " (native, dry run, repeat)",
+        (true, false, true) => " (native, dry run, authored loop)",
+        (true, false, false) => " (native, dry run)",
+        (false, _, true) => " (native authored loop; Ctrl-C to stop)",
+        (false, true, false) => " (native repeat; Ctrl-C to stop)",
+        (false, false, false) => " (native)",
+    };
+    eprintln!(
+        "{label}: {:.2}s, song {song}, {}, volume {:.2}{mode}",
+        super::seconds(report_frames),
+        plan.chain_text(),
+        args.volume
+    );
+    if !args.dry_run {
+        let runtime = super::audio_only_cart(cart, &format!("function _init() music({song}) end"));
+        let infinite = args.repeat || authored_loop;
+        let deadline_seconds =
+            (!infinite).then_some(report_frames as f64 / super::FPS + 1.0 / super::FPS + 5.0);
+        play_native_runtime(runtime, frames, args.repeat, args.volume, deadline_seconds)?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeRenderPhase {
+    Playing,
+    Release,
+    Restart,
+    Finished,
+}
+
+/// Stateful native renderer used by host playback. It deliberately retains
+/// one `Console` across authored pattern loops: oscillator, filter, hiss, and
+/// echo state must evolve exactly as they do in the game.
+struct NativeFrameRenderer {
+    runtime: String,
+    console: Console,
+    clip_frames: Option<u64>,
+    repeat: bool,
+    frames: u64,
+    phase: NativeRenderPhase,
+}
+
+impl NativeFrameRenderer {
+    fn new(runtime: String, clip_frames: Option<u64>, repeat: bool) -> Result<Self, String> {
+        let console = Console::new(&runtime, 0).map_err(|error| error.to_string())?;
+        Ok(Self {
+            runtime,
+            console,
+            clip_frames,
+            repeat,
+            frames: 0,
+            phase: NativeRenderPhase::Playing,
+        })
+    }
+
+    fn next_frame(&mut self) -> Result<Option<Box<[f32]>>, String> {
+        loop {
+            match self.phase {
+                NativeRenderPhase::Finished => return Ok(None),
+                NativeRenderPhase::Restart => {
+                    self.console =
+                        Console::new(&self.runtime, 0).map_err(|error| error.to_string())?;
+                    self.frames = 0;
+                    self.phase = NativeRenderPhase::Playing;
+                }
+                NativeRenderPhase::Release => {
+                    self.console.step(0).map_err(|error| error.to_string())?;
+                    let mut frame = self.console.audio_frame().to_vec().into_boxed_slice();
+                    // The core click guard silences dry voices, but post-voice
+                    // effects such as echo can still leave a non-zero final
+                    // sample. Taper the end of the drained frame so stopping
+                    // or restarting always has a genuinely silent seam.
+                    fade_tail(&mut frame);
+                    self.phase = if self.repeat {
+                        NativeRenderPhase::Restart
+                    } else {
+                        NativeRenderPhase::Finished
+                    };
+                    return Ok(Some(frame));
+                }
+                NativeRenderPhase::Playing => {
+                    self.console.step(0).map_err(|error| error.to_string())?;
+                    self.frames += 1;
+                    let mut frame = self.console.audio_frame().to_vec().into_boxed_slice();
+                    if self.clip_frames.is_some_and(|limit| self.frames >= limit) {
+                        fade_tail(&mut frame);
+                        self.phase = if self.repeat {
+                            NativeRenderPhase::Restart
+                        } else {
+                            NativeRenderPhase::Finished
+                        };
+                    } else if self.console.music_pattern().is_none() {
+                        // Sequencer stop arms the core's 64-sample click guard
+                        // after this frame was rendered. Drain one more frame
+                        // before ending or restarting the song.
+                        self.phase = NativeRenderPhase::Release;
+                    }
+                    return Ok(Some(frame));
+                }
+            }
+        }
+    }
+}
+
+fn fade_tail(samples: &mut [f32]) {
+    let count = samples.len().min(CLICK_RAMP_SAMPLES);
+    if count < 2 {
+        samples.fill(0.0);
+        return;
+    }
+    let start = samples.len() - count;
+    let denominator = (count - 1) as f32;
+    for (index, sample) in samples[start..].iter_mut().enumerate() {
+        *sample *= (count - 1 - index) as f32 / denominator;
+    }
+}
+
+#[derive(Default)]
+struct NativeBuffer {
+    frames: VecDeque<Box<[f32]>>,
+    finished: bool,
+    stop: bool,
+    error: Option<String>,
+}
+
+type SharedNativeBuffer = Arc<(Mutex<NativeBuffer>, Condvar)>;
+
+fn play_native_runtime(
+    runtime: String,
+    clip_frames: Option<u64>,
+    repeat: bool,
+    volume: f32,
+    deadline_seconds: Option<f64>,
+) -> Result<(), String> {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or("no default audio output device is available")?;
+    let supported = device
+        .default_output_config()
+        .map_err(|error| format!("cannot query the default audio output: {error}"))?;
+    let format = supported.sample_format();
+    let config: StreamConfig = supported.into();
+    let shared = Arc::new((Mutex::new(NativeBuffer::default()), Condvar::new()));
+    let worker = spawn_native_renderer(runtime, clip_frames, repeat, volume, Arc::clone(&shared));
+
+    let result = wait_for_native_prefill(&shared).and_then(|()| match format {
+        SampleFormat::I8 => {
+            play_native_typed::<i8>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        SampleFormat::I16 => {
+            play_native_typed::<i16>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        SampleFormat::I24 => {
+            play_native_typed::<I24>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        SampleFormat::I32 => {
+            play_native_typed::<i32>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        SampleFormat::I64 => {
+            play_native_typed::<i64>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        SampleFormat::U8 => {
+            play_native_typed::<u8>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        SampleFormat::U16 => {
+            play_native_typed::<u16>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        SampleFormat::U24 => {
+            play_native_typed::<U24>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        SampleFormat::U32 => {
+            play_native_typed::<u32>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        SampleFormat::U64 => {
+            play_native_typed::<u64>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        SampleFormat::F32 => {
+            play_native_typed::<f32>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        SampleFormat::F64 => {
+            play_native_typed::<f64>(&device, config, Arc::clone(&shared), deadline_seconds)
+        }
+        other => Err(format!("unsupported output sample format {other}")),
+    });
+    stop_native_renderer(&shared);
+    let joined = worker
+        .join()
+        .map_err(|_| "native audio renderer panicked".to_string());
+    result.and(joined)
+}
+
+fn spawn_native_renderer(
+    runtime: String,
+    clip_frames: Option<u64>,
+    repeat: bool,
+    volume: f32,
+    shared: SharedNativeBuffer,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        let result = (|| -> Result<(), String> {
+            let mut renderer = NativeFrameRenderer::new(runtime, clip_frames, repeat)?;
+            while let Some(mut frame) = renderer.next_frame()? {
+                apply_playback_volume(&mut frame, volume);
+                let (lock, ready) = &*shared;
+                let mut state = lock
+                    .lock()
+                    .map_err(|_| "native audio buffer was poisoned".to_string())?;
+                while state.frames.len() >= NATIVE_BUFFER_FRAMES && !state.stop {
+                    state = ready
+                        .wait(state)
+                        .map_err(|_| "native audio buffer was poisoned".to_string())?;
+                }
+                if state.stop {
+                    return Ok(());
+                }
+                state.frames.push_back(frame);
+                ready.notify_all();
+            }
+            Ok(())
+        })();
+
+        let (lock, ready) = &*shared;
+        if let Ok(mut state) = lock.lock() {
+            if let Err(error) = result {
+                state.error = Some(error);
+            }
+            state.finished = true;
+            ready.notify_all();
+        }
+    })
+}
+
+fn stop_native_renderer(shared: &SharedNativeBuffer) {
+    let (lock, ready) = &**shared;
+    if let Ok(mut state) = lock.lock() {
+        state.stop = true;
+        ready.notify_all();
+    }
+}
+
+fn wait_for_native_prefill(shared: &SharedNativeBuffer) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (lock, ready) = &**shared;
+    let mut state = lock
+        .lock()
+        .map_err(|_| "native audio buffer was poisoned".to_string())?;
+    while state.frames.len() < NATIVE_PREFILL_FRAMES && !state.finished && state.error.is_none() {
+        let now = Instant::now();
+        if now >= deadline {
+            return Err("native audio renderer did not produce samples before its deadline".into());
+        }
+        let (next, timeout) = ready
+            .wait_timeout(state, deadline - now)
+            .map_err(|_| "native audio buffer was poisoned".to_string())?;
+        state = next;
+        if timeout.timed_out() && state.frames.len() < NATIVE_PREFILL_FRAMES && !state.finished {
+            return Err("native audio renderer did not produce samples before its deadline".into());
+        }
+    }
+    if let Some(error) = state.error.take() {
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum StreamSample {
+    Sample(f32),
+    Pending,
+    Finished,
+}
+
+struct NativeSampleCursor {
+    shared: SharedNativeBuffer,
+    frame: Option<Box<[f32]>>,
+    frame_index: usize,
+    a: Option<f32>,
+    b: Option<f32>,
+    fraction: f64,
+    step: f64,
+    end_after_b: bool,
+    finished: bool,
+}
+
+impl NativeSampleCursor {
+    fn new(step: f64, shared: SharedNativeBuffer) -> Self {
+        Self {
+            shared,
+            frame: None,
+            frame_index: 0,
+            a: None,
+            b: None,
+            fraction: 0.0,
+            step,
+            end_after_b: false,
+            finished: false,
+        }
+    }
+
+    fn pull(&mut self) -> StreamSample {
+        loop {
+            if let Some(frame) = &self.frame {
+                if let Some(sample) = frame.get(self.frame_index) {
+                    self.frame_index += 1;
+                    return StreamSample::Sample(*sample);
+                }
+            }
+            let (lock, ready) = &*self.shared;
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(_) => return StreamSample::Finished,
+            };
+            if let Some(frame) = state.frames.pop_front() {
+                self.frame = Some(frame);
+                self.frame_index = 0;
+                ready.notify_all();
+                continue;
+            }
+            return if state.finished {
+                StreamSample::Finished
+            } else {
+                StreamSample::Pending
+            };
+        }
+    }
+
+    fn next(&mut self) -> StreamSample {
+        if self.finished {
+            return StreamSample::Finished;
+        }
+        if self.a.is_none() {
+            match self.pull() {
+                StreamSample::Sample(sample) => self.a = Some(sample),
+                other => return other,
+            }
+        }
+        if self.b.is_none() {
+            match self.pull() {
+                StreamSample::Sample(sample) => self.b = Some(sample),
+                StreamSample::Pending => return StreamSample::Pending,
+                StreamSample::Finished => {
+                    self.b = self.a;
+                    self.end_after_b = true;
+                }
+            }
+        }
+
+        let a = self.a.expect("filled above");
+        let b = self.b.expect("filled above");
+        let value = a + (b - a) * self.fraction as f32;
+        self.fraction += self.step;
+        while self.fraction >= 1.0 {
+            self.fraction -= 1.0;
+            if self.end_after_b {
+                self.finished = true;
+                break;
+            }
+            self.a = self.b.take();
+            match self.pull() {
+                StreamSample::Sample(sample) => self.b = Some(sample),
+                StreamSample::Pending => break,
+                StreamSample::Finished => {
+                    self.b = self.a;
+                    self.end_after_b = true;
+                }
+            }
+        }
+        StreamSample::Sample(value)
+    }
+}
+
+fn play_native_typed<T>(
+    device: &Device,
+    config: StreamConfig,
+    shared: SharedNativeBuffer,
+    deadline_seconds: Option<f64>,
+) -> Result<(), String>
+where
+    T: SizedSample + FromSample<f32>,
+{
+    let channels = usize::from(config.channels);
+    if channels == 0 || config.sample_rate == 0 {
+        return Err(format!(
+            "default audio output reported an invalid {}-channel / {} Hz configuration",
+            channels, config.sample_rate
+        ));
+    }
+    let step = f64::from(SAMPLE_RATE) / f64::from(config.sample_rate);
+    let deadline =
+        deadline_seconds.map(|seconds| Instant::now() + Duration::from_secs_f64(seconds));
+    let done = Arc::new(AtomicBool::new(false));
+    let callback_done = Arc::clone(&done);
+    let error = Arc::new(Mutex::new(None::<String>));
+    let callback_error = Arc::clone(&error);
+    let mut cursor = NativeSampleCursor::new(step, Arc::clone(&shared));
+    let stream = device
+        .build_output_stream(
+            config,
+            move |output: &mut [T], _: &OutputCallbackInfo| {
+                for frame in output.chunks_mut(channels) {
+                    let value = match cursor.next() {
+                        StreamSample::Sample(value) => value,
+                        StreamSample::Pending => 0.0,
+                        StreamSample::Finished => {
+                            callback_done.store(true, Ordering::Release);
+                            0.0
+                        }
+                    };
+                    let value = T::from_sample(value);
+                    for sample in frame {
+                        *sample = value;
+                    }
+                }
+            },
+            move |stream_error| {
+                if let Ok(mut slot) = callback_error.lock() {
+                    *slot = Some(stream_error.to_string());
+                }
+            },
+            None,
+        )
+        .map_err(|error| format!("cannot open the default audio output: {error}"))?;
+    stream
+        .play()
+        .map_err(|error| format!("cannot start audio playback: {error}"))?;
+    loop {
+        native_render_status(&shared)?;
+        if playback_status(&done, &error)? {
+            break;
+        }
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Err("audio output did not consume native samples before its deadline".into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(150));
+    native_render_status(&shared)?;
+    playback_status(&done, &error)?;
+    Ok(())
+}
+
+fn native_render_status(shared: &SharedNativeBuffer) -> Result<(), String> {
+    let state = shared
+        .0
+        .lock()
+        .map_err(|_| "native audio buffer was poisoned".to_string())?;
+    match &state.error {
+        Some(error) => Err(format!("native audio renderer failed: {error}")),
+        None => Ok(()),
+    }
 }
 
 fn apply_playback_volume(samples: &mut [f32], volume: f32) {
@@ -753,6 +1286,117 @@ mod tests {
         assert_eq!(samples, [0.4, -0.4, 0.0]);
         apply_playback_volume(&mut samples, 0.0);
         assert_eq!(samples, [0.0; 3]);
+    }
+
+    fn native_example() -> (Cart, String) {
+        let bundle = super::super::native::NativeMusic::parse(include_str!(
+            "../../../../examples/native-music/audio/game.cmusic"
+        ))
+        .unwrap();
+        let text = bundle.cart_text();
+        let cart = Cart::parse(&text).unwrap();
+        (cart, text)
+    }
+
+    #[test]
+    fn native_renderer_matches_two_continuous_runtime_loop_passes() {
+        let (cart, _) = native_example();
+        let plan = super::super::plan_song(&cart, 0).unwrap();
+        let runtime = super::super::audio_only_cart(&cart, "function _init() music(0) end");
+        let mut renderer = NativeFrameRenderer::new(runtime, None, false).unwrap();
+        let frame_count = plan.frames_for(2);
+        let mut streamed = Vec::new();
+        for _ in 0..frame_count {
+            streamed.extend_from_slice(&renderer.next_frame().unwrap().unwrap());
+        }
+
+        let isolated = super::super::audio_only_cart(&cart, "");
+        let (expected, report) = super::super::render::render_song(
+            &isolated,
+            &super::super::render::RenderOpts {
+                song: Some(0),
+                loops: 2,
+                frames: None,
+                seed: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(report.frames, frame_count);
+        assert_eq!(streamed, expected);
+
+        let intro = plan.intro_frames() as usize * SAMPLES_PER_FRAME;
+        let loop_samples = plan.loop_frames() as usize * SAMPLES_PER_FRAME;
+        assert_ne!(
+            &streamed[intro..intro + loop_samples],
+            &streamed[intro + loop_samples..intro + loop_samples * 2],
+            "stateful echo/filter/oscillator state should make real loop passes differ"
+        );
+    }
+
+    #[test]
+    fn native_one_shots_drain_release_and_clipped_prefixes_fade_to_zero() {
+        let bundle = super::super::native::NativeMusic::parse(
+            "console-music 1\n\
+             __instruments__\n\
+             echo delay=1 feedback=8 level=8\n\
+             inst wet wave=2 echo=8\n\
+             __sfx__\n\
+             sfx 0 speed=1\n\
+             C4 wet 7\n\
+             __music__\n\
+             bpm=120 rows_per_beat=4\n\
+             pat 0 stop : 0 - - -\n",
+        )
+        .unwrap();
+        let cart = Cart::parse(&bundle.cart_text()).unwrap();
+        let runtime = super::super::audio_only_cart(&cart, "function _init() music(0) end");
+
+        let mut once = NativeFrameRenderer::new(runtime.clone(), None, false).unwrap();
+        let body = once.next_frame().unwrap().unwrap();
+        let release = once.next_frame().unwrap().unwrap();
+        assert!(body.iter().any(|sample| *sample != 0.0));
+        assert!(
+            release[..CLICK_RAMP_SAMPLES]
+                .iter()
+                .any(|sample| *sample != 0.0)
+        );
+        assert!(
+            release[CLICK_RAMP_SAMPLES..release.len() - CLICK_RAMP_SAMPLES]
+                .iter()
+                .any(|sample| *sample != 0.0),
+            "echo should outlive the core voice release"
+        );
+        assert_eq!(release.last(), Some(&0.0));
+        assert!(once.next_frame().unwrap().is_none());
+
+        let mut repeated = NativeFrameRenderer::new(runtime.clone(), None, true).unwrap();
+        let first = repeated.next_frame().unwrap().unwrap();
+        let seam = repeated.next_frame().unwrap().unwrap();
+        let restarted = repeated.next_frame().unwrap().unwrap();
+        assert_eq!(first, restarted);
+        assert_eq!(seam.last(), Some(&0.0));
+
+        let mut clipped = NativeFrameRenderer::new(runtime, Some(1), true).unwrap();
+        let first = clipped.next_frame().unwrap().unwrap();
+        let restarted = clipped.next_frame().unwrap().unwrap();
+        assert_eq!(first, restarted);
+        assert_eq!(first.last(), Some(&0.0));
+    }
+
+    #[test]
+    fn native_stream_cursor_consumes_frame_queue_without_pcm_looping() {
+        let shared = Arc::new((Mutex::new(NativeBuffer::default()), Condvar::new()));
+        {
+            let mut state = shared.0.lock().unwrap();
+            state.frames.push_back(Box::from([1.0, 2.0]));
+            state.frames.push_back(Box::from([3.0]));
+            state.finished = true;
+        }
+        let mut cursor = NativeSampleCursor::new(1.0, shared);
+        assert_eq!(cursor.next(), StreamSample::Sample(1.0));
+        assert_eq!(cursor.next(), StreamSample::Sample(2.0));
+        assert_eq!(cursor.next(), StreamSample::Sample(3.0));
+        assert_eq!(cursor.next(), StreamSample::Finished);
     }
 
     #[test]

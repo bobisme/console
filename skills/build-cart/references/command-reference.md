@@ -63,7 +63,9 @@ console build <project|console.toml>
 Compile a version-1 `console.toml` project into the normal text cart format.
 The manifest may repeat `[[sprites]]` to place tile-aligned PNGs explicitly;
 build generates their sheet and named graphics metadata using exact, nearest,
-or deterministic quantized Apollo64 conversion.
+or deterministic quantized Apollo64 conversion. `[audio].bundle` may name a
+`console-music 1` `.cmusic` file; build validates and expands its native audio
+sections. It cannot be combined with raw audio keys under `[sections]`.
 The argument may be the project directory or its explicit manifest. With no
 `-o`, the output is `[build].output`, defaulting to `build/game.cart` under the
 project. An explicit output is interpreted as the supplied CLI path.
@@ -477,12 +479,13 @@ console music import-abc <cart> <file.abc|-> --sfx <start-id>
 Import a monophonic tune into consecutive SFX IDs; `-` reads stdin. The command
 prints grid/tempo decisions, split points, warnings, and suggested pattern lines.
 
-### Convert and preview source music
+### Convert source music and play native audio
 
 ```text
 console music midi-to-abc <in-file.mid>
   [(-o|--out) out-file.abc]
-console music play <file.abc|file.mid|file.midi>
+console music play <file.abc|file.mid|file.cmusic|file.cart|project>
+  [--song 0-63]
   [--seconds N]
   [--volume 0..1]
   [--repeat]
@@ -499,15 +502,24 @@ non-integer initial BPM is rounded to the nearest ABC `Q:` value and warns. Bad
 command syntax exits 2 with usage; input, parse, and output-file failures exit
 1 without polluting stdout or appending usage.
 
-`play` accepts MIDI by `.mid`/`.midi` extension or `MThd` signature; other
-UTF-8 input is parsed as ABC. It schedules the score onto the console's six
-voices and plays the resulting core-synth samples through the default host
-audio output. `--seconds` auditions a prefix, especially useful for long
-files. `--volume` is a linear host-output gain from 0 to 1 and defaults to
-0.5. `--repeat` loops until Ctrl-C; if `--seconds` is also present, that prefix
-is the loop. `--dry-run` still parses and renders one pass but does not open a
-device or block; use it in CI and agent checks. Decode/render/device failures
-exit 1, while bad CLI syntax exits 2.
+`play` accepts MIDI by `.mid`/`.midi` extension or `MThd` signature and parses
+other non-native UTF-8 input as ABC. `.cmusic` carries the versioned native
+audio sections; `.cart`, `console.toml`, and project directories supply those
+sections through the ordinary cart/project loader. `--song` is native-only and
+defaults to the lowest pattern. Native input is isolated from game Lua and
+rendered through the exact instrument, effect, master, echo, and pattern-chain
+runtime. An authored loop plays its intro once and loops its body; `--repeat`
+restarts a one-shot. `--seconds` makes playback finite and, with `--repeat`,
+selects the prefix to loop. Native device playback preserves runtime synth and
+effect state across authored passes. One-shots drain the click-guard release
+and taper its last 64 samples so echo reaches a silent seam; explicit time cuts
+use the same taper before ending or restarting.
+
+All forms play through the default host output. `--volume` is a linear host
+gain from 0 to 1 and defaults to 0.5. `--dry-run` parses, validates, and plans
+native input without opening a device, blocking, or allocating rendered PCM;
+use it in CI and agent checks.
+Decode/render/device failures exit 1, while bad CLI syntax exits 2.
 
 ABC preview keeps the first `Q:` tempo and warns on later changes. It rejects
 over-complex duration arithmetic instead of wrapping or panicking. Source

@@ -113,6 +113,9 @@ root = "lua"
 [build]
 output = "build/game.cart"
 
+[audio]
+bundle = "audio/game.cmusic"
+
 [[sprites]]
 name = "player"
 source = "art/player.png"
@@ -125,10 +128,11 @@ max_colors = 8
 [sections]
 map = "map.txt"
 gfx_meta = "gfx-meta.txt"
-instruments = "instruments.txt"
-sfx = "sfx.txt"
-music = "music.txt"
 ```
+
+`[audio].bundle` is mutually exclusive with `[sections].instruments`, `.sfx`,
+and `.music`. Omit `[audio]` and use those three headerless files when split
+review is preferable to one directly playable native bundle.
 
 Run `console build my-game` to atomically write the configured output, or
 `console build my-game --check` in CI to require byte-identical generated

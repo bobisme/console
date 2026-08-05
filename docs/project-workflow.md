@@ -44,9 +44,7 @@ my-game/
 │   ├── map.txt
 │   └── gfx-meta.txt
 ├── audio/
-│   ├── instruments.txt
-│   ├── sfx.txt
-│   └── music.txt
+│   └── game.cmusic         # or three headerless instruments/sfx/music files
 ├── playtest.json
 └── build/                 # generated; normally ignored
 ```
@@ -79,6 +77,9 @@ root = "lua"
 [build]
 output = "build/my-game.cart"
 
+[audio]
+bundle = "audio/game.cmusic"
+
 [[sprites]]
 name = "player"
 source = "art/player.png"
@@ -91,9 +92,6 @@ max_colors = 8
 [sections]
 map = "data/map.txt"
 gfx_meta = "data/gfx-meta.txt"
-instruments = "audio/instruments.txt"
-sfx = "audio/sfx.txt"
-music = "audio/music.txt"
 ```
 
 All manifest input paths are relative to the project and must stay inside it,
@@ -102,6 +100,48 @@ without an `__section__` header. `[cart]` owns `__meta__` and `[lua]` owns
 `__lua__`. Repeated `[[sprites]]` entries generate `__sprites__`; alternatively,
 `[sections].sprites` can preserve one complete text sheet body losslessly. Do
 not configure both forms. Additional lowercase section names are allowed.
+
+`[audio].bundle` points at a versioned `.cmusic` file containing the native
+`__instruments__`, `__sfx__`, and `__music__` sections. It is the convenient
+choice when the audio bank should be playable and shareable as one lossless
+asset:
+
+```text
+console-music 1
+__instruments__
+inst lead wave=1 env=0,8,3 vib=12,3,2 echo=3
+master drive=1 tone=1 hiss=0
+echo delay=12 feedback=4 level=3
+__sfx__
+sfx 0 speed=auto
+C4 lead 6 vib
+E4 lead 6 arp4,7
+__music__
+bpm=120 rows_per_beat=4
+pat 0 loop=0 : 0 - - -
+```
+
+The section bodies use exactly the cart audio grammar; the wrapper adds only a
+format/version header. `console build` expands them into the three canonical
+cart sections and includes the bundle in build provenance. Do not combine
+`[audio].bundle` with `[sections].instruments`, `.sfx`, or `.music`. To keep
+those sources independently editable instead, omit `[audio]` and retain the
+three headerless `[sections]` mappings shown below:
+
+```toml
+[sections]
+instruments = "audio/instruments.txt"
+sfx = "audio/sfx.txt"
+music = "audio/music.txt"
+```
+
+Audition either representation without writing the configured build output:
+
+```bash
+console music play audio/game.cmusic --song 0
+console music play . --song 0 --seconds 10 --volume 0.35
+console music play . --song 0 --dry-run
+```
 
 ## Split Lua into static modules
 
@@ -188,7 +228,7 @@ resolution, and validation completes before any output is published. See the
 the executable [RIBBIT RECOIL environment
 subset](../carts/ribbit-recoil-scene).
 
-## Keep native sections separate
+## Keep native grammar lossless
 
 The section body formats are unchanged from a cart:
 
@@ -200,9 +240,11 @@ The section body formats are unchanged from a cart:
 - `sfx`: note rows grouped by numeric effect ID;
 - `music`: tempo plus patterns that schedule SFX IDs.
 
-The compiler emits native sections in canonical order and unknown sections in
-name order. It normalizes line endings, adds one final newline per section,
-parses the complete result, and only then publishes it.
+These bodies may live in independent `[sections]` files or the three audio
+bodies may share a versioned `[audio].bundle`. The compiler emits native
+sections in canonical order and unknown sections in name order. It normalizes
+line endings, adds one final newline per section, parses the complete result,
+and only then publishes it.
 
 ## Build and iterate
 
@@ -242,8 +284,10 @@ the cart first when using them.
 1. Create the source layout and copy the body of `__lua__` to `lua/main.lua`.
 2. Move cohesive Lua tables into modules, return their public table, and replace
    the old inline definitions with literal `require` calls.
-3. Copy each native section body, without its header, into its matching data or
-   audio file. Register those files under `[sections]`.
+3. Copy each native section body, without its header, into its matching data
+   file and register it under `[sections]`. For audio, either do the same or
+   preserve the three headers behind `console-music 1` in a `.cmusic` file and
+   register `[audio].bundle`.
 4. For a byte-oriented migration, copy the old `__sprites__` body to a file and
    register it as `[sections].sprites`. To adopt image tooling, instead export
    meaningful regions with `console sprite export` or prepare new tile-aligned

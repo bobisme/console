@@ -395,6 +395,9 @@ root = "lua"                      # module root; used by module bundling
 [build]
 output = "build/game.cart"        # optional; this is the default
 
+[audio]
+bundle = "audio/game.cmusic"      # optional lossless native audio bundle
+
 [[sprites]]
 name = "player"                   # [a-z0-9_]+; generated gfx name
 source = "art/player.png"         # path confined to the project
@@ -414,9 +417,6 @@ max_colors = 6
 [sections]
 map = "map.txt"
 gfx_meta = "gfx-meta.txt"
-instruments = "instruments.txt"
-sfx = "sfx.txt"
-music = "music.txt"
 design_notes = "notes.txt"        # unknown cart sections remain allowed
 ```
 
@@ -442,6 +442,33 @@ animations may refer to generated sprites. Duplicate authored/generated names
 are rejected by final cart validation. The `sprite_assets` report records each
 canonical PNG source, placement, dimensions, anchor, conversion policy, color
 budget and resulting palette indices.
+
+`[audio].bundle` is an alternative to three raw audio section sources. Its file
+starts with `console-music 1`, followed by any of `__instruments__`, `__sfx__`,
+and `__music__`, using their ordinary cart bodies and grammar:
+
+```text
+console-music 1
+__instruments__
+inst lead wave=1 env=0,8,3 vib=12,3,2 echo=3
+master drive=1 tone=1 hiss=0
+echo delay=12 feedback=4 level=3
+__sfx__
+sfx 0 speed=auto
+C4 lead 6 vib
+E4 lead 6 arp4,7
+__music__
+bpm=120 rows_per_beat=4
+pat 0 loop=0 : 0 - - -
+```
+
+The wrapper is a versioned container, not another notation language. Build
+validation uses the same cart parser and inserts each body into its canonical
+section. `[audio].bundle` cannot be combined with `[sections].instruments`,
+`[sections].sfx`, or `[sections].music`; projects that prefer three independent
+headerless files may keep those mappings and omit `[audio]`. The canonical
+bundle path is included in build reports and content identity like every other
+input.
 
 `lua.entry` must be inside the canonical `lua.root`. Project Lua may use only
 literal module imports in either of these forms:
@@ -719,8 +746,10 @@ commands continue to operate on a cart file directly (no stepping): `console spr
 <render|atlas|strip|onion|diff|ghost|gif|lint|edit|dump|poke>`, `console map
 <render|dump|lint|edit|poke>`, `console music
 <score|lint|piano-roll|render|edit|import-abc>`. The source-authoring commands
-`console music midi-to-abc` and `console music play` instead consume MIDI/ABC
-files without loading a cart.
+`console music midi-to-abc` consumes MIDI without loading a cart. `console
+music play` accepts MIDI/ABC sources as well as a native `.cmusic`, cart, or
+project; native inputs are compiled/parsed and reduced to an audio-only cart
+before playback.
 
 For a repeatable multi-stage session, `console playtest <cart|project>
 --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format
@@ -1655,7 +1684,7 @@ sequencer computes it, so intro/loop frame counts are exact.
 | `music piano-roll <cart> [--song N \| --patterns a,b,c] [--cell N] [--row-h N] -o out.png` | semitone (y) x frame (x) grid, one console-palette color per channel, brightness = velocity, C-boundary gridlines with octave numbers in a gutter, pattern boundaries as vertical lines, loop point as a bright bar |
 | `music render <cart> [--song N] [--loops K=2 \| --frames F] [--seed N] -o out.wav` | boots the cart, calls `music(N)` via eval, steps until the intro plus K loop passes have played, writes the WAV |
 | `music midi-to-abc <file.mid> [-o file.abc]` | parses bounded format-0/1 PPQ MIDI, splits overlapping notes into monophonic ABC voices, and writes ABC to stdout or atomically to `-o` |
-| `music play <file.abc\|file.mid\|file.midi> [--seconds N] [--volume 0..1] [--repeat] [--dry-run]` | decodes a source score, maps it deterministically onto the six console voices, renders through the core synth, and streams it to the default host audio device at a default 0.5 linear output gain; `--repeat` loops until interrupted and `--dry-run` stops after one decode/render pass |
+| `music play <file.abc\|file.mid\|file.cmusic\|file.cart\|project> [--song N] [--seconds N] [--volume 0..1] [--repeat] [--dry-run]` | previews ABC/MIDI through the six console voices, or isolates native audio from a `.cmusic`, cart, or project and renders its exact instruments/effects/song chain; streams to the default host device at 0.5 gain unless overridden |
 
 The score's row axis is really the **frame**: one line per frame at which any
 slot starts a row, so slots at different `speed=` values stay time-aligned.
@@ -1672,10 +1701,9 @@ pattern restarts — counts a loop pass. Music halting ends the render there.
 One spare loop pass past the plan is the safety ceiling; `--frames F`
 bypasses the whole mechanism.
 
-### Source music conversion and preview
+### Source conversion and native music playback
 
-`music midi-to-abc` and `music play` are source-authoring tools: they do not
-load or mutate a cart, and they have no RPC mirror. MIDI input is capped at 16
+`music midi-to-abc` is a source-authoring tool and has no RPC mirror. MIDI input is capped at 16
 MiB, one million events, 250,000 notes, and metrical PPQ timing. Standard MIDI
 format 0 and 1 are accepted; independent-song format 2 and SMPTE timing are
 rejected by name. Note-on velocity zero is note-off, program changes select a
@@ -1692,16 +1720,35 @@ converter warns; direct MIDI preview remains tempo-exact.
 If the initial microseconds-per-quarter value is not an integer BPM, `Q:` is
 rounded to the nearest BPM and that loss is also reported.
 
-Preview is scheduled on the console's 60 Hz audio-frame boundary and rendered
+ABC/MIDI preview is scheduled on the console's 60 Hz audio-frame boundary and rendered
 by `console-core`'s oscillator, click ramp, mixer, and 44.1 kHz output path.
-Native playback applies `--volume` as a linear gain after core rendering and
+For `.cmusic`, `.cart`, and project inputs, `music play` accepts `--song N`
+(default: the lowest defined pattern), copies the native audio sections into an
+audio-only cart, and runs the ordinary sequencer. Named instruments, FM,
+wavetables, envelopes, row effects, ducking, master processing, echo, tempo,
+and pattern form therefore use the same parser and synthesis path as the game.
+The game Lua is intentionally excluded so menu logic and incidental SFX cannot
+alter an audition. A native song's intro plays once and its authored loop body
+repeats until Ctrl-C. `--repeat` restarts a native one-shot; `--seconds` instead
+selects a finite rendered prefix, which `--repeat` may loop.
+
+Device playback keeps that audio-only `Console` alive on a renderer thread and
+feeds a bounded two-second frame queue, rather than caching the first loop as
+PCM. Stateful oscillator phase, modulation, tone filtering, noise, and echo
+therefore continue across every authored loop boundary. When a one-shot stops,
+playback drains the core's following click-guard release frame before ending or
+restarting, then tapers its final 64 samples so post-voice echo also reaches a
+silent seam. An explicit `--seconds` cut that lands mid-note applies the same
+taper before the prefix ends.
+
+All playback applies `--volume` as a linear gain after core rendering and
 before host resampling/sample conversion. It accepts 0 through 1 and defaults
 to 0.5; the core render remains unchanged, including under `--dry-run`.
-`--repeat` wraps the resampling cursor over the rendered sample pass until the
-process receives Ctrl-C. A simultaneous `--seconds N` selects the prefix that
-is looped. The final silent release frame remains in that pass, giving every
-wrap a click-free boundary. Under `--dry-run`, repeat mode is reported but the
-command exits after validating one pass.
+For ABC/MIDI, `--repeat` wraps the rendered score until interrupted and a
+simultaneous `--seconds N` selects the prefix. Under `--dry-run`, repeat and
+authored-loop modes are reported but the command exits after parsing,
+validating, and planning the native song without opening a device or allocating
+rendered PCM.
 At most six notes sound at once. The allocator reuses a source voice when all
 channels are occupied, otherwise steals the oldest lowest-velocity voice and
 reports the count. GM percussion uses noise; program families choose pulse,

@@ -15,7 +15,8 @@
 //!   in-place cart transforms for the `__map__` tile grid.
 //! - [`music`] — music authoring tooling: score/lint/piano-roll inspection,
 //!   cart WAV rendering and transforms, ABC import, MIDI-to-ABC conversion,
-//!   and ABC/MIDI playback through the core synth.
+//!   and ABC/MIDI plus native `.cmusic`/cart/project playback through the core
+//!   synth.
 //! - [`playtest`] — ordered, versioned scenario execution over one session.
 
 pub mod artifact;

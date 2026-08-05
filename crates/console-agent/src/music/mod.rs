@@ -15,8 +15,9 @@
 //! `__sfx__` through [`sfxtext`]. Like every other cart-mutating tool here
 //! they are **CLI only** — see the note in `rpc.rs`.
 //! [`midi`] and [`preview`] sit before that reduction step: they convert MIDI
-//! into editable ABC and audition MIDI/ABC through the real console synth
-//! without creating or mutating a cart.
+//! into editable ABC, audition MIDI/ABC through a deterministic preview
+//! scheduler, and play `.cmusic`, carts, or projects through the exact native
+//! audio grammar and runtime.
 //!
 //! The one concept the whole module shares is the **song plan**
 //! ([`SongPlan`]): `__music__` is not a flat list of patterns but a chain —
@@ -29,6 +30,7 @@
 pub mod abc;
 pub mod lint;
 pub mod midi;
+pub mod native;
 pub mod preview;
 pub mod render;
 pub mod roll;
@@ -518,7 +520,7 @@ usage:
   console music edit       <cart> <transpose|copy|shift-rows|set-vol|set-inst|stretch> ...
   console music import-abc <cart> <file.abc|-> --sfx <start-id> [--inst NAME] [--speed N]
   console music midi-to-abc <in-file.mid> [-o <out-file.abc>]
-  console music play       <file.abc|file.mid> [--seconds N] [--volume 0..1] [--repeat] [--dry-run]
+  console music play       <file.abc|file.mid|file.cmusic|file.cart|project> [--song N] [--seconds N] [--volume 0..1] [--repeat] [--dry-run]
   (--song N means music(N): the chain is followed from pattern N, so `score`
    and `piano-roll` show the whole song, intro and loop body. --song defaults
    to the lowest defined pattern id. `edit` and `import-abc` rewrite the cart
