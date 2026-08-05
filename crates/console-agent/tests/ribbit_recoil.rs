@@ -297,27 +297,43 @@ fn gameplay_foreground_keeps_a_distinct_collision_value_hierarchy() {
 
     let trace = session.draw_events(None, None).unwrap();
     assert_eq!(trace.dropped, 0, "readability trace must be complete");
-    let backdrop = trace
-        .events
-        .iter()
-        .find(|record| {
-            record.event.op == "rectfill"
-                && record.event.details.color == Some(49)
-                && record.event.fill_pattern == 0xaaaa
-                && record.event.world_bounds.x == -2
-                && record.event.world_bounds.y == 300
-                && record.event.world_bounds.w == 196
-        })
-        .expect("the half-tone backdrop mute must be drawn");
+    let patterned_veil = trace.events.iter().find(|record| {
+        record.event.op == "rectfill"
+            && record.event.details.color == Some(49)
+            && record.event.fill_pattern == 0xaaaa
+            && record.event.world_bounds.x == -2
+            && record.event.world_bounds.y == 300
+            && record.event.world_bounds.w == 196
+    });
+    assert!(
+        patterned_veil.is_none(),
+        "a screen-space halftone backdrop shimmers when the camera moves"
+    );
     let map = trace
         .events
         .iter()
         .find(|record| record.event.op == "map")
         .expect("the collision map must be drawn");
-    assert_eq!(backdrop.frame, map.frame);
+    let dimmed_architecture = trace.events.iter().find(|record| {
+        record.index < map.index
+            && record
+                .event
+                .draw_palette
+                .iter()
+                .any(|remap| remap.from == 59 && remap.to == 56)
+            && record
+                .event
+                .draw_palette
+                .iter()
+                .any(|remap| remap.from == 31 && remap.to == 29)
+    });
     assert!(
-        backdrop.index < map.index,
-        "the full-value collision map must be drawn after the muted architecture"
+        dimmed_architecture.is_some(),
+        "architecture must draw through the stable dim palette before the collision map"
+    );
+    assert!(
+        map.event.draw_palette.is_empty(),
+        "the full-value collision map must restore the authored palette"
     );
 
     let framebuffer = session.console().unwrap().framebuffer();
