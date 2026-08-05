@@ -1655,7 +1655,7 @@ sequencer computes it, so intro/loop frame counts are exact.
 | `music piano-roll <cart> [--song N \| --patterns a,b,c] [--cell N] [--row-h N] -o out.png` | semitone (y) x frame (x) grid, one console-palette color per channel, brightness = velocity, C-boundary gridlines with octave numbers in a gutter, pattern boundaries as vertical lines, loop point as a bright bar |
 | `music render <cart> [--song N] [--loops K=2 \| --frames F] [--seed N] -o out.wav` | boots the cart, calls `music(N)` via eval, steps until the intro plus K loop passes have played, writes the WAV |
 | `music midi-to-abc <file.mid> [-o file.abc]` | parses bounded format-0/1 PPQ MIDI, splits overlapping notes into monophonic ABC voices, and writes ABC to stdout or atomically to `-o` |
-| `music play <file.abc\|file.mid\|file.midi> [--seconds N] [--dry-run]` | decodes a source score, maps it deterministically onto the six console voices, renders through the core synth, and streams it to the default host audio device; `--dry-run` stops after decode/render |
+| `music play <file.abc\|file.mid\|file.midi> [--seconds N] [--volume 0..1] [--dry-run]` | decodes a source score, maps it deterministically onto the six console voices, renders through the core synth, and streams it to the default host audio device at a default 0.5 linear output gain; `--dry-run` stops after decode/render |
 
 The score's row axis is really the **frame**: one line per frame at which any
 slot starts a row, so slots at different `speed=` values stay time-aligned.
@@ -1694,6 +1694,9 @@ rounded to the nearest BPM and that loss is also reported.
 
 Preview is scheduled on the console's 60 Hz audio-frame boundary and rendered
 by `console-core`'s oscillator, click ramp, mixer, and 44.1 kHz output path.
+Native playback applies `--volume` as a linear gain after core rendering and
+before host resampling/sample conversion. It accepts 0 through 1 and defaults
+to 0.5; the core render remains unchanged, including under `--dry-run`.
 At most six notes sound at once. The allocator reuses a source voice when all
 channels are occupied, otherwise steals the oldest lowest-velocity voice and
 reports the count. GM percussion uses noise; program families choose pulse,

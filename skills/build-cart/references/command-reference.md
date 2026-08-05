@@ -484,6 +484,7 @@ console music midi-to-abc <in-file.mid>
   [(-o|--out) out-file.abc]
 console music play <file.abc|file.mid|file.midi>
   [--seconds N]
+  [--volume 0..1]
   [--dry-run]
 ```
 
@@ -501,9 +502,10 @@ command syntax exits 2 with usage; input, parse, and output-file failures exit
 UTF-8 input is parsed as ABC. It schedules the score onto the console's six
 voices and plays the resulting core-synth samples through the default host
 audio output. `--seconds` auditions a prefix, especially useful for long
-files. `--dry-run` still parses and renders but does not open a device; use it
-in CI and agent checks. Decode/render/device failures exit 1, while bad CLI
-syntax exits 2.
+files. `--volume` is a linear host-output gain from 0 to 1 and defaults to
+0.5. `--dry-run` still parses and renders but does not open a device; use it in
+CI and agent checks. Decode/render/device failures exit 1, while bad CLI syntax
+exits 2.
 
 ABC preview keeps the first `Q:` tempo and warns on later changes. It rejects
 over-complex duration arithmetic instead of wrapping or panicking. Source

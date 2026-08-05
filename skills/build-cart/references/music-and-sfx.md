@@ -336,7 +336,7 @@ format:
 
 ```bash
 console music play theme.mid
-console music play theme.abc --seconds 20
+console music play theme.abc --seconds 20 --volume 0.35
 console music play theme.mid --seconds 5 --dry-run
 ```
 
@@ -349,7 +349,8 @@ warning. `--dry-run` performs the complete parse and synth render without
 opening a host device, so it is the right automated acceptance check. ABC
 preview keeps its first `Q:` and warns if later changes occur. Playback adds a
 single console release frame after active notes so the sample stream ends at
-silence rather than clicking to zero.
+silence rather than clicking to zero. Host playback defaults to `--volume 0.5`;
+set a linear output gain from 0 (silent) to 1 (full synth output) when auditioning.
 
 Convert MIDI into editable, agent-readable ABC with either output mode:
 

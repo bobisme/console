@@ -20,6 +20,7 @@ const MAX_PREVIEW_SECONDS: f64 = 10.0 * 60.0;
 const MAX_ABC_HEADER_BYTES: usize = 64 * 1024;
 const MAX_ABC_VOICES: usize = 64;
 const MAX_ABC_EVENTS: usize = 250_000;
+const DEFAULT_PLAYBACK_VOLUME: f32 = 0.5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimedNote {
@@ -412,6 +413,7 @@ fn read_score(path: &Path) -> Result<TimedScore, String> {
 struct PlayArgs {
     input: PathBuf,
     seconds: Option<f64>,
+    volume: f32,
     dry_run: bool,
 }
 
@@ -419,6 +421,7 @@ impl PlayArgs {
     fn parse(args: &[String]) -> Result<PlayArgs, String> {
         let mut input = None;
         let mut seconds = None;
+        let mut volume = DEFAULT_PLAYBACK_VOLUME;
         let mut dry_run = false;
         let mut index = 0usize;
         while index < args.len() {
@@ -435,6 +438,17 @@ impl PlayArgs {
                     }
                     seconds = Some(parsed);
                 }
+                "--volume" => {
+                    index += 1;
+                    let value = args.get(index).ok_or("--volume requires a value")?;
+                    let parsed = value.parse::<f32>().map_err(|_| {
+                        format!("invalid --volume value {value:?} (want a number from 0 to 1)")
+                    })?;
+                    if !parsed.is_finite() || !(0.0..=1.0).contains(&parsed) {
+                        return Err("--volume must be a finite number from 0 to 1".to_string());
+                    }
+                    volume = parsed;
+                }
                 value if value.starts_with('-') => return Err(format!("unknown flag {value:?}")),
                 value => {
                     if input.replace(PathBuf::from(value)).is_some() {
@@ -447,13 +461,14 @@ impl PlayArgs {
         Ok(PlayArgs {
             input: input.ok_or("missing ABC or MIDI file")?,
             seconds,
+            volume,
             dry_run,
         })
     }
 }
 
-const PLAY_USAGE: &str =
-    "usage: console music play <file.abc|file.mid|file.midi> [--seconds N] [--dry-run]";
+const PLAY_USAGE: &str = "usage: console music play <file.abc|file.mid|file.midi> \
+    [--seconds N] [--volume 0..1] [--dry-run]";
 
 pub fn cli_play(args: &[String]) -> i32 {
     if crate::help_requested(args) {
@@ -480,27 +495,35 @@ pub fn cli_play(args: &[String]) -> i32 {
 fn run_play(args: PlayArgs) -> Result<(), String> {
     let score = read_score(&args.input)?;
     let max_frames = args.seconds.map(|seconds| (seconds * 60.0).ceil() as u64);
-    let (samples, stats) = render_score(&score, max_frames)?;
+    let (mut samples, stats) = render_score(&score, max_frames)?;
     let program_samples = samples
         .len()
         .saturating_sub(stats.release_frames as usize * SAMPLES_PER_FRAME);
     let rendered_seconds = program_samples as f64 / f64::from(SAMPLE_RATE);
     eprintln!(
-        "{}: {:.2}s + {} release frame(s), {} note(s), {} channel steal(s){}",
+        "{}: {:.2}s + {} release frame(s), {} note(s), {} channel steal(s), volume {:.2}{}",
         score.title,
         rendered_seconds,
         stats.release_frames,
         stats.notes_started,
         stats.channel_steals,
+        args.volume,
         if args.dry_run { " (dry run)" } else { "" }
     );
     for warning in &score.warnings {
         eprintln!("warning: {warning}");
     }
     if !args.dry_run {
+        apply_playback_volume(&mut samples, args.volume);
         play_samples(Arc::from(samples))?;
     }
     Ok(())
+}
+
+fn apply_playback_volume(samples: &mut [f32], volume: f32) {
+    for sample in samples {
+        *sample *= volume;
+    }
 }
 
 fn play_samples(samples: Arc<[f32]>) -> Result<(), String> {
@@ -614,6 +637,43 @@ fn playback_status(done: &AtomicBool, error: &Mutex<Option<String>>) -> Result<b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn playback_volume_defaults_to_half_and_accepts_the_unit_range() {
+        assert_eq!(
+            PlayArgs::parse(&args(&["tune.mid"])).unwrap().volume,
+            DEFAULT_PLAYBACK_VOLUME
+        );
+        assert_eq!(
+            PlayArgs::parse(&args(&["tune.mid", "--volume", "0"]))
+                .unwrap()
+                .volume,
+            0.0
+        );
+        assert_eq!(
+            PlayArgs::parse(&args(&["--volume", "1", "tune.mid"]))
+                .unwrap()
+                .volume,
+            1.0
+        );
+        for value in ["-0.01", "1.01", "NaN", "inf", "loud"] {
+            let error = PlayArgs::parse(&args(&["tune.mid", "--volume", value])).unwrap_err();
+            assert!(error.contains("--volume"), "{value}: {error}");
+        }
+    }
+
+    #[test]
+    fn playback_volume_is_linear_output_gain() {
+        let mut samples = [0.8, -0.8, 0.0];
+        apply_playback_volume(&mut samples, 0.5);
+        assert_eq!(samples, [0.4, -0.4, 0.0]);
+        apply_playback_volume(&mut samples, 0.0);
+        assert_eq!(samples, [0.0; 3]);
+    }
 
     #[test]
     fn abc_polyphony_uses_multiple_source_voices() {

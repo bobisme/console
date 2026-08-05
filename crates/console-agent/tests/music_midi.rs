@@ -90,8 +90,24 @@ fn play_dry_run_decodes_midi_and_abc_without_an_audio_device() {
         assert!(output.stdout.is_empty());
         let report = String::from_utf8_lossy(&output.stderr);
         assert!(report.contains("0.25s"), "{report}");
+        assert!(report.contains("volume 0.50"), "{report}");
         assert!(report.contains("(dry run)"), "{report}");
     }
+
+    let explicit = run(&[
+        "music",
+        "play",
+        abc.to_str().unwrap(),
+        "--volume",
+        "0.25",
+        "--dry-run",
+    ]);
+    assert!(explicit.status.success());
+    assert!(
+        String::from_utf8_lossy(&explicit.stderr).contains("volume 0.25"),
+        "{}",
+        String::from_utf8_lossy(&explicit.stderr)
+    );
 
     let _ = std::fs::remove_file(midi);
     let _ = std::fs::remove_file(abc);
@@ -99,9 +115,22 @@ fn play_dry_run_decodes_midi_and_abc_without_an_audio_device() {
 
 #[test]
 fn play_usage_errors_are_distinct_from_runtime_errors() {
+    let help = run(&["music", "play", "--help"]);
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--volume 0..1"));
+    assert!(help.stderr.is_empty());
+
     let usage = run(&["music", "play", "--seconds", "nope"]);
     assert_eq!(usage.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&usage.stderr).contains("usage:"));
+
+    for volume in ["-0.1", "1.1", "NaN", "loud"] {
+        let usage = run(&["music", "play", "tune.mid", "--volume", volume]);
+        assert_eq!(usage.status.code(), Some(2), "{volume}");
+        let error = String::from_utf8_lossy(&usage.stderr);
+        assert!(error.contains("--volume"), "{volume}: {error}");
+        assert!(error.contains("usage:"), "{volume}: {error}");
+    }
 
     let missing = run(&["music", "play", "/definitely/missing/tune.mid", "--dry-run"]);
     assert_eq!(missing.status.code(), Some(1));

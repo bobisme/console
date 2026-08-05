@@ -518,7 +518,7 @@ usage:
   console music edit       <cart> <transpose|copy|shift-rows|set-vol|set-inst|stretch> ...
   console music import-abc <cart> <file.abc|-> --sfx <start-id> [--inst NAME] [--speed N]
   console music midi-to-abc <in-file.mid> [-o <out-file.abc>]
-  console music play       <file.abc|file.mid> [--seconds N] [--dry-run]
+  console music play       <file.abc|file.mid> [--seconds N] [--volume 0..1] [--dry-run]
   (--song N means music(N): the chain is followed from pattern N, so `score`
    and `piano-roll` show the whole song, intro and loop body. --song defaults
    to the lowest defined pattern id. `edit` and `import-abc` rewrite the cart

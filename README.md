@@ -138,12 +138,14 @@ stdout by default:
 console music midi-to-abc theme.mid > theme.abc
 console music midi-to-abc theme.mid -o theme.abc
 console music play theme.mid
-console music play theme.abc --seconds 15
+console music play theme.abc --seconds 15 --volume 0.35
 ```
 
 `music play --dry-run` decodes and renders without opening an audio device,
-which makes source validation usable in CI. Cart import remains an explicit
-later step via `music import-abc`.
+which makes source validation usable in CI. Playback defaults to `--volume
+0.5`; pass a value from 0 (silent) to 1 (full synth output) to change its
+linear output gain. Cart import remains an explicit later step via `music
+import-abc`.
 
 Run a cart headlessly for 90 frames (idle 30, hold right 30, idle 30) and
 take a 4x screenshot — this is exactly how an agent iterates on a cart:
