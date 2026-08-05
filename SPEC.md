@@ -718,7 +718,9 @@ memory without writing `[build].output`. Low-level inspection and mutation
 commands continue to operate on a cart file directly (no stepping): `console sprite
 <render|atlas|strip|onion|diff|ghost|gif|lint|edit|dump|poke>`, `console map
 <render|dump|lint|edit|poke>`, `console music
-<score|lint|piano-roll|render|edit|import-abc>`.
+<score|lint|piano-roll|render|edit|import-abc>`. The source-authoring commands
+`console music midi-to-abc` and `console music play` instead consume MIDI/ABC
+files without loading a cart.
 
 For a repeatable multi-stage session, `console playtest <cart|project>
 --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format
@@ -1652,6 +1654,8 @@ sequencer computes it, so intro/loop frame counts are exact.
 | `music lint <cart> [--strict]` | JSON diagnostics + per-pattern measurements. Exit 0 unless `--strict` |
 | `music piano-roll <cart> [--song N \| --patterns a,b,c] [--cell N] [--row-h N] -o out.png` | semitone (y) x frame (x) grid, one console-palette color per channel, brightness = velocity, C-boundary gridlines with octave numbers in a gutter, pattern boundaries as vertical lines, loop point as a bright bar |
 | `music render <cart> [--song N] [--loops K=2 \| --frames F] [--seed N] -o out.wav` | boots the cart, calls `music(N)` via eval, steps until the intro plus K loop passes have played, writes the WAV |
+| `music midi-to-abc <file.mid> [-o file.abc]` | parses bounded format-0/1 PPQ MIDI, splits overlapping notes into monophonic ABC voices, and writes ABC to stdout or atomically to `-o` |
+| `music play <file.abc\|file.mid\|file.midi> [--seconds N] [--dry-run]` | decodes a source score, maps it deterministically onto the six console voices, renders through the core synth, and streams it to the default host audio device; `--dry-run` stops after decode/render |
 
 The score's row axis is really the **frame**: one line per frame at which any
 slot starts a row, so slots at different `speed=` values stay time-aligned.
@@ -1667,6 +1671,42 @@ put once the pattern has run its full duration, which is how a `loop=<self>`
 pattern restarts — counts a loop pass. Music halting ends the render there.
 One spare loop pass past the plan is the safety ceiling; `--frames F`
 bypasses the whole mechanism.
+
+### Source music conversion and preview
+
+`music midi-to-abc` and `music play` are source-authoring tools: they do not
+load or mutate a cart, and they have no RPC mirror. MIDI input is capped at 16
+MiB, one million events, 250,000 notes, and metrical PPQ timing. Standard MIDI
+format 0 and 1 are accepted; independent-song format 2 and SMPTE timing are
+rejected by name. Note-on velocity zero is note-off, program changes select a
+preview waveform family, tempo changes are honored during direct MIDI
+playback, and notes outside C0-B7 are octave-folded with a warning. Sustain
+pedal is not modeled and likewise warns.
+
+ABC conversion uses `L:1/(4*PPQ)`, so one ABC length unit is one MIDI tick.
+Each track/channel is greedily split into as many monophonic `V:` lanes as its
+overlaps require; rests preserve gaps and pitches use explicit accidentals.
+The initial tempo and first time signature are written in the header. Later
+tempo changes cannot be represented by the current ABC event model, so the
+converter warns; direct MIDI preview remains tempo-exact.
+If the initial microseconds-per-quarter value is not an integer BPM, `Q:` is
+rounded to the nearest BPM and that loss is also reported.
+
+Preview is scheduled on the console's 60 Hz audio-frame boundary and rendered
+by `console-core`'s oscillator, click ramp, mixer, and 44.1 kHz output path.
+At most six notes sound at once. The allocator reuses a source voice when all
+channels are occupied, otherwise steals the oldest lowest-velocity voice and
+reports the count. GM percussion uses noise; program families choose pulse,
+square, triangle, or saw. CPAL resamples the mono output linearly to the
+default device's rate and duplicates it over that device's channels. A source
+preview is capped at ten minutes; `--seconds` is the intended bounded audition
+path for longer files. Source reads are bounded while streaming, not merely by
+a prior metadata check. ABC preview additionally caps the shared header at 64
+KiB, voices at 64, and total events at 250,000; oversized or arithmetically
+unrepresentable durations are decode errors. Only the first `Q:` remains in
+force, with a warning if a later tempo differs. Preview releases live channels
+through one final synth frame so the output ends at silence rather than a hard
+sample edge.
 
 `music lint`'s rules, each of them a documented engine behaviour that is
 invisible in the cart text (severity in brackets):
@@ -1826,10 +1866,12 @@ ids written with their row counts, the split points, a suggested `pat` line
 per sfx for `__music__` (consecutive ids chain by the sequencer's "next
 existing pattern" rule) and every warning.
 
-**No RPC mirror** for either `music edit` or `music import-abc`, matching
-`sprite edit`/`sprite poke` and `map edit`/`map poke`: mutating a cart file is
-a CLI-only operation by design, and an `rpc` session's console would disagree
-with the file until the next `load_cart`.
+**No RPC mirror** for `music edit` or `music import-abc`, matching `sprite
+edit`/`sprite poke` and `map edit`/`map poke`: mutating a cart file is CLI-only,
+because an RPC session's console would disagree with the file until the next
+`load_cart`. `music midi-to-abc` and `music play` are also CLI-only for a
+different reason: they operate on external source scores, and playback owns a
+host audio-device stream rather than the RPC session's loaded cart.
 
 Phase 3 remaining (planned): `music summarize` (chord skeleton per bar),
 auto-echo onto a free channel.

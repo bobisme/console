@@ -3694,6 +3694,94 @@ pub struct Audio {
     out: Box<AudioFrame>,
 }
 
+/// A small host-facing adapter around the console's real six-channel synth.
+///
+/// Authoring tools use this to audition source music without manufacturing a
+/// temporary cart. It deliberately exposes only flat built-in voices: timing,
+/// channel allocation, and file parsing remain host concerns, while waveform
+/// generation, click ramps, mixing, and sample rate stay exactly the same as
+/// cart playback.
+#[derive(Debug)]
+pub struct PreviewSynth {
+    audio: Audio,
+}
+
+impl Default for PreviewSynth {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PreviewSynth {
+    pub fn new() -> PreviewSynth {
+        PreviewSynth {
+            audio: Audio::new(AudioBank::default()),
+        }
+    }
+
+    /// Start or retune one preview channel.
+    pub fn note_on(
+        &mut self,
+        channel: usize,
+        note: u8,
+        wave: u8,
+        volume: u8,
+    ) -> Result<(), String> {
+        if channel >= CHANNEL_COUNT {
+            return Err(format!(
+                "preview channel {channel} out of range (expected 0-{})",
+                CHANNEL_COUNT - 1
+            ));
+        }
+        if usize::from(note) >= NOTE_FREQ.len() {
+            return Err(format!(
+                "preview note {note} out of range (expected 0-{})",
+                NOTE_FREQ.len() - 1
+            ));
+        }
+        if wave >= WAVE_COUNT {
+            return Err(format!(
+                "preview wave {wave} out of range (expected 0-{})",
+                WAVE_COUNT - 1
+            ));
+        }
+        if volume > MAX_VOL {
+            return Err(format!(
+                "preview volume {volume} out of range (expected 0-{MAX_VOL})"
+            ));
+        }
+
+        let voice = &mut self.audio.channels[channel];
+        voice.owner = Owner::Sfx;
+        voice.cursor = None;
+        voice.md = None;
+        voice.echo_send = 0;
+        voice.set_fm(None);
+        voice.trem = 1.0;
+        voice.set_voice(note_increment(note), wave, volume);
+        Ok(())
+    }
+
+    /// Release one preview channel through the console click guard.
+    pub fn note_off(&mut self, channel: usize) -> Result<(), String> {
+        let Some(voice) = self.audio.channels.get_mut(channel) else {
+            return Err(format!(
+                "preview channel {channel} out of range (expected 0-{})",
+                CHANNEL_COUNT - 1
+            ));
+        };
+        voice.stop();
+        Ok(())
+    }
+
+    /// Render the next 1/60-second console audio frame.
+    pub fn render_frame(&mut self) -> &AudioFrame {
+        self.audio.render();
+        self.audio.advance();
+        self.audio.frame()
+    }
+}
+
 impl std::fmt::Debug for Audio {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Audio")
@@ -5532,5 +5620,21 @@ mod tests {
                 "note {note}: {wraps} wraps/s vs {want} Hz"
             );
         }
+    }
+
+    #[test]
+    fn preview_synth_is_the_console_mixer_with_guarded_controls() {
+        let mut synth = PreviewSynth::new();
+        assert!(synth.note_on(CHANNEL_COUNT, 48, 2, 6).is_err());
+        assert!(synth.note_on(0, 96, 2, 6).is_err());
+        assert!(synth.note_on(0, 48, WAVE_COUNT, 6).is_err());
+        synth.note_on(0, 48, 2, 6).unwrap();
+        let frame = synth.render_frame();
+        assert!(frame.iter().any(|sample| *sample != 0.0));
+        synth.note_off(0).unwrap();
+        for _ in 0..2 {
+            synth.render_frame();
+        }
+        assert!(synth.render_frame().iter().all(|sample| *sample == 0.0));
     }
 }

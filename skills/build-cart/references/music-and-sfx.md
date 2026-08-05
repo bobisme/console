@@ -15,6 +15,7 @@ create responsive game SFX, mix safely, and inspect audio without guessing.
 - [Mixing, ducking, master, and echo](#mixing-ducking-master-and-echo)
 - [Wavetable and FM recipes](#wavetable-and-fm-recipes)
 - [Authoring tools](#authoring-tools)
+- [MIDI and ABC source preview](#midi-and-abc-source-preview)
 - [ABC import](#abc-import)
 - [Inspection and acceptance](#inspection-and-acceptance)
 - [Common failures](#common-failures)
@@ -327,6 +328,48 @@ Then run the chosen command without `--dry-run`, reread score, and lint again.
 Every write operation preserves unrelated text and reparses before commit.
 Only `transpose` accepts an ID/range/list selection; the other edit verbs take
 the single IDs in their syntax, so repeat the command for multiple SFX.
+
+## MIDI and ABC source preview
+
+Audition source music before turning it into the console's row-limited cart
+format:
+
+```bash
+console music play theme.mid
+console music play theme.abc --seconds 20
+console music play theme.mid --seconds 5 --dry-run
+```
+
+Playback uses the real console oscillator, click guard, mixer, 44.1 kHz sample
+path, and six-channel limit. MIDI program families are mapped to representative
+pulse/square/triangle/saw voices and channel 10 percussion to noise; velocity
+maps to volume. When polyphony exceeds six, playback reports channel steals.
+MIDI tempo changes are honored. Notes outside C0-B7 are octave-folded with a
+warning. `--dry-run` performs the complete parse and synth render without
+opening a host device, so it is the right automated acceptance check. ABC
+preview keeps its first `Q:` and warns if later changes occur. Playback adds a
+single console release frame after active notes so the sample stream ends at
+silence rather than clicking to zero.
+
+Convert MIDI into editable, agent-readable ABC with either output mode:
+
+```bash
+console music midi-to-abc theme.mid > theme.abc
+console music midi-to-abc theme.mid -o theme.abc
+```
+
+The converter supports format-0/1 PPQ MIDI. It preserves tick gaps and note
+durations, writes explicit pitch accidentals, and splits overlapping parts into
+monophonic `V:` lanes. Multiple tempo events warn because current ABC preview
+and import use the initial header tempo; a non-integer initial BPM is rounded
+to the nearest `Q:` BPM and warns. Keep the MIDI source for tempo-exact preview.
+Format 2, SMPTE timing, and oversized inputs fail explicitly.
+
+This conversion does **not** spend SFX IDs or choose cart loop structure. Once
+the ABC is musically useful, select one monophonic voice (or split voices into
+separate files), then use `music import-abc` and arrange the suggested pattern
+lines. Treat that reduction as orchestration: the preview can play six live
+voices, while each imported melody still consumes tracker rows and SFX IDs.
 
 ## ABC import
 

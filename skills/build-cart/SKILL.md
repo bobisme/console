@@ -112,7 +112,8 @@ inspection methods never rewrite the cart file.
 - Use `scene compile ... --check` to gate deterministic generated environment
   assets; keep exact Apollo64 mapping unless lossy conversion is intentional.
 - Use `music edit` and `music import-abc` instead of manually shifting tracker
-  rows or respelling every note.
+  rows or respelling every note. Use `music midi-to-abc` and `music play` to
+  inspect and audition source music before spending the cart's row budget.
 - Run write commands with `--dry-run` first when changing a nontrivial region.
   They reparse before writing, but the preview keeps intent reviewable.
 - Use `--help` as live syntax authority if the installed tool and this checked-out
@@ -136,6 +137,8 @@ For authored art or maps:
 
 For audio:
 
+- Audition an ABC/MIDI source with `music play`; use `--dry-run` where no audio
+  device is available.
 - Read `music score`, run `music lint`, and inspect the piano roll.
 - Verify the running sequence with `audio_events` and the mix with `audio_stats`.
 - Render a WAV for a human listening pass when musical quality matters.

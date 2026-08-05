@@ -13,9 +13,9 @@
 //!   diffing, signal stats and the semitone-grid spectrogram.
 //! - [`map`] — map authoring tooling: render/dump/lint plus poke/edit
 //!   in-place cart transforms for the `__map__` tile grid.
-//! - [`music`] — music authoring tooling: score (the song as text), lint
-//!   (JSON diagnostics), piano-roll (score-level PNG) and render (a WAV of a
-//!   whole song, loop detection included).
+//! - [`music`] — music authoring tooling: score/lint/piano-roll inspection,
+//!   cart WAV rendering and transforms, ABC import, MIDI-to-ABC conversion,
+//!   and ABC/MIDI playback through the core synth.
 //! - [`playtest`] — ordered, versioned scenario execution over one session.
 
 pub mod artifact;

@@ -130,6 +130,21 @@ and HEAD refresh. The complete setup and single-cart migration walkthrough is
 uses every native cart section is in
 [examples/agent-platformer](examples/agent-platformer).
 
+MIDI and ABC sources can be auditioned through the console's own six-channel
+synth before they are reduced to cart rows. MIDI converts to pipeable ABC on
+stdout by default:
+
+```bash
+console music midi-to-abc theme.mid > theme.abc
+console music midi-to-abc theme.mid -o theme.abc
+console music play theme.mid
+console music play theme.abc --seconds 15
+```
+
+`music play --dry-run` decodes and renders without opening an audio device,
+which makes source validation usable in CI. Cart import remains an explicit
+later step via `music import-abc`.
+
 Run a cart headlessly for 90 frames (idle 30, hold right 30, idle 30) and
 take a 4x screenshot — this is exactly how an agent iterates on a cart:
 

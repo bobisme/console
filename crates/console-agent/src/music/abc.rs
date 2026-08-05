@@ -50,6 +50,9 @@ use crate::audio::note_name;
 
 use super::sfxtext::{self, EditResult, Rewrite, apply_edit_result};
 
+const MAX_ABC_LENGTH_COMPONENT: i64 = 1_000_000;
+const MAX_ABC_EVENTS: usize = 250_000;
+
 // ---------------------------------------------------------------------------
 // Rational arithmetic
 // ---------------------------------------------------------------------------
@@ -65,13 +68,57 @@ pub struct Frac {
 
 impl Frac {
     pub fn new(num: i64, den: i64) -> Frac {
-        assert!(den != 0, "zero denominator");
-        let (num, den) = if den < 0 { (-num, -den) } else { (num, den) };
+        Frac::checked_new(num, den).expect("invalid or overflowing rational")
+    }
+
+    pub fn checked_new(num: i64, den: i64) -> Option<Frac> {
+        if den == 0 {
+            return None;
+        }
+        let (num, den) = if den < 0 {
+            (num.checked_neg()?, den.checked_neg()?)
+        } else {
+            (num, den)
+        };
         let g = gcd(num.unsigned_abs(), den.unsigned_abs()).max(1) as i64;
-        Frac {
+        Some(Frac {
             num: num / g,
             den: den / g,
-        }
+        })
+    }
+
+    pub fn checked_mul(self, other: Frac) -> Option<Frac> {
+        // Cross-cancel before multiplying: ordinary musical fractions stay
+        // small, and hostile coprime products report overflow instead of
+        // panicking in debug builds or wrapping in release builds.
+        let g1 = gcd(self.num.unsigned_abs(), other.den as u64).max(1) as i64;
+        let g2 = gcd(other.num.unsigned_abs(), self.den as u64).max(1) as i64;
+        Frac::checked_new(
+            (self.num / g1).checked_mul(other.num / g2)?,
+            (self.den / g2).checked_mul(other.den / g1)?,
+        )
+    }
+
+    pub fn checked_add(self, other: Frac) -> Option<Frac> {
+        self.checked_add_sub(other, false)
+    }
+
+    pub fn checked_sub(self, other: Frac) -> Option<Frac> {
+        self.checked_add_sub(other, true)
+    }
+
+    fn checked_add_sub(self, other: Frac, subtract: bool) -> Option<Frac> {
+        let g = gcd(self.den as u64, other.den as u64).max(1) as i64;
+        let left_scale = other.den / g;
+        let right_scale = self.den / g;
+        let left = self.num.checked_mul(left_scale)?;
+        let right = other.num.checked_mul(right_scale)?;
+        let num = if subtract {
+            left.checked_sub(right)?
+        } else {
+            left.checked_add(right)?
+        };
+        Frac::checked_new(num, self.den.checked_mul(left_scale)?)
     }
 
     pub fn is_zero(self) -> bool {
@@ -95,27 +142,23 @@ impl Frac {
 impl std::ops::Mul for Frac {
     type Output = Frac;
     fn mul(self, other: Frac) -> Frac {
-        Frac::new(self.num * other.num, self.den * other.den)
+        self.checked_mul(other)
+            .expect("rational multiplication overflow")
     }
 }
 
 impl std::ops::Add for Frac {
     type Output = Frac;
     fn add(self, other: Frac) -> Frac {
-        Frac::new(
-            self.num * other.den + other.num * self.den,
-            self.den * other.den,
-        )
+        self.checked_add(other).expect("rational addition overflow")
     }
 }
 
 impl std::ops::Sub for Frac {
     type Output = Frac;
     fn sub(self, other: Frac) -> Frac {
-        Frac::new(
-            self.num * other.den - other.num * self.den,
-            self.den * other.den,
-        )
+        self.checked_sub(other)
+            .expect("rational subtraction overflow")
     }
 }
 
@@ -123,8 +166,8 @@ fn gcd(a: u64, b: u64) -> u64 {
     if b == 0 { a } else { gcd(b, a % b) }
 }
 
-fn lcm(a: i64, b: i64) -> i64 {
-    a / gcd(a.unsigned_abs(), b.unsigned_abs()).max(1) as i64 * b
+fn checked_lcm(a: i64, b: i64) -> Option<i64> {
+    (a / gcd(a.unsigned_abs(), b.unsigned_abs()).max(1) as i64).checked_mul(b)
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +267,13 @@ struct Parser {
 /// Parse an ABC tune. Errors name the offending line and token; everything
 /// recoverable becomes a warning instead.
 pub fn parse_abc(text: &str) -> Result<AbcTune, String> {
+    parse_abc_segments(&[text])
+}
+
+/// Parse logical ABC segments without concatenating them. Source preview uses
+/// this for one shared header plus one voice body, avoiding per-voice copies of
+/// a potentially large header.
+pub(crate) fn parse_abc_segments(segments: &[&str]) -> Result<AbcTune, String> {
     let mut p = Parser {
         events: Vec::new(),
         warnings: Vec::new(),
@@ -247,27 +297,31 @@ pub fn parse_abc(text: &str) -> Result<AbcTune, String> {
         body_started: false,
     };
 
-    for (n, raw) in text.lines().enumerate() {
-        p.line = n + 1;
-        let line = raw.trim_end();
-        if line.trim_start().starts_with("%%") || line.trim().is_empty() {
-            continue;
+    let mut line_number = 0usize;
+    for text in segments {
+        for raw in text.lines() {
+            line_number += 1;
+            p.line = line_number;
+            let line = raw.trim_end();
+            if line.trim_start().starts_with("%%") || line.trim().is_empty() {
+                continue;
+            }
+            // A `%` comment runs to end of line (ABC has no escape for it).
+            let line = match line.find('%') {
+                Some(at) => &line[..at],
+                None => line,
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let bytes = line.as_bytes();
+            if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+                p.field(line[0..1].chars().next().unwrap(), line[2..].trim())?;
+                continue;
+            }
+            p.start_body();
+            p.body(line)?;
         }
-        // A `%` comment runs to end of line (ABC has no escape for it).
-        let line = match line.find('%') {
-            Some(at) => &line[..at],
-            None => line,
-        };
-        if line.trim().is_empty() {
-            continue;
-        }
-        let bytes = line.as_bytes();
-        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-            p.field(line[0..1].chars().next().unwrap(), line[2..].trim())?;
-            continue;
-        }
-        p.start_body();
-        p.body(line)?;
     }
 
     if !p.bad_bars.is_empty() {
@@ -366,9 +420,17 @@ impl Parser {
                 );
             }
             'Q' => {
-                self.tempo = parse_tempo(value, self.unit());
-                if self.tempo.is_none() {
+                let parsed = parse_tempo(value, self.unit());
+                if parsed.is_none() {
                     self.warn(format!("Q:{value} not understood; tempo ignored"));
+                } else if self.tempo.is_none() {
+                    self.tempo = parsed;
+                } else if self.tempo != parsed {
+                    self.warn_once(
+                        "tempo_changes",
+                        "tempo changes after the first Q: are ignored by ABC preview/import; the initial tempo remains in force"
+                            .to_string(),
+                    );
                 }
             }
             'K' => {
@@ -454,6 +516,10 @@ impl Parser {
                         n += 1;
                         i += 1;
                     }
+                    if n > 19 {
+                        return Err(self
+                            .err("broken-rhythm run is too long (maximum 19 consecutive marks)"));
+                    }
                     // `>` = 3:1, `>>` = 7:1, `>>>` = 15:1 (and `<` mirrored).
                     let long = Frac::new((1 << (n + 1)) - 1, 1 << n);
                     let short = Frac::new(1, 1 << n);
@@ -467,10 +533,12 @@ impl Parser {
                 }
                 'Z' => {
                     // A whole-measure rest, `Z` or `Z3`.
-                    let (mult, j) = read_length(&b, i + 1);
+                    let (mult, j) = read_length(&b, i + 1).map_err(|error| self.err(error))?;
                     let bar = self.meter.unwrap_or_else(|| Frac::new(1, 1));
-                    let dur = bar * mult;
-                    self.push_rest(dur);
+                    let dur = bar
+                        .checked_mul(mult)
+                        .ok_or_else(|| self.err("measure-rest duration is too complex"))?;
+                    self.push_rest(dur)?;
                     i = j;
                 }
                 'H'..='Y' => i += 1, // single-letter decorations
@@ -545,7 +613,7 @@ impl Parser {
             .position(|&c| c == ']')
             .map(|p| i + p)
             .ok_or_else(|| self.err("unterminated chord `[`"))?;
-        let (mult, after) = read_length(b, close + 1);
+        let (mult, after) = read_length(b, close + 1).map_err(|error| self.err(error))?;
         let text: String = b[i..=close].iter().collect();
         self.warn_once(
             "chord",
@@ -628,25 +696,35 @@ impl Parser {
                 _ => break,
             }
         }
-        let (mut mult, end) = read_length(b, j);
+        let (mut mult, end) = read_length(b, j).map_err(|error| self.err(error))?;
         if let Some(s) = scale {
-            mult = mult * s;
+            mult = mult
+                .checked_mul(s)
+                .ok_or_else(|| self.err("chord note duration is too complex"))?;
         }
         if let Some(bk) = self.broken.take() {
-            mult = mult * bk;
+            mult = mult
+                .checked_mul(bk)
+                .ok_or_else(|| self.err("broken-rhythm duration is too complex"))?;
         }
-        let dur = self.unit() * mult;
+        let dur = self
+            .unit()
+            .checked_mul(mult)
+            .ok_or_else(|| self.err("note duration is too complex"))?;
         let token: String = b[i..end].iter().collect();
 
         if !self.active() {
             self.tie_pending = false;
             return Ok(end);
         }
-        self.bar_len = self.bar_len + dur;
+        self.bar_len = self
+            .bar_len
+            .checked_add(dur)
+            .ok_or_else(|| self.err("cumulative bar duration is too complex"))?;
 
         if rest {
             self.tie_pending = false;
-            self.push_rest(dur);
+            self.push_rest(dur)?;
             return Ok(end);
         }
 
@@ -666,13 +744,16 @@ impl Parser {
 
         if self.tie_pending {
             self.tie_pending = false;
+            let line = self.line;
             let merged = match self.events.last_mut() {
                 Some(AbcEvent::Note {
                     note: prev,
                     dur: pd,
                     ..
                 }) if *prev == note => {
-                    *pd = *pd + dur;
+                    *pd = pd
+                        .checked_add(dur)
+                        .ok_or_else(|| format!("abc line {line}: tied duration is too complex"))?;
                     true
                 }
                 _ => false,
@@ -685,6 +766,9 @@ impl Parser {
                 format!("a tie into {token:?} joined two different pitches; it was ignored"),
             );
         }
+        if self.events.len() >= MAX_ABC_EVENTS {
+            return Err(self.err(format!("ABC contains more than {MAX_ABC_EVENTS} events")));
+        }
         self.events.push(AbcEvent::Note {
             note,
             dur,
@@ -694,17 +778,24 @@ impl Parser {
         Ok(end)
     }
 
-    fn push_rest(&mut self, dur: Frac) {
+    fn push_rest(&mut self, dur: Frac) -> Result<(), String> {
         if !self.active() || dur.is_zero() {
-            return;
+            return Ok(());
         }
         // Adjacent rests merge: they are one silence, and merging keeps the
         // gcd (and therefore the row grid) as coarse as the music allows.
+        let line = self.line;
         if let Some(AbcEvent::Rest { dur: prev }) = self.events.last_mut() {
-            *prev = *prev + dur;
+            *prev = prev
+                .checked_add(dur)
+                .ok_or_else(|| format!("abc line {line}: rest duration is too complex"))?;
         } else {
+            if self.events.len() >= MAX_ABC_EVENTS {
+                return Err(self.err(format!("ABC contains more than {MAX_ABC_EVENTS} events")));
+            }
             self.events.push(AbcEvent::Rest { dur });
         }
+        Ok(())
     }
 
     /// `>` / `<` reach *backwards*: they lengthen the note already emitted and
@@ -713,15 +804,22 @@ impl Parser {
         if self.events.is_empty() {
             return Err(self.err("a broken-rhythm mark (`>`/`<`) with no note before it"));
         }
+        let line = self.line;
         let delta = {
             let dur = match self.events.last_mut().expect("non-empty") {
                 AbcEvent::Note { dur, .. } | AbcEvent::Rest { dur } => dur,
             };
             let before = *dur;
-            *dur = *dur * mult;
-            *dur - before
+            *dur = dur
+                .checked_mul(mult)
+                .ok_or_else(|| format!("abc line {line}: broken-rhythm duration is too complex"))?;
+            dur.checked_sub(before)
+                .ok_or_else(|| format!("abc line {line}: broken-rhythm duration is too complex"))?
         };
-        self.bar_len = self.bar_len + delta;
+        self.bar_len = self
+            .bar_len
+            .checked_add(delta)
+            .ok_or_else(|| self.err("cumulative bar duration is too complex"))?;
         Ok(())
     }
 }
@@ -760,12 +858,16 @@ fn bar_at(b: &[char], i: usize) -> Option<usize> {
 }
 
 /// ABC's length suffix: `` (1), `2`, `/`, `//`, `/2`, `3/2`.
-fn read_length(b: &[char], from: usize) -> (Frac, usize) {
+fn read_length(b: &[char], from: usize) -> Result<(Frac, usize), &'static str> {
     let mut i = from;
     let mut num: i64 = 0;
     let mut saw_num = false;
     while i < b.len() && b[i].is_ascii_digit() {
-        num = num * 10 + b[i].to_digit(10).unwrap() as i64;
+        num = num
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(b[i].to_digit(10).unwrap() as i64))
+            .filter(|value| *value <= MAX_ABC_LENGTH_COMPONENT)
+            .ok_or("ABC length component is too large")?;
         saw_num = true;
         i += 1;
     }
@@ -775,21 +877,38 @@ fn read_length(b: &[char], from: usize) -> (Frac, usize) {
         let mut d: i64 = 0;
         let mut saw = false;
         while i < b.len() && b[i].is_ascii_digit() {
-            d = d * 10 + b[i].to_digit(10).unwrap() as i64;
+            d = d
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(b[i].to_digit(10).unwrap() as i64))
+                .filter(|value| *value <= MAX_ABC_LENGTH_COMPONENT)
+                .ok_or("ABC length component is too large")?;
             saw = true;
             i += 1;
         }
-        den *= if saw { d.max(1) } else { 2 };
+        den = den
+            .checked_mul(if saw { d.max(1) } else { 2 })
+            .filter(|value| *value <= MAX_ABC_LENGTH_COMPONENT)
+            .ok_or("ABC length denominator is too large")?;
     }
-    (Frac::new(if saw_num { num.max(1) } else { 1 }, den), i)
+    let frac = Frac::checked_new(if saw_num { num.max(1) } else { 1 }, den)
+        .ok_or("ABC length is invalid")?;
+    Ok((frac, i))
 }
 
 fn parse_frac(s: &str) -> Option<Frac> {
     let s = s.trim();
-    match s.split_once('/') {
-        Some((a, b)) => Some(Frac::new(a.trim().parse().ok()?, b.trim().parse().ok()?)),
-        None => Some(Frac::new(s.parse().ok()?, 1)),
+    let (num, den) = match s.split_once('/') {
+        Some((a, b)) => (a.trim().parse::<i64>().ok()?, b.trim().parse::<i64>().ok()?),
+        None => (s.parse::<i64>().ok()?, 1),
+    };
+    if num <= 0
+        || den <= 0
+        || num as u64 > MAX_ABC_LENGTH_COMPONENT as u64
+        || den as u64 > MAX_ABC_LENGTH_COMPONENT as u64
+    {
+        return None;
     }
+    Frac::checked_new(num, den)
 }
 
 fn parse_meter(spec: &str) -> Option<(Option<Frac>, String)> {
@@ -824,7 +943,7 @@ fn parse_tempo(spec: &str, unit: Frac) -> Option<(Frac, u32)> {
             // The left side may be several lengths summed: `1/4 1/4=60`.
             let mut total = Frac::new(0, 1);
             for tok in left.split_whitespace() {
-                total = total + parse_frac(tok)?;
+                total = total.checked_add(parse_frac(tok)?)?;
             }
             if total.is_zero() || bpm == 0 {
                 return None;
@@ -990,17 +1109,35 @@ pub fn plan_import(tune: &AbcTune, cart: &Cart, opts: &ImportOpts) -> Result<Imp
     let den = tune
         .events
         .iter()
-        .fold(1i64, |acc, e| lcm(acc, e.dur().den));
+        .try_fold(1i64, |acc, event| checked_lcm(acc, event.dur().den))
+        .ok_or("ABC duration grid is too complex to represent")?;
     let nums: Vec<i64> = tune
         .events
         .iter()
-        .map(|e| e.dur().num * (den / e.dur().den))
-        .collect();
+        .map(|event| {
+            event
+                .dur()
+                .num
+                .checked_mul(den / event.dur().den)
+                .ok_or_else(|| "ABC duration grid is too complex to represent".to_string())
+        })
+        .collect::<Result<_, _>>()?;
     let g = nums
         .iter()
         .fold(0u64, |acc, &n| gcd(acc, n.unsigned_abs()))
         .max(1) as i64;
     let row_dur = Frac::new(g, den);
+
+    let total_rows = nums.iter().try_fold(0usize, |total, n| {
+        total.checked_add(usize::try_from(n / g).ok()?)
+    });
+    let available_rows = (usize::from(MAX_ID) + 1 - usize::from(opts.sfx_start)) * MAX_SFX_ROWS;
+    if total_rows.is_none_or(|rows| rows > available_rows) {
+        return Err(format!(
+            "the ABC duration grid needs more than {available_rows} rows available from sfx {}",
+            opts.sfx_start
+        ));
+    }
 
     range_check(tune, opts)?;
 
@@ -1182,7 +1319,10 @@ fn tempo_hint(tune: &AbcTune, row_dur: Frac, speed: u8) -> Option<String> {
     // Quarter-note bpm, and rows per quarter note.
     let quarter = Frac::new(1, 4);
     let qbpm = (f64::from(bpm) * unit.as_f64() / quarter.as_f64()).round();
-    let per_beat = Frac::new(quarter.num * row_dur.den, quarter.den * row_dur.num);
+    let per_beat = Frac::checked_new(
+        quarter.num.checked_mul(row_dur.den)?,
+        quarter.den.checked_mul(row_dur.num)?,
+    )?;
     if per_beat.den != 1
         || per_beat.num < 1
         || per_beat.num > 255
@@ -1541,13 +1681,13 @@ mod tests {
     #[test]
     fn read_length_covers_the_abc_forms() {
         let chars: Vec<char> = "2 / // /2 3/2 ".chars().collect();
-        assert_eq!(read_length(&chars, 0).0, Frac::new(2, 1));
-        assert_eq!(read_length(&chars, 2).0, Frac::new(1, 2));
-        assert_eq!(read_length(&chars, 4).0, Frac::new(1, 4));
-        assert_eq!(read_length(&chars, 7).0, Frac::new(1, 2));
-        assert_eq!(read_length(&chars, 10).0, Frac::new(3, 2));
+        assert_eq!(read_length(&chars, 0).unwrap().0, Frac::new(2, 1));
+        assert_eq!(read_length(&chars, 2).unwrap().0, Frac::new(1, 2));
+        assert_eq!(read_length(&chars, 4).unwrap().0, Frac::new(1, 4));
+        assert_eq!(read_length(&chars, 7).unwrap().0, Frac::new(1, 2));
+        assert_eq!(read_length(&chars, 10).unwrap().0, Frac::new(3, 2));
         // No suffix at all is one default length.
-        assert_eq!(read_length(&chars, 1).0, Frac::new(1, 1));
+        assert_eq!(read_length(&chars, 1).unwrap().0, Frac::new(1, 1));
     }
 
     #[test]

@@ -9,11 +9,14 @@
 //! except [`render`] works straight off a parsed [`Cart`], so it is cheap and
 //! has no side effects.
 //!
-//! [`transform`] and [`abc`] are the write half, the music counterparts of
+//! [`transform`] and [`abc`] are the cart-write half, the music counterparts of
 //! `sprite edit` / `map edit`: score-level transforms (`music edit`) and ABC
 //! import (`music import-abc`), both rewriting only the changed lines of
 //! `__sfx__` through [`sfxtext`]. Like every other cart-mutating tool here
 //! they are **CLI only** — see the note in `rpc.rs`.
+//! [`midi`] and [`preview`] sit before that reduction step: they convert MIDI
+//! into editable ABC and audition MIDI/ABC through the real console synth
+//! without creating or mutating a cart.
 //!
 //! The one concept the whole module shares is the **song plan**
 //! ([`SongPlan`]): `__music__` is not a flat list of patterns but a chain —
@@ -25,6 +28,8 @@
 
 pub mod abc;
 pub mod lint;
+pub mod midi;
+pub mod preview;
 pub mod render;
 pub mod roll;
 pub mod score;
@@ -32,6 +37,8 @@ pub mod sfxtext;
 pub mod transform;
 
 use std::collections::BTreeMap;
+use std::io::Read;
+use std::path::Path;
 
 use console_core::{CHANNEL_COUNT, Cart, PatternEnd, SAMPLE_RATE, SAMPLES_PER_FRAME};
 
@@ -43,10 +50,44 @@ pub const COMMANDS: &[&str] = &[
     "render",
     "edit",
     "import-abc",
+    "midi-to-abc",
+    "play",
 ];
 
 /// Frames per second — the sequencer's own clock (`speed=` is in frames).
 pub const FPS: f64 = SAMPLE_RATE as f64 / SAMPLES_PER_FRAME as f64;
+
+pub(crate) const MAX_SOURCE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Read at most the documented music-source limit plus one sentinel byte.
+/// Unlike a metadata preflight this also bounds growing files, FIFOs, and
+/// device-like paths while the read itself is in progress.
+pub(crate) fn read_bounded(path: &Path, label: &str) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("cannot read {label} {}: {error}", path.display()))?;
+    read_bounded_from(file, path, label, MAX_SOURCE_BYTES)
+}
+
+fn read_bounded_from(
+    reader: impl Read,
+    path: &Path,
+    label: &str,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read {label} {}: {error}", path.display()))?;
+    if bytes.len() > limit {
+        return Err(format!(
+            "{label} {} exceeds the {}-byte limit",
+            path.display(),
+            limit
+        ));
+    }
+    Ok(bytes)
+}
 
 /// One visit to a pattern in a song's play order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -451,6 +492,8 @@ pub fn cli_music(args: &[String]) -> i32 {
         // exactly like `sprite edit` / `map edit`.
         "edit" => return transform::cli_edit(&args[1..]),
         "import-abc" => return abc::cli_import(&args[1..]),
+        "midi-to-abc" => return midi::cli_midi_to_abc(&args[1..]),
+        "play" => return preview::cli_play(&args[1..]),
         _ => {
             eprintln!("{MUSIC_USAGE}");
             return 2;
@@ -474,6 +517,8 @@ usage:
   console music render     <cart> [--song N] [--loops K | --frames F] [--seed N] -o out.wav
   console music edit       <cart> <transpose|copy|shift-rows|set-vol|set-inst|stretch> ...
   console music import-abc <cart> <file.abc|-> --sfx <start-id> [--inst NAME] [--speed N]
+  console music midi-to-abc <in-file.mid> [-o <out-file.abc>]
+  console music play       <file.abc|file.mid> [--seconds N] [--dry-run]
   (--song N means music(N): the chain is followed from pattern N, so `score`
    and `piano-roll` show the whole song, intro and loop body. --song defaults
    to the lowest defined pattern id. `edit` and `import-abc` rewrite the cart
@@ -571,5 +616,17 @@ music(1.5)
     fn seconds_uses_the_sequencer_clock() {
         assert_eq!(seconds(60), 1.0);
         assert_eq!(seconds(30), 0.5);
+    }
+
+    #[test]
+    fn bounded_reader_stops_an_unending_source_at_limit_plus_one() {
+        let error = read_bounded_from(
+            std::io::repeat(0),
+            Path::new("stream.abc"),
+            "music source",
+            32,
+        )
+        .unwrap_err();
+        assert!(error.contains("32-byte limit"), "{error}");
     }
 }

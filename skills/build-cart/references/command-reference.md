@@ -39,7 +39,7 @@ console serve <cart|project> ...
 console palette <show|quantize> ...
 console sprite <render|atlas|strip|onion|diff|ghost|gif|lint|edit|dump|poke|export|import> ...
 console map <render|dump|lint|edit|poke> ...
-console music <score|lint|piano-roll|render|edit|import-abc> ...
+console music <score|lint|piano-roll|render|edit|import-abc|midi-to-abc|play> ...
 ```
 
 `-h` and `--help` are accepted at the top level or anywhere after a top-level
@@ -476,6 +476,40 @@ console music import-abc <cart> <file.abc|-> --sfx <start-id>
 
 Import a monophonic tune into consecutive SFX IDs; `-` reads stdin. The command
 prints grid/tempo decisions, split points, warnings, and suggested pattern lines.
+
+### Convert and preview source music
+
+```text
+console music midi-to-abc <in-file.mid>
+  [(-o|--out) out-file.abc]
+console music play <file.abc|file.mid|file.midi>
+  [--seconds N]
+  [--dry-run]
+```
+
+`midi-to-abc` writes ABC to stdout when `--out` is absent, leaving warnings on
+stderr so the result is safe to pipe. `-o` atomically replaces the named file.
+It accepts Standard MIDI format 0/1 with PPQ timing, preserves absolute gaps
+and note lengths, and splits simultaneous notes into sequential `V:` voices.
+It rejects format 2 and SMPTE timing. Later MIDI tempo changes produce a
+warning because the generated ABC header carries the initial tempo only. A
+non-integer initial BPM is rounded to the nearest ABC `Q:` value and warns. Bad
+command syntax exits 2 with usage; input, parse, and output-file failures exit
+1 without polluting stdout or appending usage.
+
+`play` accepts MIDI by `.mid`/`.midi` extension or `MThd` signature; other
+UTF-8 input is parsed as ABC. It schedules the score onto the console's six
+voices and plays the resulting core-synth samples through the default host
+audio output. `--seconds` auditions a prefix, especially useful for long
+files. `--dry-run` still parses and renders but does not open a device; use it
+in CI and agent checks. Decode/render/device failures exit 1, while bad CLI
+syntax exits 2.
+
+ABC preview keeps the first `Q:` tempo and warns on later changes. It rejects
+over-complex duration arithmetic instead of wrapping or panicking. Source
+reads, shared ABC headers, voice counts, event counts, and preview duration are
+all bounded. A final console-synth release frame makes the output end silent;
+the command reports source duration and release frames separately.
 
 ## `pack`
 
