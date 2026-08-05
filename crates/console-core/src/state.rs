@@ -1,5 +1,6 @@
 //! Mutable console state shared between Rust and the Lua closures.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::audio::{Audio, AudioBank};
@@ -11,6 +12,15 @@ use crate::gfx::{
 };
 use crate::gfx_meta::GfxMeta;
 use crate::rng::Pcg32;
+
+/// Pixel value used only inside diagnostic layer buffers to mean "this tag
+/// did not draw here". Runtime pixels are always masked to 0..=63, so the
+/// sentinel cannot collide with a real cart colour (including colour 0).
+pub const LAYER_TRANSPARENT: u8 = u8::MAX;
+
+/// A diagnostic capture is deliberately bounded. A typo that generates a new
+/// tag every frame must not grow the runtime without limit.
+pub const MAX_CAPTURED_LAYERS: usize = 32;
 
 /// Everything the Lua API can touch. Owned by the [`Console`](crate::Console)
 /// through an `Rc<RefCell<_>>` that every registered closure captures.
@@ -49,6 +59,11 @@ pub struct State {
     pub draw_tag: Option<String>,
     pub draw_events: Vec<DrawEvent>,
     pub draw_events_dropped: u32,
+    /// Opt-in diagnostic framebuffers keyed by `draw_tag()`. `None` records
+    /// draws made without a tag. These never participate in normal rendering.
+    pub layer_capture_enabled: bool,
+    pub layer_framebuffers: BTreeMap<Option<String>, Box<Framebuffer>>,
+    pub layer_capture_dropped: u32,
 }
 
 impl State {
@@ -76,7 +91,64 @@ impl State {
             draw_tag: None,
             draw_events: Vec::new(),
             draw_events_dropped: 0,
+            layer_capture_enabled: false,
+            layer_framebuffers: BTreeMap::new(),
+            layer_capture_dropped: 0,
         }
+    }
+
+    /// Draw to the real framebuffer and, when diagnostics are enabled, repeat
+    /// the same operation against the active tag's transparent framebuffer.
+    /// The first return value is authoritative; the diagnostic result is
+    /// intentionally discarded (notably for `print`).
+    pub fn draw_with_layer<R>(
+        &mut self,
+        mut operation: impl FnMut(&mut Framebuffer, &DrawState, &SpriteSheet, &TileMap) -> R,
+    ) -> R {
+        let State {
+            fb,
+            draw,
+            sheet,
+            map,
+            draw_tag,
+            layer_capture_enabled,
+            layer_framebuffers,
+            layer_capture_dropped,
+            ..
+        } = self;
+        let result = operation(fb, draw, sheet, map);
+        if !*layer_capture_enabled {
+            return result;
+        }
+
+        let tag = draw_tag.clone();
+        if !layer_framebuffers.contains_key(&tag) && layer_framebuffers.len() >= MAX_CAPTURED_LAYERS
+        {
+            *layer_capture_dropped = layer_capture_dropped.saturating_add(1);
+            return result;
+        }
+        let layer = layer_framebuffers
+            .entry(tag)
+            .or_insert_with(|| Box::new([LAYER_TRANSPARENT; FB_LEN]));
+        let _ = operation(layer, draw, sheet, map);
+        result
+    }
+
+    pub fn set_layer_capture(&mut self, enabled: bool) {
+        self.layer_capture_enabled = enabled;
+        self.layer_framebuffers.clear();
+        self.layer_capture_dropped = 0;
+    }
+
+    /// Start a fresh set of current-frame layer evidence. Capacity is a
+    /// per-frame limit: historical tags must never crowd out a tag that is
+    /// active now.
+    pub fn clear_layer_framebuffers(&mut self) {
+        if !self.layer_capture_enabled {
+            return;
+        }
+        self.layer_framebuffers.clear();
+        self.layer_capture_dropped = 0;
     }
 
     pub fn clear_draw_events(&mut self) {

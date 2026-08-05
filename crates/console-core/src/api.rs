@@ -193,8 +193,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                 screen: ScreenBounds::ScreenSpace,
                 details: color_details(color),
             });
-            let State { fb, draw, .. } = &mut *s;
-            gfx::cls(fb, draw, color);
+            s.draw_with_layer(|fb, draw, _, _| gfx::cls(fb, draw, color));
             Ok(())
         })?,
     )?;
@@ -211,8 +210,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                 screen: ScreenBounds::Origin { x, y },
                 details: color_details(color),
             });
-            let State { fb, draw, .. } = &mut *s;
-            gfx::pset(fb, draw, x, y, color);
+            s.draw_with_layer(|fb, draw, _, _| gfx::pset(fb, draw, x, y, color));
             Ok(())
         })?,
     )?;
@@ -239,8 +237,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     screen: ScreenBounds::Corners { x0, y0, x1, y1 },
                     details: color_details(color),
                 });
-                let State { fb, draw, .. } = &mut *s;
-                gfx::line(fb, draw, x0, y0, x1, y1, color);
+                s.draw_with_layer(|fb, draw, _, _| gfx::line(fb, draw, x0, y0, x1, y1, color));
                 Ok(())
             },
         )?,
@@ -260,8 +257,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     screen: ScreenBounds::Corners { x0, y0, x1, y1 },
                     details: color_details(color),
                 });
-                let State { fb, draw, .. } = &mut *s;
-                gfx::rect(fb, draw, x0, y0, x1, y1, color);
+                s.draw_with_layer(|fb, draw, _, _| gfx::rect(fb, draw, x0, y0, x1, y1, color));
                 Ok(())
             },
         )?,
@@ -281,8 +277,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     screen: ScreenBounds::Corners { x0, y0, x1, y1 },
                     details: color_details(color),
                 });
-                let State { fb, draw, .. } = &mut *s;
-                gfx::rectfill(fb, draw, x0, y0, x1, y1, color);
+                s.draw_with_layer(|fb, draw, _, _| gfx::rectfill(fb, draw, x0, y0, x1, y1, color));
                 Ok(())
             },
         )?,
@@ -303,8 +298,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     screen: ScreenBounds::Circle { x, y, radius },
                     details: color_details(color),
                 });
-                let State { fb, draw, .. } = &mut *s;
-                gfx::circ(fb, draw, x, y, radius, color);
+                s.draw_with_layer(|fb, draw, _, _| gfx::circ(fb, draw, x, y, radius, color));
                 Ok(())
             },
         )?,
@@ -325,8 +319,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     screen: ScreenBounds::Circle { x, y, radius },
                     details: color_details(color),
                 });
-                let State { fb, draw, .. } = &mut *s;
-                gfx::circfill(fb, draw, x, y, radius, color);
+                s.draw_with_layer(|fb, draw, _, _| gfx::circfill(fb, draw, x, y, radius, color));
                 Ok(())
             },
         )?,
@@ -368,10 +361,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     ..DrawDetails::default()
                 },
             });
-            let State {
-                fb, draw, sheet, ..
-            } = &mut *s;
-            gfx::spr(fb, draw, sheet, n, x, y, size, flip);
+            s.draw_with_layer(|fb, draw, sheet, _| gfx::spr(fb, draw, sheet, n, x, y, size, flip));
             Ok(())
         })?,
     )?;
@@ -413,10 +403,9 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     ..DrawDetails::default()
                 },
             });
-            let State {
-                fb, draw, sheet, ..
-            } = &mut *s;
-            gfx::sspr(fb, draw, sheet, (sx, sy, sw, sh), (dx, dy, dw, dh), flip);
+            s.draw_with_layer(|fb, draw, sheet, _| {
+                gfx::sspr(fb, draw, sheet, (sx, sy, sw, sh), (dx, dy, dw, dh), flip)
+            });
             Ok(())
         })?,
     )?;
@@ -480,18 +469,17 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     ..DrawDetails::default()
                 },
             });
-            let State {
-                fb, draw, sheet, ..
-            } = &mut *s;
-            gfx::spr_rect(
-                fb,
-                draw,
-                sheet,
-                (sx as i32, sy as i32),
-                (dest_x, dest_y),
-                (w as i32, h as i32),
-                flip,
-            );
+            s.draw_with_layer(|fb, draw, sheet, _| {
+                gfx::spr_rect(
+                    fb,
+                    draw,
+                    sheet,
+                    (sx as i32, sy as i32),
+                    (dest_x, dest_y),
+                    (w as i32, h as i32),
+                    flip,
+                )
+            });
             Ok(())
         })?,
     )?;
@@ -564,14 +552,9 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                     ..DrawDetails::default()
                 },
             });
-            let State {
-                fb,
-                draw,
-                sheet,
-                map,
-                ..
-            } = &mut *s;
-            gfx::map(fb, draw, sheet, map, source, dest, size);
+            s.draw_with_layer(|fb, draw, sheet, map| {
+                gfx::map(fb, draw, sheet, map, source, dest, size)
+            });
             Ok(())
         })?,
     )?;
@@ -611,7 +594,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
     )?;
 
     // `draw_tag([name])`: attach a semantic layer/system label to subsequent
-    // trace events. It never draws; nil/no argument clears the current tag.
+    // opt-in diagnostics. It never draws; nil/no argument clears the tag.
     let st = state.clone();
     g.set(
         "draw_tag",
@@ -655,10 +638,9 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
                 let y = fl(y.unwrap_or(0.0));
                 let color = col(c.unwrap_or(12.0));
                 let mut s = st.borrow_mut();
-                let layout = {
-                    let State { fb, draw, .. } = &mut *s;
+                let layout = s.draw_with_layer(|fb, draw, _, _| {
                     gfx::print_aligned(fb, draw, &text, x, y, color, align)
-                };
+                });
                 let world_x = match align {
                     gfx::TextAlign::Left => x,
                     gfx::TextAlign::Center => x.saturating_sub(layout.width / 2),

@@ -98,7 +98,7 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `mset(cx, cy, [v=0])` | write a tile id (0–255, masked); off the map is a no-op |
 | `text_size(s)` | return logical `(width, height)` for the built-in 4×6 font; widest line × line count |
 | `print(s, x, y, [c=12], [align="left"])` | draw text with built-in 4×6 font; `align` is `left`, `center`, or `right` and anchors each line at x (ASCII 32–126; lowercase may render as uppercase) |
-| `draw_tag([name])` | label subsequent opt-in draw-trace events with a semantic layer/system name (64 UTF-8 bytes maximum); no argument clears the label and nothing is drawn |
+| `draw_tag([name])` | label subsequent opt-in draw diagnostics with a semantic layer/system name (64 UTF-8 bytes maximum); no argument clears the label and nothing is drawn |
 | `camera([x=0], [y=0])` | draw offset subtracted from all later draw coords; no args resets |
 | `clip([x, y, w, h])` | clip rectangle in **screen** space; no args resets to full screen |
 | `pal([c0], [c1], [p=0])` | p=0 draw-palette remap (rewrites pixels), p=1 display-palette remap (scanout only); no args resets both maps **and** `palt` |
@@ -765,8 +765,8 @@ are:
   comparison of the evaluated value;
 - `{"op":"capture",...}` — write one or more `screenshot`, `screen_text`,
   `wav`, `spectrogram`, `audio_events`, `audio_stats`, `text_events`, or
-  `draw_trace`
-  artifacts, plus an optional nested `map` capture.
+  `draw_trace` artifacts, an optional `layers` mapping, plus an optional nested
+  `map` capture.
 
 Every stage may have a unique `name`. A scenario declares `version: 1` and an
 optional seed; `--seed` overrides it. Captures require `--artifacts`, use
@@ -799,6 +799,20 @@ current framebuffer. `zoom` is an integer from 1 through 16 (default 1) used by
 `draw_trace` emits draw calls at or after `from_frame`; the playtest enables
 tracing before its first scenario stage whenever any capture requests this
 artifact.
+`layers` is an object mapping exact `draw_tag()` names to PNG artifact paths;
+the reserved key `__untagged__` selects draws made after `draw_tag()` clears the
+label. It enables bounded layer capture before the cart loads and encodes the
+current frame with untouched pixels transparent while retaining every real
+palette color, including color 0, as opaque. The capture's `zoom` applies to
+layer PNGs too. Every requested tag must have drawn in the current frame, and
+all requested layers are resolved and encoded before any is written. The
+runtime retains at most 32 tags; exceeding that capacity fails the layer
+capture rather than silently returning incomplete evidence. Layer rendering
+obeys camera, clip, draw/display palette, sprite transparency, mosaic, and
+raster shift exactly as the player-visible frame does. Isolated layers omit
+cross-tag occlusion by design; compare them with `screenshot` for the final
+composite. Layer capture covers subsequent frame steps and host `eval` drawing,
+not cart top-level or `_init` drawing performed during construction.
 `audio_stats` groups audio into `window_frames`, an integer from 1 through
 36000 (default 6). A scenario may step at most 36000 input frames in total.
 Each input stage requires `frames >= 1`. Input and sequence stages use

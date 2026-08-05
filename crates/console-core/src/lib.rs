@@ -62,6 +62,7 @@ pub use crate::gfx::{
 };
 pub use crate::gfx_meta::{AnimDef, FrameSpec, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
+pub use crate::state::{LAYER_TRANSPARENT, MAX_CAPTURED_LAYERS};
 /// Re-exported so hosts (`console`, `console-web`) can talk to the VM
 /// without pinning their own, possibly different, mlua version.
 pub use mlua;
@@ -117,6 +118,22 @@ pub struct Console {
     cart: Cart,
     seed: u64,
     halted: Option<Error>,
+}
+
+/// One isolated diagnostic layer from the most recently rendered frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedLayer {
+    pub tag: Option<String>,
+    pub framebuffer: Box<Framebuffer>,
+}
+
+/// Bounded snapshot of all `draw_tag()` layers in the current frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayerCaptureFrame {
+    pub enabled: bool,
+    pub capacity: usize,
+    pub dropped: u32,
+    pub layers: Vec<CapturedLayer>,
 }
 
 impl Console {
@@ -190,6 +207,7 @@ impl Console {
             let mut s = self.state.borrow_mut();
             s.text_draws.clear();
             s.clear_draw_events();
+            s.clear_layer_framebuffers();
             s.prev_input = s.input;
             s.input = input & input::MASK;
         }
@@ -343,6 +361,51 @@ impl Console {
         DrawTraceFrame {
             events: std::mem::take(&mut state.draw_events),
             dropped: std::mem::take(&mut state.draw_events_dropped),
+        }
+    }
+
+    /// Enable or disable isolated `draw_tag()` framebuffers. Capture is off by
+    /// default and has no effect on the presented framebuffer.
+    pub fn set_layer_capture(&mut self, enabled: bool) {
+        self.state.borrow_mut().set_layer_capture(enabled);
+    }
+
+    pub fn layer_capture_enabled(&self) -> bool {
+        self.state.borrow().layer_capture_enabled
+    }
+
+    /// Clone the current frame's non-empty diagnostic layers and apply the
+    /// same end-of-frame mosaic/raster effects as the player-visible image.
+    pub fn layer_capture_frame(&self) -> LayerCaptureFrame {
+        let state = self.state.borrow();
+        let mosaic = state.draw.mosaic();
+        let rshift = state
+            .draw
+            .rshift_active()
+            .then(|| *state.draw.rshift_table());
+        let mut layers = Vec::new();
+        for (tag, framebuffer) in &state.layer_framebuffers {
+            if framebuffer
+                .iter()
+                .all(|&pixel| pixel == state::LAYER_TRANSPARENT)
+            {
+                continue;
+            }
+            let mut framebuffer = framebuffer.clone();
+            gfx::apply_mosaic(&mut framebuffer, mosaic);
+            if let Some(shifts) = &rshift {
+                gfx::apply_rshift(&mut framebuffer, shifts);
+            }
+            layers.push(CapturedLayer {
+                tag: tag.clone(),
+                framebuffer,
+            });
+        }
+        LayerCaptureFrame {
+            enabled: state.layer_capture_enabled,
+            capacity: state::MAX_CAPTURED_LAYERS,
+            dropped: state.layer_capture_dropped,
+            layers,
         }
     }
 

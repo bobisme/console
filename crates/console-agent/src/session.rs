@@ -10,7 +10,8 @@ use std::collections::{BTreeMap, VecDeque};
 
 use console_core::{
     CHANNEL_COUNT, COLOR_COUNT, COLOR_MASK, ChannelInfo, Console, DrawEvent, DrawTraceFrame, Error,
-    FB_LEN, PALETTE, SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W, TextDraw, color_char, input,
+    FB_LEN, LAYER_TRANSPARENT, PALETTE, SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W, TextDraw,
+    color_char, input,
 };
 use serde::Serialize;
 
@@ -74,6 +75,18 @@ pub struct DrawTraceReport {
     pub capacity: usize,
     pub dropped: u64,
     pub events: Vec<DrawEventRecord>,
+}
+
+/// A transparent PNG for one isolated `draw_tag()` layer.
+pub struct LayerScreenshot {
+    pub tag: Option<String>,
+    pub png: Vec<u8>,
+}
+
+pub struct LayerScreenshotSet {
+    pub capacity: usize,
+    pub dropped: u32,
+    pub layers: Vec<LayerScreenshot>,
 }
 
 fn record_text_draws(events: &mut Vec<TextEvent>, frame: u64, draws: Vec<TextDraw>) {
@@ -199,6 +212,9 @@ pub struct Session {
     draw_events_dropped: u64,
     draw_event_index_frame: Option<u64>,
     draw_event_next_index: u64,
+    /// Host-side opt-in that survives load/reset/load_state just like draw
+    /// tracing. Layer buffers themselves remain current-frame core state.
+    layer_capture: bool,
 }
 
 impl Default for Session {
@@ -219,6 +235,7 @@ impl Default for Session {
             draw_events_dropped: 0,
             draw_event_index_frame: None,
             draw_event_next_index: 0,
+            layer_capture: false,
         }
     }
 }
@@ -249,6 +266,7 @@ impl Session {
     pub fn load_cart(&mut self, text: &str, seed: u64) -> Result<(), SessionError> {
         let mut console = Console::new(text, seed)?;
         console.set_draw_tracing(self.draw_tracing);
+        console.set_layer_capture(self.layer_capture);
         let init_draws = console.take_text_draws();
         self.cart_text = Some(text.to_string());
         self.seed = seed;
@@ -271,6 +289,7 @@ impl Session {
         let seed = seed.unwrap_or(self.seed);
         let mut console = Console::new(&text, seed)?;
         console.set_draw_tracing(self.draw_tracing);
+        console.set_layer_capture(self.layer_capture);
         let init_draws = console.take_text_draws();
         self.seed = seed;
         self.console = Some(console);
@@ -451,6 +470,7 @@ impl Session {
 
         let mut console = Console::new(&text, saved.seed)?;
         console.set_draw_tracing(self.draw_tracing);
+        console.set_layer_capture(self.layer_capture);
         let mut audio_log = Vec::new();
         let mut audio_events = Vec::new();
         let mut text_events = Vec::new();
@@ -637,6 +657,45 @@ impl Session {
         self.draw_tracing
     }
 
+    /// Enable isolated `draw_tag()` framebuffers for subsequent drawing.
+    /// Changing the mode clears any previously captured layer frame.
+    pub fn set_layer_capture(&mut self, enabled: bool) {
+        if self.layer_capture == enabled {
+            return;
+        }
+        self.layer_capture = enabled;
+        if let Some(console) = &mut self.console {
+            console.set_layer_capture(enabled);
+        }
+    }
+
+    pub fn layer_capture_enabled(&self) -> bool {
+        self.layer_capture
+    }
+
+    /// Encode every non-empty current-frame layer with untouched pixels as
+    /// alpha zero. Real colour 0 remains opaque.
+    pub fn layer_screenshots_png_zoomed(
+        &self,
+        zoom: u32,
+    ) -> Result<LayerScreenshotSet, SessionError> {
+        let console = self.console()?;
+        let palette = console.display_palette();
+        let frame = console.layer_capture_frame();
+        Ok(LayerScreenshotSet {
+            capacity: frame.capacity,
+            dropped: frame.dropped,
+            layers: frame
+                .layers
+                .into_iter()
+                .map(|layer| LayerScreenshot {
+                    tag: layer.tag,
+                    png: encode_layer_png_zoomed(&layer.framebuffer, palette, zoom),
+                })
+                .collect(),
+        })
+    }
+
     pub fn clear_draw_events(&mut self) {
         self.clear_draw_log();
         if let Some(console) = &mut self.console {
@@ -717,6 +776,26 @@ pub fn encode_png_zoomed(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT], zoom: u32)
         (scaled, SCREEN_W as u32 * zoom, SCREEN_H as u32 * zoom)
     };
 
+    crate::palette::encode_png_rgba(&rgba, width, height)
+}
+
+fn encode_layer_png_zoomed(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT], zoom: u32) -> Vec<u8> {
+    let zoom = zoom.max(1);
+    let mut rgba = framebuffer_rgba(fb, dpal);
+    for (pixel, &index) in rgba.chunks_exact_mut(4).zip(fb) {
+        if index == LAYER_TRANSPARENT {
+            pixel.copy_from_slice(&[0, 0, 0, 0]);
+        }
+    }
+    let (rgba, width, height) = if zoom == 1 {
+        (rgba, SCREEN_W as u32, SCREEN_H as u32)
+    } else {
+        (
+            nearest_neighbor_scale(&rgba, SCREEN_W as u32, SCREEN_H as u32, zoom),
+            SCREEN_W as u32 * zoom,
+            SCREEN_H as u32 * zoom,
+        )
+    };
     crate::palette::encode_png_rgba(&rgba, width, height)
 }
 
@@ -837,6 +916,45 @@ function _update() if t() * 60 >= 2 then for i = 0, 63 do pal(i, 0, 1) end end e
         assert_ne!(
             encode_png_zoomed(&fb, &console_core::IDENTITY_PAL, 3),
             encode_png_zoomed(&fb, &faded, 3)
+        );
+    }
+
+    #[test]
+    fn layer_capture_survives_reset_and_replay_load_state() {
+        let cart = "__lua__\n\
+            function _draw()\n\
+              draw_tag('actor') pset(t()*60, 1, 7)\n\
+            end\n";
+        let mut session = Session::new();
+        session.set_layer_capture(true);
+        session.load_cart(cart, 11).unwrap();
+        session.step(2, 0).unwrap();
+        session.save_state("two").unwrap();
+        let expected = session
+            .layer_screenshots_png_zoomed(1)
+            .unwrap()
+            .layers
+            .remove(0)
+            .png;
+
+        session.step(1, 0).unwrap();
+        session.load_state("two").unwrap();
+        let replayed = session
+            .layer_screenshots_png_zoomed(1)
+            .unwrap()
+            .layers
+            .remove(0)
+            .png;
+        assert_eq!(replayed, expected);
+
+        session.reset(None).unwrap();
+        assert!(session.layer_capture_enabled());
+        session.step(1, 0).unwrap();
+        assert_eq!(
+            session.layer_screenshots_png_zoomed(1).unwrap().layers[0]
+                .tag
+                .as_deref(),
+            Some("actor")
         );
     }
 }

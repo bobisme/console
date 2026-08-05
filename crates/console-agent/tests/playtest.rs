@@ -416,6 +416,166 @@ fn scenario_captures_authored_and_live_maps_from_one_session() {
 }
 
 #[test]
+fn scenario_captures_transparent_semantic_layers_beside_collision_context() {
+    let dir = scratch("semantic-layers");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    let scenario = dir.join("layers.json");
+    let artifacts = dir.join("artifacts");
+    fs::write(
+        &cart,
+        "__lua__\n\
+         function _draw()\n\
+           draw_tag('background') cls(2)\n\
+           draw_tag('terrain') rectfill(10,20,30,21,7)\n\
+           draw_tag('') pset(2,2,5)\n\
+           draw_tag() pset(1,2,0)\n\
+         end\n\
+         __map__\n0102\n",
+    )
+    .unwrap();
+    fs::write(
+        &scenario,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "stages": [
+                {"op":"input", "frames":1},
+                {"op":"capture", "zoom":2,
+                 "layers":{
+                    "background":"layers/background.png",
+                    "terrain":"layers/terrain.png",
+                    "":"layers/empty-name.png",
+                    "__untagged__":"layers/untagged.png"
+                 },
+                 "map":{"source":"live", "dump":"collision.txt", "region":"0,0,2,1"}}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&[
+        "playtest",
+        as_str(&cart),
+        "--scenario",
+        as_str(&scenario),
+        "--artifacts",
+        as_str(&artifacts),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.status.success(),
+        "playtest failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["scenario"]["artifact_count"], 5);
+    assert_eq!(
+        report["stages"][1]["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|artifact| artifact["kind"] == "layer_png")
+            .count(),
+        4
+    );
+    assert!(
+        fs::read_to_string(artifacts.join("collision.txt"))
+            .unwrap()
+            .contains("0102")
+    );
+
+    let terrain = console_agent::palette::decode_png_rgba(
+        &fs::read(artifacts.join("layers/terrain.png")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!((terrain.width, terrain.height), (384, 640));
+    let alpha = |x: usize, y: usize| terrain.rgba[(y * terrain.width as usize + x) * 4 + 3];
+    assert_eq!(alpha(0, 0), 0, "untouched layer pixels are transparent");
+    assert_eq!(alpha(20, 40), 255, "drawn terrain pixels are opaque");
+
+    let untagged = console_agent::palette::decode_png_rgba(
+        &fs::read(artifacts.join("layers/untagged.png")).unwrap(),
+    )
+    .unwrap();
+    let pixel = (4 * untagged.width as usize + 2) * 4;
+    assert_eq!(untagged.rgba[pixel + 3], 255, "real colour 0 stays opaque");
+}
+
+#[test]
+fn missing_or_invalid_layer_tags_fail_without_layer_artifacts() {
+    let dir = scratch("semantic-layer-errors");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    fs::write(
+        &cart,
+        "__lua__\nfunction _draw() draw_tag('terrain') pset(1,1,7) end\n",
+    )
+    .unwrap();
+
+    let invalid = dir.join("invalid.json");
+    let mut invalid_layers = serde_json::Map::new();
+    invalid_layers.insert("x".repeat(65), json!("too-long.png"));
+    fs::write(
+        &invalid,
+        serde_json::to_vec(&json!({
+            "version":1,
+            "stages":[{"op":"capture", "layers":Value::Object(invalid_layers)}]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = run(&[
+        "playtest",
+        as_str(&cart),
+        "--scenario",
+        as_str(&invalid),
+        "--artifacts",
+        as_str(&dir.join("invalid-artifacts")),
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("layer tag"));
+
+    let missing = dir.join("missing.json");
+    let missing_artifacts = dir.join("missing-artifacts");
+    fs::write(
+        &missing,
+        serde_json::to_vec(&json!({
+            "version":1,
+            "stages":[
+                {"op":"input", "frames":1},
+                {"op":"capture", "layers":{
+                    "terrain":"terrain.png", "actors":"actors.png"
+                }}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = run(&[
+        "playtest",
+        as_str(&cart),
+        "--scenario",
+        as_str(&missing),
+        "--artifacts",
+        as_str(&missing_artifacts),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        report["stages"][1]["error"]
+            .as_str()
+            .unwrap()
+            .contains("requested layer \"actors\"")
+    );
+    assert!(!missing_artifacts.join("terrain.png").exists());
+    assert!(!missing_artifacts.join("actors.png").exists());
+}
+
+#[test]
 fn invalid_nested_map_capture_is_rejected_before_writing() {
     let dir = scratch("map-schema");
     fs::create_dir_all(&dir).unwrap();

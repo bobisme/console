@@ -232,8 +232,10 @@ Scenario stages run in file order and can evaluate Lua, hold an input mask for
 an exact frame count, compare an evaluated value to JSON, and capture
 screenshots, screen text, WAVs, spectrograms, audio events, and signal stats.
 Captures can also emit authored or live-runtime map PNG, hex, and lint
-artifacts or bounded draw-trace JSON, so a scenario can preserve terrain after
-scripted `mset` mutations and isolate visual systems frame by frame.
+artifacts or bounded draw-trace JSON. A capture can also map stable
+`draw_tag()` names to transparent layer PNGs, preserving background, terrain,
+actors, and effects separately beside the live collision-map evidence from the
+same frame.
 Sequence stages sample exact frame cadences into cropped, nearest-neighbor GIFs
 and contact strips. They can also build labeled review boards beside an
 optional reference PNG, which stays at its untouched native size and is

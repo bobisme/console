@@ -4,7 +4,7 @@
 //! thin orchestration layer over [`Session`]: no second stepping engine, no
 //! hidden wall clock, and no browser-only semantics.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
@@ -49,6 +49,7 @@ Scenario format (version 1):
       \"crop\":{\"x\":16,\"y\":24,\"w\":96,\"h\":80},\"zoom\":2,
       \"gif\":\"hop.gif\",\"strip\":\"hop-strip.png\",\"board\":\"hop-board.png\"},
     {\"op\":\"capture\",\"screenshot\":\"scene.png\",\"zoom\":4,\"draw_trace\":\"draw-trace.json\",
+      \"layers\":{\"background\":\"layers/background.png\",\"terrain\":\"layers/terrain.png\"},
       \"map\":{\"source\":\"live\",\"png\":\"map.png\",\"dump\":\"map.txt\"}}
   ]}
 
@@ -151,6 +152,10 @@ pub enum Stage {
         text_events: Option<String>,
         #[serde(default)]
         draw_trace: Option<String>,
+        /// Explicit semantic tag -> artifact path mapping. The reserved key
+        /// `__untagged__` selects draws made without `draw_tag()`.
+        #[serde(default)]
+        layers: BTreeMap<String, String>,
         #[serde(default)]
         map: Option<Box<MapCapture>>,
         #[serde(default)]
@@ -465,6 +470,14 @@ pub fn run_scenario(
     }) {
         session.set_draw_tracing(true);
     }
+    if scenario.stages.iter().any(|stage| {
+        matches!(
+            stage,
+            Stage::Capture { layers, .. } if !layers.is_empty()
+        )
+    }) {
+        session.set_layer_capture(true);
+    }
     session
         .load_cart(&cart_text, seed)
         .map_err(|error| format!("loading {}: {error}", cart_path.display()))?;
@@ -690,6 +703,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                 audio_stats,
                 text_events,
                 draw_trace,
+                layers,
                 map,
                 from_frame,
                 to_frame,
@@ -707,6 +721,14 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                     text_events.as_deref(),
                     draw_trace.as_deref(),
                 ];
+                for (tag, output) in layers {
+                    if tag != "__untagged__" && tag.len() > 64 {
+                        return Err(format!(
+                            "stage {index} layer tag {tag:?} must be at most 64 UTF-8 bytes or __untagged__"
+                        ));
+                    }
+                    outputs.push(Some(output.as_str()));
+                }
                 if let Some(map) = map {
                     let map_outputs =
                         [map.png.as_deref(), map.dump.as_deref(), map.lint.as_deref()];
@@ -1078,6 +1100,7 @@ fn execute_stage(
             audio_stats,
             text_events,
             draw_trace,
+            layers,
             map,
             from_frame,
             to_frame,
@@ -1169,6 +1192,45 @@ fn execute_stage(
                 report
                     .artifacts
                     .push(write_artifact(root, name, "draw_trace", &bytes)?);
+            }
+            if !layers.is_empty() {
+                // Resolve and encode the complete requested set before any
+                // layer is written. A misspelled tag cannot leave a partial,
+                // misleading diagnostic set behind.
+                let captures = session
+                    .layer_screenshots_png_zoomed(*zoom)
+                    .map_err(|error| error.to_string())?;
+                if captures.dropped != 0 {
+                    return Err(format!(
+                        "layer capture exceeded its {}-tag capacity and dropped {} draw operations",
+                        captures.capacity, captures.dropped
+                    ));
+                }
+                let mut outputs = Vec::with_capacity(layers.len());
+                for (requested, path) in layers {
+                    let tag = (requested != "__untagged__").then_some(requested.as_str());
+                    let capture = captures
+                        .layers
+                        .iter()
+                        .find(|capture| capture.tag.as_deref() == tag)
+                        .ok_or_else(|| {
+                            let available = captures
+                                .layers
+                                .iter()
+                                .map(|capture| capture.tag.as_deref().unwrap_or("__untagged__"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            format!(
+                                "requested layer {requested:?} was not drawn in the current frame; available layers: [{available}]"
+                            )
+                        })?;
+                    outputs.push((path, &capture.png));
+                }
+                for (path, png) in outputs {
+                    report
+                        .artifacts
+                        .push(write_artifact(root, path, "layer_png", png)?);
+                }
             }
             if let Some(map_capture) = map {
                 let console = session.console().map_err(|error| error.to_string())?;
