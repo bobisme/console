@@ -47,14 +47,19 @@ end
 local function draw_enemies(world)
   draw_tag("enemies")
   world:each({"pos", "enemy"}, function(_, pos, enemy)
-    local color = enemy.boss and 45 or (enemy.kind == 2 and 38 or 13)
+    local boss_color = enemy.boss and (enemy.hp * 3 < enemy.max_hp and 47 or (enemy.hp * 3 < enemy.max_hp * 2 and 31 or 45)) or 45
+    local color = enemy.boss and boss_color or (enemy.kind == 2 and 38 or 13)
     local edge = enemy.hit_flash > 0 and 63 or color
+    if enemy.cue > 0 then
+      local cue_radius = (enemy.boss and 22 or 12) + flr(enemy.cue / 3)
+      circ(pos.x, pos.y, cue_radius, enemy.cue % 4 < 2 and 63 or color)
+    end
     if enemy.boss then
       circfill(pos.x, pos.y, 15, 33)
       circ(pos.x, pos.y, 15, edge)
-      circ(pos.x, pos.y, 10 + (enemy.age % 16) / 4, 47)
-      line(pos.x - 18, pos.y, pos.x + 18, pos.y, 45)
-      line(pos.x, pos.y - 18, pos.x, pos.y + 18, 45)
+      circ(pos.x, pos.y, 10 + (enemy.age % 16) / 4, boss_color)
+      line(pos.x - 18, pos.y, pos.x + 18, pos.y, boss_color)
+      line(pos.x, pos.y - 18, pos.x, pos.y + 18, boss_color)
       circfill(pos.x, pos.y, 4, 63)
     elseif enemy.kind == 1 then
       circfill(pos.x, pos.y, 7, 9)
@@ -72,6 +77,41 @@ local function draw_enemies(world)
       circ(pos.x, pos.y, 3, 47)
     end
   end)
+end
+
+local function draw_feedback(world, state)
+  draw_tag("feedback")
+  if state.nova_flash > 0 then
+    local radius = (36 - state.nova_flash) * 7
+    world:each({"pos", "player"}, function(_, pos)
+      circ(pos.x, pos.y, radius, state.nova_flash % 4 < 2 and 63 or 31)
+    end)
+    if state.nova_flash > 28 then
+      fillp(0x1111, 40)
+      rectfill(0, 22, SW - 1, SH - 1, 31)
+      fillp()
+    end
+  end
+  if state.damage_flash > 0 then
+    local color = state.damage_flash % 4 < 2 and 63 or 38
+    rect(1, 23, SW - 2, SH - 2, color)
+    rect(3, 25, SW - 4, SH - 4, color)
+  end
+  if state.pickup_flash > 0 then
+    local radius = 5 + (36 - state.pickup_flash) / 2
+    world:each({"pos", "player"}, function(_, pos)
+      circ(pos.x, pos.y, radius, state.pickup_flash % 4 < 2 and 63 or 39)
+    end)
+  end
+  if state.boss_transition > 0 and state.boss_hp > 0 then
+    local radius = 18 + (120 - state.boss_transition) * 1.4
+    world:each({"pos", "enemy"}, function(_, pos, enemy)
+      if enemy.boss then
+        circ(pos.x, pos.y, radius, state.boss_phase == 2 and 31 or 47)
+        circ(pos.x, pos.y, max(17, radius - 5), 63)
+      end
+    end)
+  end
 end
 
 local function draw_bullets(world)
@@ -140,10 +180,14 @@ local function draw_hud(state)
     rectfill(24, 25, 167, 29, 33)
     local width = flr(142 * state.boss_hp / state.boss_max_hp)
     if width > 0 then rectfill(25, 26, 25 + width, 28, 45) end
-    print("THE CHOIR", 96, 32, 47, "center")
+    print("THE CHOIR / " .. state.boss_phase, 96, 32, 47, "center")
   end
   if state.banner_frames > 0 then
     print(state.banner, 96, 45, state.banner_color, "center")
+  end
+  if state.graze_chain >= 2 then
+    local chain_color = state.graze_flash > 0 and 63 or 7
+    print("GRAZE CHAIN x" .. state.graze_chain, 96, 307, chain_color, "center")
   end
 end
 
@@ -161,6 +205,7 @@ local function title(state)
   end
   print("RADIANT", 96, 94, 63, "center")
   print("SWARM", 96, 108, 31, "center")
+  print("READ THE LIGHT / BREAK THE CHOIR", 96, 176, 45, "center")
   print("A  FIRE / FOCUS", 96, 205, 7, "center")
   print("B  NOVA BOMB", 96, 217, 31, "center")
   print("D-PAD  MOVE", 96, 229, 14, "center")
@@ -190,6 +235,7 @@ function render.draw(world, state)
     draw_bullets(world)
     draw_particles(world)
     draw_player(world, state)
+    draw_feedback(world, state)
     draw_hud(state)
     if state.phase == "gameover" then ending(state, false) end
     if state.phase == "victory" then ending(state, true) end

@@ -19,6 +19,15 @@ local state = {
   banner_color = 31,
   boss_hp = 0,
   boss_max_hp = 0,
+  boss_phase = 0,
+  boss_transition = 0,
+  formation = "",
+  graze_chain = 0,
+  graze_timer = 0,
+  graze_flash = 0,
+  pickup_flash = 0,
+  nova_flash = 0,
+  damage_flash = 0,
   peak_alive = 0,
   peak_bullets = 0,
   dropped_spawns = 0,
@@ -64,6 +73,15 @@ local function reset_state(phase)
   state.banner_color = 31
   state.boss_hp = 0
   state.boss_max_hp = 0
+  state.boss_phase = 0
+  state.boss_transition = 0
+  state.formation = ""
+  state.graze_chain = 0
+  state.graze_timer = 0
+  state.graze_flash = 0
+  state.pickup_flash = 0
+  state.nova_flash = 0
+  state.damage_flash = 0
   state.peak_alive = 0
   state.peak_bullets = 0
   state.dropped_spawns = 0
@@ -152,12 +170,17 @@ local function spawn_enemy(kind, x, y, fixed)
       boss=false,
       dead=false,
       hit_flash=0,
+      cue=0,
       radius=kind == 2 and 8 or 7,
     },
   })
 end
 
 local function spawn_boss()
+  -- End the wave sentence before the boss begins its own. Carrying ordinary
+  -- emitters into the warning beat made the phase change noisy and unfair.
+  world:each({"enemy"}, function(id) world:despawn(id) end)
+  world:each({"hostile"}, function(id) world:despawn(id) end)
   local hp = 240
   boss_id = safe_spawn({
     pos = {x=96, y=77},
@@ -172,11 +195,14 @@ local function spawn_boss()
       boss=true,
       dead=false,
       hit_flash=0,
+      cue=0,
       radius=16,
     },
   })
   state.boss_hp = hp
   state.boss_max_hp = hp
+  state.boss_phase = 1
+  state.boss_transition = 120
   state.banner = "WARNING: THE CHOIR"
   state.banner_color = 47
   state.banner_frames = 180
@@ -235,22 +261,79 @@ local function move_and_fire_player()
   end
 end
 
+local function clear_hostile_bullets(color)
+  local cleared = 0
+  world:each({"pos", "hostile"}, function(id, pos)
+    cleared = cleared + 1
+    if cleared % 9 == 0 then particle(pos.x, pos.y, color or 31, 0.7, 20, 1) end
+    world:despawn(id)
+  end)
+  return cleared
+end
+
+local function enter_boss_phase(phase, pos)
+  state.boss_phase = phase
+  state.boss_transition = 90
+  state.banner = phase == 2 and "CHOIR: COUNTERPOINT" or "CHOIR: FINALE"
+  state.banner_color = phase == 2 and 31 or 47
+  state.banner_frames = 110
+  clear_hostile_bullets(phase == 2 and 31 or 47)
+  burst(pos.x, pos.y, phase == 2 and 31 or 47, 30, 1.8, 45)
+  sfx(8, 5)
+end
+
+local function update_boss_phase(pos, enemy)
+  local ratio = enemy.hp / enemy.max_hp
+  if state.boss_phase == 1 and ratio <= 0.67 then
+    enter_boss_phase(2, pos)
+  elseif state.boss_phase == 2 and ratio <= 0.34 then
+    enter_boss_phase(3, pos)
+  end
+end
+
 local function fire_enemy(pos, enemy, player_pos)
   if enemy.age < 35 or player_pos == nil then return end
+  enemy.cue = max(0, enemy.cue - 1)
   if enemy.boss then
-    if enemy.age % 9 == 0 then
-      patterns.spiral(hostile_bullet, pos.x, pos.y, flr(enemy.age / 3), 1.15, {kind="spiral",radius=2,color=45,style=1})
+    if state.boss_transition > 0 then return end
+    if state.boss_phase == 1 then
+      if enemy.age % 12 == 0 then
+        patterns.spiral(hostile_bullet, pos.x, pos.y, flr(enemy.age / 4), 1.08, {kind="spiral",radius=2,color=45,style=1})
+      end
+      if enemy.age % 64 == 52 then enemy.cue = 12 end
+      if enemy.age % 64 == 0 then
+        patterns.ring(hostile_bullet, pos.x, pos.y, 16, 1.02, flr(enemy.age / 16), {kind="ring",radius=2,color=31,style=2})
+      end
+    elseif state.boss_phase == 2 then
+      if enemy.age % 9 == 0 then
+        patterns.petal(hostile_bullet, pos.x, pos.y, flr(enemy.age / 5), 5, 2, 1.28, {kind="petal",radius=2,color=31,style=3})
+      end
+      if enemy.age % 58 == 46 then enemy.cue = 12 end
+      if enemy.age % 58 == 0 then
+        patterns.aimed(hostile_bullet, pos.x, pos.y, player_pos.x, player_pos.y, 7, 1.58, 0.105, {kind="fan",radius=2,color=47,style=3})
+      end
+    else
+      if enemy.age % 7 == 0 then
+        patterns.spiral(hostile_bullet, pos.x, pos.y, flr(enemy.age / 2), 1.32, {kind="spiral",radius=2,color=47,style=1})
+      end
+      if enemy.age % 43 == 31 then enemy.cue = 12 end
+      if enemy.age % 43 == 0 then
+        patterns.ring(hostile_bullet, pos.x, pos.y, 16, 1.22, flr(enemy.age / 11), {kind="ring",radius=2,color=31,style=2})
+      end
+      if enemy.age % 71 == 0 then
+        patterns.aimed(hostile_bullet, pos.x, pos.y, player_pos.x, player_pos.y, 5, 1.82, 0.13, {kind="fan",radius=2,color=38,style=3})
+      end
     end
-    if enemy.age % 52 == 0 then
-      patterns.ring(hostile_bullet, pos.x, pos.y, 16, 1.05 + (enemy.age % 180) / 600, flr(enemy.age / 13), {kind="ring",radius=2,color=31,style=2})
+  elseif enemy.kind == 1 then
+    if enemy.age % 48 == 38 then enemy.cue = 10 end
+    if enemy.age % 48 == 0 then
+      patterns.aimed(hostile_bullet, pos.x, pos.y, player_pos.x, player_pos.y, 5, 1.5, 0.13, {kind="fan",radius=2,color=38,style=3})
     end
-    if enemy.age % 79 == 0 then
-      patterns.aimed(hostile_bullet, pos.x, pos.y, player_pos.x, player_pos.y, 7, 1.65, 0.105, {kind="fan",radius=2,color=47,style=3})
+  elseif enemy.kind == 2 then
+    if enemy.age % 67 == 55 then enemy.cue = 12 end
+    if enemy.age % 67 == 0 then
+      patterns.ring(hostile_bullet, pos.x, pos.y, 12, 1.0, enemy.serial * 2 + flr(enemy.age / 20), {kind="ring",radius=2,color=31,style=2})
     end
-  elseif enemy.kind == 1 and enemy.age % 48 == 0 then
-    patterns.aimed(hostile_bullet, pos.x, pos.y, player_pos.x, player_pos.y, 5, 1.5, 0.13, {kind="fan",radius=2,color=38,style=3})
-  elseif enemy.kind == 2 and enemy.age % 67 == 0 then
-    patterns.ring(hostile_bullet, pos.x, pos.y, 12, 1.0, enemy.serial * 2 + flr(enemy.age / 20), {kind="ring",radius=2,color=31,style=2})
   elseif enemy.kind == 3 then
     if enemy.age % 11 == 0 then
       patterns.spiral(hostile_bullet, pos.x, pos.y, enemy.serial * 3 + flr(enemy.age / 5), 1.22, {kind="spiral",radius=2,color=45,style=1})
@@ -258,6 +341,7 @@ local function fire_enemy(pos, enemy, player_pos)
     if enemy.age % 96 == 0 then
       patterns.ring(hostile_bullet, pos.x, pos.y, 8, 0.82, enemy.serial, {kind="halo",radius=3,color=13,style=1})
     end
+    if enemy.age % 96 == 84 then enemy.cue = 12 end
   end
 end
 
@@ -267,6 +351,7 @@ local function update_enemies()
     enemy.age = enemy.age + 1
     if enemy.hit_flash > 0 then enemy.hit_flash = enemy.hit_flash - 1 end
     if enemy.boss then
+      update_boss_phase(pos, enemy)
       pos.x = 96 + 48 * sin(enemy.age / 310)
       pos.y = 76 + 8 * sin(enemy.age / 97)
     elseif enemy.fixed then
@@ -283,18 +368,36 @@ local function update_enemies()
   end)
 end
 
+local formation_names = {"LANCER WEDGE", "TWIN GATES", "WEAVING LINE", "SPIRAL CHOIR"}
+
+local function spawn_formation(index)
+  local formation = ((index - 1) % #formation_names) + 1
+  state.formation = formation_names[formation]
+  if formation == 1 then
+    spawn_enemy(1, 96, 24)
+    spawn_enemy(1, 68, 10)
+    spawn_enemy(1, 124, 10)
+  elseif formation == 2 then
+    spawn_enemy(2, 42, 18)
+    spawn_enemy(2, 150, 18)
+  elseif formation == 3 then
+    for slot = 1, 4 do spawn_enemy(1, 24 + slot * 29, 8 - (slot % 2) * 16) end
+  else
+    spawn_enemy(3, 96, 16)
+    spawn_enemy(1, 50, 4)
+    spawn_enemy(1, 142, 4)
+  end
+end
+
 local function spawn_waves()
   if state.frame < 900 then
-    local interval = state.frame < 360 and 66 or (state.frame < 660 and 52 or 43)
+    local interval = state.frame < 360 and 118 or (state.frame < 660 and 96 or 82)
     if state.frame % interval == 1 then
       state.wave = state.wave + 1
-      local kind = 1 + (state.wave - 1) % 3
-      local lane = 22 + ((state.wave * 47) % 148)
-      spawn_enemy(kind, lane, 31)
-      if state.wave % 5 == 0 then spawn_enemy(2, SW - lane, 22) end
-      state.banner = "WAVE " .. state.wave
-      state.banner_color = kind == 3 and 45 or 14
-      state.banner_frames = 45
+      spawn_formation(state.wave)
+      state.banner = state.formation
+      state.banner_color = state.wave % 4 == 0 and 45 or 14
+      state.banner_frames = 58
     end
   elseif state.frame == 900 then
     spawn_boss()
@@ -316,6 +419,7 @@ local function kill_enemy(id, pos, enemy)
     boss_id = nil
     state.boss_hp = 0
     state.phase = "victory"
+    state.boss_phase = 0
     state.frame = 0
     state.banner_frames = 0
     music(-1)
@@ -358,7 +462,10 @@ local function damage_player(pos, player)
   state.hp = state.hp - 1
   player.invulnerable = 105
   burst(pos.x, pos.y, 38, 22, 1.7, 38)
-  sfx(1, 5)
+  state.damage_flash = 24
+  state.graze_chain = 0
+  state.graze_timer = 0
+  sfx(9, 5)
   if state.hp <= 0 then
     state.phase = "gameover"
     state.frame = 0
@@ -387,8 +494,12 @@ local function collide_hostile_bullets()
     elseif distance <= graze_radius * graze_radius and not bullet.grazed then
       bullet.grazed = true
       state.graze = state.graze + 1
-      state.score = state.score + 25
-      if state.graze % 8 == 1 then sfx(3, 5) end
+      state.graze_chain = state.graze_chain + 1
+      state.graze_timer = 90
+      state.graze_flash = 12
+      state.score = state.score + 25 + min(20, state.graze_chain) * 5
+      particle(pos.x, pos.y, 7, 0.35, 12, 1)
+      if state.graze_chain % 4 == 1 then sfx(6, 5) end
     end
   end)
 end
@@ -411,7 +522,12 @@ local function update_pickups()
       world:despawn(id)
       state.score = state.score + 1200
       state.bombs = min(3, state.bombs + 1)
-      sfx(3, 5)
+      state.pickup_flash = 36
+      burst(pos.x, pos.y, 39, 10, 1.1, 24)
+      state.banner = "NOVA CHARGE +1"
+      state.banner_color = 39
+      state.banner_frames = 45
+      sfx(7, 5)
     end
   end)
 end
@@ -433,10 +549,24 @@ local function nova_bomb()
     if enemy.hp <= 0 then kill_enemy(id, pos, enemy) end
   end)
   state.score = state.score + cleared * 10
+  state.nova_flash = 36
   state.banner = "NOVA " .. cleared
   state.banner_color = 31
   state.banner_frames = 75
   sfx(2, 4)
+end
+
+local function update_feedback()
+  if state.graze_timer > 0 then
+    state.graze_timer = state.graze_timer - 1
+  elseif state.graze_chain > 0 then
+    state.graze_chain = 0
+  end
+  if state.graze_flash > 0 then state.graze_flash = state.graze_flash - 1 end
+  if state.pickup_flash > 0 then state.pickup_flash = state.pickup_flash - 1 end
+  if state.nova_flash > 0 then state.nova_flash = state.nova_flash - 1 end
+  if state.damage_flash > 0 then state.damage_flash = state.damage_flash - 1 end
+  if state.boss_transition > 0 then state.boss_transition = state.boss_transition - 1 end
 end
 
 local function update_peak()
@@ -503,6 +633,7 @@ function game.update()
   end
 
   state.frame = state.frame + 1
+  update_feedback()
   if state.banner_frames > 0 then state.banner_frames = state.banner_frames - 1 end
   move_and_fire_player()
   if btnp(5) then nova_bomb() end
@@ -539,6 +670,12 @@ function game.status()
     peak_bullets=state.peak_bullets,
     dropped_spawns=state.dropped_spawns,
     boss_hp=state.boss_hp,
+    boss_phase=state.boss_phase,
+    boss_transition=state.boss_transition,
+    formation=state.formation,
+    graze_chain=state.graze_chain,
+    nova_flash=state.nova_flash,
+    damage_flash=state.damage_flash,
     player=player_pos and {x=flr(player_pos.x),y=flr(player_pos.y),invulnerable=player.invulnerable} or nil,
   }
 end

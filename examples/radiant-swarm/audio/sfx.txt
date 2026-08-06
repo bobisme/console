@@ -32,6 +32,27 @@ G4 warning 5
 C5 warning 6
 G5 warning 6
 
+sfx 6 speed=1
+E6 glint 2
+B6 glint 1
+
+sfx 7 speed=2
+C6 glint 3
+E6 glint 3
+G6 glint 2
+C7 glint 2
+
+sfx 8 speed=4
+C3 impact 5
+C4 warning 5
+G4 warning 6
+C5 warning 6
+
+sfx 9 speed=3
+C4 impact 7
+F3 impact 5
+C3 impact 3
+
 sfx 16 speed=8
 C2 bass 5
 ---

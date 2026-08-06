@@ -33,6 +33,17 @@ function patterns.spiral(spawn, x, y, phase, speed, style)
   spawn(x, y, opposite_x, opposite_y, style)
 end
 
+-- A rotating, visibly incomplete fan. Unlike a full ring it leaves a broad
+-- safe side, so several releases can form a readable sweep instead of a wall.
+function patterns.petal(spawn, x, y, phase, count, gap, speed, style)
+  local center = (count - 1) / 2
+  for shot = 0, count - 1 do
+    local index = phase + flr((shot - center) * gap)
+    local vx, vy = velocity(index, speed)
+    spawn(x, y, vx, vy, style)
+  end
+end
+
 function patterns.aimed(spawn, x, y, target_x, target_y, count, speed, spread, style)
   local dx, dy = target_x - x, target_y - y
   local length = math.sqrt(dx * dx + dy * dy)

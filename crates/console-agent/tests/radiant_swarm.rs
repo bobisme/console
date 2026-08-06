@@ -41,6 +41,7 @@ fn dense_swarm_is_deterministic_and_inspectable() {
     assert_eq!(first_status, second_status);
     assert!(first_status["peak_alive"].as_u64().unwrap() >= 250);
     assert!(first_status["peak_bullets"].as_u64().unwrap() >= 120);
+    assert_ne!(first_status["formation"], "");
     assert_eq!(first_status["dropped_spawns"], 0);
     assert_eq!(
         first.console().unwrap().framebuffer(),
@@ -91,7 +92,15 @@ fn boss_can_spawn_and_end_the_run_in_victory() {
     let boss = eval_json(&mut session, "return dev_status()");
     assert_eq!(boss["phase"], "play");
     assert!(boss["boss_hp"].as_u64().unwrap() > 0, "{boss}");
+    assert_eq!(boss["boss_phase"], 1);
     assert_eq!(boss["dropped_spawns"], 0);
+
+    eval_json(&mut session, "dev_damage_boss(90)");
+    session.step(1, 0).unwrap();
+    let counterpoint = eval_json(&mut session, "return dev_status()");
+    assert_eq!(counterpoint["boss_phase"], 2);
+    assert!(counterpoint["boss_transition"].as_u64().unwrap() > 0);
+    assert_eq!(counterpoint["enemy_bullets"], 0);
 
     eval_json(&mut session, "dev_damage_boss(9999)");
     let won = eval_json(&mut session, "return dev_status()");

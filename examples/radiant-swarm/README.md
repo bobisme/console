@@ -6,6 +6,13 @@ hostile bullets, pickups, and particles in one named ECS world. Dense patterns
 reach hundreds of simultaneous entities without introducing an engine-side
 scheduler: `_update` still owns system order explicitly.
 
+Encounters arrive as named formations rather than isolated random spawns. Each
+enemy family telegraphs its larger release, while the Choir boss develops
+through three distinct phases with a brief bullet-clearing transition between
+them. Graze chains reward staying close, and novas, pickups, damage, and phase
+changes have separate visual and synthesizer feedback without hiding the
+collision field.
+
 Controls:
 
 - D-pad: move.
@@ -33,4 +40,5 @@ Inspect live ECS state through JSON-RPC without relying on cart globals:
 
 The `dev_stress()` hook starts an invulnerable deterministic stress pattern;
 `playtest.json` uses it for repeatable entity-count, capacity, motion, visual,
-and audio evidence.
+and audio evidence. `dev_status()` also exposes the active formation, boss
+phase/transition, graze chain, and short feedback timers for exact assertions.
