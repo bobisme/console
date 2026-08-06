@@ -23,6 +23,7 @@ directly from this file; do not recursively hunt through the skill.
 | Exact syntax for every `console` command or JSON-RPC method | [references/command-reference.md](references/command-reference.md) |
 | Draw, revise, animate, and validate pixel art | [references/sprites-and-animation.md](references/sprites-and-animation.md) |
 | Build tile sets, maps, collision, metatiles, variants, and scrolling rooms | [references/maps-and-metatiles.md](references/maps-and-metatiles.md) |
+| Art direction, foreground/background readability, reference-driven evidence, and strict visual review | [references/visual-direction-and-review.md](references/visual-direction-and-review.md) |
 | Compose instruments, SFX, songs, mixes, and inspect audio | [references/music-and-sfx.md](references/music-and-sfx.md) |
 | Deterministic tests, playtest scenarios, browser checks, and HTML delivery | [references/testing-and-shipping.md](references/testing-and-shipping.md) |
 
@@ -141,6 +142,9 @@ For authored art or maps:
 - Run sprite/map lint and review animation strips or onion sheets.
 - Verify collision and visible tile data agree; a beautiful map with mismatched
   collision metadata is still broken.
+- When art direction or readability matters, build the native/grayscale/motion/
+  layer/collision evidence bundle and use an independent blind review from
+  [references/visual-direction-and-review.md](references/visual-direction-and-review.md).
 
 For audio:
 

@@ -244,6 +244,13 @@ its optional reference panel remains at native resolution and explicitly says
 it is not pixel-aligned. Inspect the board as a qualitative composition target,
 not as an automated similarity score.
 
+For a reference-driven or visually dense game, follow the complete evidence
+bundle, temporal checks, readability lint, and independent blind-review
+protocol in
+[visual-direction-and-review.md](visual-direction-and-review.md). Consolidate
+that evidence in a final `review` stage rather than handing off a cherry-picked
+still.
+
 ## Audio acceptance
 
 Static cart checks:
@@ -382,6 +389,8 @@ new visuals/audio; platform gates cannot decide whether the game is good.
 - [ ] Core game states have exact playtest assertions.
 - [ ] Same seed/input reproduces pixels and audio.
 - [ ] Representative screenshots were visually inspected at enlarged and phone scale.
+- [ ] Dense action, camera boundaries, tagged layers, grayscale, and collision context were reviewed where visual readability matters.
+- [ ] Effects begin at current rendered sockets in every facing and relevant pose.
 - [ ] Sprite animations passed intentional lint thresholds and strip/onion review.
 - [ ] Maps passed lint; blank tile IDs, seams, collision, and camera bounds were checked.
 - [ ] Music score/form is intentional; lint findings are fixed or explained.
