@@ -240,6 +240,11 @@ Sequence stages sample exact frame cadences into cropped, nearest-neighbor GIFs
 and contact strips. They can also build labeled review boards beside an
 optional reference PNG, which stays at its untouched native size and is
 explicitly marked as non-pixel-aligned comparison art.
+A final scenario `review` stage can consolidate named still and motion stages,
+tag-isolated layers, a live/authored map panel, and reference art into one
+deterministic diagnostic board. Its color, grayscale, luma-band, edge, and
+false-color palette-index views ship with a JSON evidence report containing
+counts and histograms—not a synthetic claim that the art is good.
 
 ## Development
 

@@ -9,7 +9,7 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
 
-use console_core::{SCREEN_H, SCREEN_W, input};
+use console_core::{COLOR_MASK, LayerCaptureFrame, SCREEN_H, SCREEN_W, TileMap, input};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
@@ -27,6 +27,10 @@ const MAX_MAP_ZOOM: u32 = 16;
 const MAX_SEQUENCE_SAMPLES: u64 = 240;
 const MAX_SEQUENCE_ZOOM: u32 = 16;
 const MAX_REVIEW_COLUMNS: u32 = 16;
+const MAX_DIAGNOSTIC_ZOOM: u32 = 4;
+const MAX_DIAGNOSTIC_COLUMNS: u32 = 8;
+const MAX_MOTION_SAMPLES: u32 = 8;
+const MAX_DIAGNOSTIC_SOURCES: usize = 24;
 
 pub const USAGE: &str = "\
 Run an ordered, deterministic cart playtest scenario
@@ -50,7 +54,9 @@ Scenario format (version 1):
       \"gif\":\"hop.gif\",\"strip\":\"hop-strip.png\",\"board\":\"hop-board.png\"},
     {\"op\":\"capture\",\"screenshot\":\"scene.png\",\"zoom\":4,\"draw_trace\":\"draw-trace.json\",
       \"layers\":{\"background\":\"layers/background.png\",\"terrain\":\"layers/terrain.png\"},
-      \"map\":{\"source\":\"live\",\"png\":\"map.png\",\"dump\":\"map.txt\"}}
+      \"map\":{\"source\":\"live\",\"png\":\"map.png\",\"dump\":\"map.txt\"}},
+    {\"op\":\"review\",\"board\":\"visual-board.png\",\"report\":\"visual-report.json\",
+      \"stages\":[\"hop\"],\"reference\":\"reference.png\"}
   ]}
 
 Exit codes:
@@ -130,6 +136,28 @@ pub enum Stage {
         name: Option<String>,
         code: String,
         equals: Json,
+    },
+    Review {
+        #[serde(default)]
+        name: Option<String>,
+        board: String,
+        #[serde(default)]
+        report: Option<String>,
+        stages: Vec<String>,
+        #[serde(default = "visual::default_diagnostic_views")]
+        views: Vec<visual::DiagnosticView>,
+        #[serde(default = "default_zoom")]
+        zoom: u32,
+        #[serde(default = "default_diagnostic_columns")]
+        columns: u32,
+        #[serde(default = "default_motion_samples")]
+        motion_samples: u32,
+        #[serde(default)]
+        reference: Option<String>,
+        #[serde(default)]
+        layers: Option<Box<ReviewLayers>>,
+        #[serde(default)]
+        map: Option<Box<ReviewMap>>,
     },
     Capture {
         #[serde(default)]
@@ -218,6 +246,32 @@ pub struct MapCapture {
     ids: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewLayers {
+    stage: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    include_untagged: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewMap {
+    stage: String,
+    #[serde(default)]
+    source: MapSource,
+    #[serde(default)]
+    region: Option<String>,
+    #[serde(default = "default_map_zoom")]
+    zoom: u32,
+    #[serde(default)]
+    grid: bool,
+    #[serde(default)]
+    ids: bool,
+}
+
 fn default_zoom() -> u32 {
     1
 }
@@ -242,6 +296,14 @@ fn default_columns() -> u32 {
     4
 }
 
+fn default_diagnostic_columns() -> u32 {
+    5
+}
+
+fn default_motion_samples() -> u32 {
+    3
+}
+
 impl Stage {
     fn op(&self) -> &'static str {
         match self {
@@ -249,6 +311,7 @@ impl Stage {
             Stage::Input { .. } => "input",
             Stage::Sequence { .. } => "sequence",
             Stage::Assert { .. } => "assert",
+            Stage::Review { .. } => "review",
             Stage::Capture { .. } => "capture",
         }
     }
@@ -259,6 +322,7 @@ impl Stage {
             | Stage::Input { name, .. }
             | Stage::Sequence { name, .. }
             | Stage::Assert { name, .. }
+            | Stage::Review { name, .. }
             | Stage::Capture { name, .. } => name.as_deref(),
         }
     }
@@ -315,6 +379,314 @@ pub struct Advice {
     #[serde(rename = "type")]
     pub kind: &'static str,
     pub message: String,
+}
+
+#[derive(Debug, Clone)]
+struct ReviewLayerPlan {
+    stage: String,
+}
+
+#[derive(Debug, Clone)]
+struct ReviewMapPlan {
+    stage: String,
+    source: MapSource,
+}
+
+struct CapturedLayers {
+    frame: LayerCaptureFrame,
+    display_palette: [u8; 64],
+}
+
+struct ReviewCollector {
+    selected_stages: BTreeSet<String>,
+    motion_samples: usize,
+    sources: Vec<visual::DiagnosticSource>,
+    reference: Option<visual::RgbaImage>,
+    layer_plan: Option<ReviewLayerPlan>,
+    captured_layers: Option<CapturedLayers>,
+    map_plan: Option<ReviewMapPlan>,
+    captured_map: Option<Box<TileMap>>,
+}
+
+impl ReviewCollector {
+    fn from_stage(stage: Option<&Stage>, reference: Option<visual::RgbaImage>) -> Self {
+        let Some(Stage::Review {
+            stages,
+            motion_samples,
+            layers,
+            map,
+            ..
+        }) = stage
+        else {
+            return ReviewCollector {
+                selected_stages: BTreeSet::new(),
+                motion_samples: 0,
+                sources: Vec::new(),
+                reference,
+                layer_plan: None,
+                captured_layers: None,
+                map_plan: None,
+                captured_map: None,
+            };
+        };
+        ReviewCollector {
+            selected_stages: stages.iter().cloned().collect(),
+            motion_samples: *motion_samples as usize,
+            sources: Vec::new(),
+            reference,
+            layer_plan: layers.as_deref().map(|layers| ReviewLayerPlan {
+                stage: layers.stage.clone(),
+            }),
+            captured_layers: None,
+            map_plan: map.as_deref().map(|map| ReviewMapPlan {
+                stage: map.stage.clone(),
+                source: map.source,
+            }),
+            captured_map: None,
+        }
+    }
+
+    fn wants_stage(&self, name: Option<&str>) -> bool {
+        name.is_some_and(|name| self.selected_stages.contains(name))
+    }
+
+    fn capture_after_stage(&mut self, stage: &Stage, session: &Session) -> Result<(), String> {
+        let Some(name) = stage.name() else {
+            return Ok(());
+        };
+        let console = session.console().map_err(|error| error.to_string())?;
+        if self.selected_stages.contains(name) && !matches!(stage, Stage::Sequence { .. }) {
+            self.sources.push(runtime_source(
+                format!("{name} F{}", console.frame_count()),
+                console.framebuffer(),
+                console.display_palette(),
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: SCREEN_W as u32,
+                    h: SCREEN_H as u32,
+                },
+            )?);
+        }
+        if self
+            .layer_plan
+            .as_ref()
+            .is_some_and(|plan| plan.stage == name)
+        {
+            self.captured_layers = Some(CapturedLayers {
+                frame: console.layer_capture_frame(),
+                display_palette: *console.display_palette(),
+            });
+        }
+        if self
+            .map_plan
+            .as_ref()
+            .is_some_and(|plan| plan.stage == name)
+        {
+            let plan = self.map_plan.as_ref().expect("checked above");
+            let tiles = match plan.source {
+                MapSource::Authored => *console.cart().map(),
+                MapSource::Live => console.live_map(),
+            };
+            self.captured_map = Some(Box::new(tiles));
+        }
+        Ok(())
+    }
+
+    fn capture_sequence(
+        &mut self,
+        name: Option<&str>,
+        images: &[visual::RgbaImage],
+        indices: &[Vec<u8>],
+        frame_numbers: &[u64],
+    ) -> Result<(), String> {
+        let Some(name) = name.filter(|name| self.selected_stages.contains(*name)) else {
+            return Ok(());
+        };
+        if images.len() != indices.len() || images.len() != frame_numbers.len() {
+            return Err("internal review sequence evidence is misaligned".to_string());
+        }
+        let count = images.len().min(self.motion_samples);
+        if count == 0 {
+            return Err(format!("reviewed sequence stage {name:?} has no samples"));
+        }
+        let selected = if count == 1 {
+            vec![images.len() - 1]
+        } else {
+            (0..count)
+                .map(|index| index * (images.len() - 1) / (count - 1))
+                .collect()
+        };
+        for index in selected {
+            self.sources.push(visual::DiagnosticSource {
+                label: format!("{name} F{}", frame_numbers[index]),
+                image: images[index].clone(),
+                palette_indices: Some(indices[index].clone()),
+            });
+        }
+        Ok(())
+    }
+
+    fn finish_sources(
+        &mut self,
+        stage: &Stage,
+        session: &Session,
+    ) -> Result<Vec<visual::DiagnosticSource>, String> {
+        let Stage::Review { layers, map, .. } = stage else {
+            return Err("internal visual review stage mismatch".to_string());
+        };
+        let mut sources = std::mem::take(&mut self.sources);
+        if let Some(layer_request) = layers.as_deref() {
+            let captured = self.captured_layers.as_ref().ok_or_else(|| {
+                format!(
+                    "review layer stage {:?} was not captured",
+                    layer_request.stage
+                )
+            })?;
+            if captured.frame.dropped != 0 {
+                return Err(format!(
+                    "review layer capture exceeded its {}-tag capacity and dropped {} draw operations",
+                    captured.frame.capacity, captured.frame.dropped
+                ));
+            }
+            let mut requested = layer_request
+                .tags
+                .iter()
+                .map(|tag| Some(tag.as_str()))
+                .collect::<Vec<_>>();
+            if layer_request.include_untagged {
+                requested.push(None);
+            }
+            for tag in requested {
+                let layer = captured
+                    .frame
+                    .layers
+                    .iter()
+                    .find(|layer| layer.tag.as_deref() == tag)
+                    .ok_or_else(|| {
+                        format!(
+                            "review requested layer {:?} at stage {:?}, but it was not drawn",
+                            tag.unwrap_or("<untagged>"),
+                            layer_request.stage
+                        )
+                    })?;
+                let rgba = crate::session::layer_framebuffer_rgba(
+                    &layer.framebuffer,
+                    &captured.display_palette,
+                );
+                let indices = layer
+                    .framebuffer
+                    .iter()
+                    .map(|&index| {
+                        if index == console_core::LAYER_TRANSPARENT {
+                            255
+                        } else {
+                            captured.display_palette[(index & COLOR_MASK) as usize] & COLOR_MASK
+                        }
+                    })
+                    .collect();
+                sources.push(visual::DiagnosticSource {
+                    label: format!(
+                        "LAYER {} @ {}",
+                        tag.unwrap_or("UNTAGGED"),
+                        layer_request.stage
+                    ),
+                    image: visual::RgbaImage::new(SCREEN_W as u32, SCREEN_H as u32, rgba)?,
+                    palette_indices: Some(indices),
+                });
+            }
+        }
+        if let Some(map_request) = map.as_deref() {
+            let tiles = self.captured_map.as_deref().ok_or_else(|| {
+                format!("review map stage {:?} was not captured", map_request.stage)
+            })?;
+            let console = session.console().map_err(|error| error.to_string())?;
+            let region = map::parse_region(map_request.region.as_deref(), tiles)?;
+            let image = map::view::render_tiles(
+                console.cart(),
+                tiles,
+                region,
+                &map::view::MapRenderOpts {
+                    zoom: map_request.zoom,
+                    grid: map_request.grid,
+                    ids: map_request.ids,
+                },
+            )?;
+            sources.push(visual::DiagnosticSource {
+                label: format!(
+                    "MAP {} @ {}",
+                    map_source_name(map_request.source),
+                    map_request.stage
+                ),
+                image: visual::RgbaImage::new(image.width, image.height, image.rgba)?,
+                palette_indices: None,
+            });
+        }
+        if let Some(reference) = &self.reference {
+            sources.push(visual::DiagnosticSource {
+                label: "REFERENCE".to_string(),
+                image: reference.clone(),
+                palette_indices: None,
+            });
+        }
+        if sources.len() > 24 {
+            return Err(format!(
+                "visual review collected {} sources; at most 24 are allowed",
+                sources.len()
+            ));
+        }
+        Ok(sources)
+    }
+}
+
+fn map_source_name(source: MapSource) -> &'static str {
+    match source {
+        MapSource::Authored => "AUTHORED",
+        MapSource::Live => "LIVE",
+    }
+}
+
+fn presented_indices(framebuffer: &[u8], display_palette: &[u8; 64]) -> Vec<u8> {
+    framebuffer
+        .iter()
+        .map(|&index| display_palette[(index & COLOR_MASK) as usize] & COLOR_MASK)
+        .collect()
+}
+
+fn crop_indices(indices: &[u8], crop: Rect) -> Result<Vec<u8>, String> {
+    let right = crop
+        .x
+        .checked_add(crop.w)
+        .ok_or("review crop x+w overflows")?;
+    let bottom = crop
+        .y
+        .checked_add(crop.h)
+        .ok_or("review crop y+h overflows")?;
+    if right > SCREEN_W as u32 || bottom > SCREEN_H as u32 {
+        return Err("review index crop exceeds the framebuffer".to_string());
+    }
+    let mut cropped = Vec::with_capacity((crop.w * crop.h) as usize);
+    for y in crop.y..bottom {
+        let start = y as usize * SCREEN_W + crop.x as usize;
+        cropped.extend_from_slice(&indices[start..start + crop.w as usize]);
+    }
+    Ok(cropped)
+}
+
+fn runtime_source(
+    label: String,
+    framebuffer: &[u8; console_core::FB_LEN],
+    display_palette: &[u8; 64],
+    crop: Rect,
+) -> Result<visual::DiagnosticSource, String> {
+    let rgba = crate::session::framebuffer_rgba(framebuffer, display_palette);
+    let image = visual::RgbaImage::new(SCREEN_W as u32, SCREEN_H as u32, rgba)?.crop(crop)?;
+    let indices = crop_indices(&presented_indices(framebuffer, display_palette), crop)?;
+    Ok(visual::DiagnosticSource {
+        label,
+        image,
+        palette_indices: Some(indices),
+    })
 }
 
 pub fn cli_playtest(args: &[String]) -> i32 {
@@ -455,6 +827,19 @@ pub fn run_scenario(
         .map_err(|error| format!("parsing {}: {error}", scenario_path.display()))?;
     validate_scenario(&scenario, artifacts)?;
     let scenario_dir = scenario_path.parent().unwrap_or_else(|| Path::new("."));
+    let review_stage = scenario
+        .stages
+        .iter()
+        .find(|stage| matches!(stage, Stage::Review { .. }));
+    let review_reference = match review_stage {
+        Some(Stage::Review {
+            reference: Some(reference),
+            ..
+        }) => Some(load_reference(scenario_dir, reference)?),
+        _ => None,
+    };
+    preflight_review(&scenario, review_reference.as_ref())?;
+    let mut review = ReviewCollector::from_stage(review_stage, review_reference);
 
     let cart_text = crate::project::load_cart_text(cart_path).map_err(|error| error.to_string())?;
     let seed = seed_override.unwrap_or(scenario.seed);
@@ -475,7 +860,8 @@ pub fn run_scenario(
             stage,
             Stage::Capture { layers, .. } if !layers.is_empty()
         )
-    }) {
+    }) || review.layer_plan.is_some()
+    {
         session.set_layer_capture(true);
     }
     session
@@ -519,10 +905,18 @@ pub fn run_scenario(
             artifact_root.as_deref(),
             scenario_dir,
             &mut report,
+            &mut review,
         ) {
             report.status = "failed";
             report.error = Some(error);
             passed = false;
+        }
+        if passed && !matches!(stage, Stage::Review { .. }) {
+            if let Err(error) = review.capture_after_stage(stage, &session) {
+                report.status = "failed";
+                report.error = Some(error);
+                passed = false;
+            }
         }
         report.frame_end = frame_count(&session);
         report.logs = session.logs().unwrap_or_default();
@@ -693,6 +1087,182 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                     ));
                 }
             }
+            Stage::Review {
+                board,
+                report,
+                stages,
+                views,
+                zoom,
+                columns,
+                motion_samples,
+                reference,
+                layers,
+                map,
+                ..
+            } => {
+                if index + 1 != scenario.stages.len() {
+                    return Err(format!("stage {index} review must be the final stage"));
+                }
+                if artifacts.is_none() {
+                    return Err(format!(
+                        "stage {index} captures files, so --artifacts <DIR> is required"
+                    ));
+                }
+                if stages.is_empty() {
+                    return Err(format!("stage {index} review stages must not be empty"));
+                }
+                if views.is_empty() {
+                    return Err(format!("stage {index} review views must not be empty"));
+                }
+                if !(1..=MAX_DIAGNOSTIC_ZOOM).contains(zoom) {
+                    return Err(format!(
+                        "stage {index} review zoom must be 1..={MAX_DIAGNOSTIC_ZOOM}, got {zoom}"
+                    ));
+                }
+                if !(1..=MAX_DIAGNOSTIC_COLUMNS).contains(columns) {
+                    return Err(format!(
+                        "stage {index} review columns must be 1..={MAX_DIAGNOSTIC_COLUMNS}, got {columns}"
+                    ));
+                }
+                if !(1..=MAX_MOTION_SAMPLES).contains(motion_samples) {
+                    return Err(format!(
+                        "stage {index} review motion_samples must be 1..={MAX_MOTION_SAMPLES}, got {motion_samples}"
+                    ));
+                }
+                let unique_views = views.iter().copied().collect::<BTreeSet<_>>();
+                if unique_views.len() != views.len() {
+                    return Err(format!("stage {index} review repeats a diagnostic view"));
+                }
+                let prior = scenario.stages[..index]
+                    .iter()
+                    .filter_map(Stage::name)
+                    .collect::<BTreeSet<_>>();
+                let mut selected = BTreeSet::new();
+                for stage_name in stages {
+                    if stage_name.len() > 64 {
+                        return Err(format!(
+                            "stage {index} review stage name {stage_name:?} exceeds 64 UTF-8 bytes"
+                        ));
+                    }
+                    if !selected.insert(stage_name.as_str()) {
+                        return Err(format!("stage {index} review repeats stage {stage_name:?}"));
+                    }
+                    if !prior.contains(stage_name.as_str()) {
+                        return Err(format!(
+                            "stage {index} review references non-prior stage {stage_name:?}"
+                        ));
+                    }
+                }
+                let mut source_count = scenario.stages[..index]
+                    .iter()
+                    .filter(|stage| stage.name().is_some_and(|name| selected.contains(name)))
+                    .map(|stage| match stage {
+                        Stage::Sequence { frames, every, .. } => {
+                            ((*frames / *every) as usize).min(*motion_samples as usize)
+                        }
+                        _ => 1,
+                    })
+                    .sum::<usize>();
+                if let Some(layers) = layers {
+                    if layers.stage.len() > 64 {
+                        return Err(format!(
+                            "stage {index} review layer stage name exceeds 64 UTF-8 bytes"
+                        ));
+                    }
+                    if !prior.contains(layers.stage.as_str()) {
+                        return Err(format!(
+                            "stage {index} review layers reference non-prior stage {:?}",
+                            layers.stage
+                        ));
+                    }
+                    if layers.tags.is_empty() && !layers.include_untagged {
+                        return Err(format!(
+                            "stage {index} review layers request no tags or untagged draws"
+                        ));
+                    }
+                    let mut tags = BTreeSet::new();
+                    for tag in &layers.tags {
+                        if tag.len() > 64 {
+                            return Err(format!(
+                                "stage {index} review layer tag {tag:?} exceeds 64 UTF-8 bytes"
+                            ));
+                        }
+                        if !tags.insert(tag) {
+                            return Err(format!("stage {index} review repeats layer tag {tag:?}"));
+                        }
+                    }
+                    source_count += layers.tags.len() + usize::from(layers.include_untagged);
+                }
+                if let Some(map) = map {
+                    if map.stage.len() > 64 {
+                        return Err(format!(
+                            "stage {index} review map stage name exceeds 64 UTF-8 bytes"
+                        ));
+                    }
+                    if !prior.contains(map.stage.as_str()) {
+                        return Err(format!(
+                            "stage {index} review map references non-prior stage {:?}",
+                            map.stage
+                        ));
+                    }
+                    if !(1..=MAX_MAP_ZOOM).contains(&map.zoom) {
+                        return Err(format!(
+                            "stage {index} review map zoom must be 1..={MAX_MAP_ZOOM}, got {}",
+                            map.zoom
+                        ));
+                    }
+                    // A live map's used extent is unknown until the selected
+                    // stage runs. Preflight against a fully occupied map so
+                    // no runtime topology can exceed the visual memory bound.
+                    let full_tiles = Box::new([1u8; console_core::MAP_LEN]);
+                    let (_, _, width_cells, height_cells) =
+                        map::parse_region(map.region.as_deref(), &full_tiles).map_err(|error| {
+                            format!("stage {index} review map region is invalid: {error}")
+                        })?;
+                    let (width, height) = review_map_dimensions(
+                        index,
+                        map.zoom,
+                        map.grid,
+                        width_cells,
+                        height_cells,
+                    )?;
+                    let bytes = (width as usize)
+                        .checked_mul(height as usize)
+                        .and_then(|pixels| pixels.checked_mul(4))
+                        .ok_or_else(|| format!("stage {index} review map RGBA size overflows"))?;
+                    if bytes > visual::MAX_VISUAL_RGBA_BYTES {
+                        return Err(format!(
+                            "stage {index} review map can need {bytes} RGBA bytes, exceeding the {} byte limit",
+                            visual::MAX_VISUAL_RGBA_BYTES
+                        ));
+                    }
+                    source_count += 1;
+                }
+                source_count += usize::from(reference.is_some());
+                if source_count > MAX_DIAGNOSTIC_SOURCES {
+                    return Err(format!(
+                        "stage {index} review requests {source_count} sources; at most {MAX_DIAGNOSTIC_SOURCES} are allowed"
+                    ));
+                }
+                let panel_count = source_count
+                    .checked_mul(views.len())
+                    .ok_or_else(|| format!("stage {index} review panel count overflows"))?;
+                if panel_count > 120 {
+                    return Err(format!(
+                        "stage {index} review requests {panel_count} panels; at most 120 are allowed"
+                    ));
+                }
+                for output in std::iter::once(board.as_str()).chain(report.as_deref()) {
+                    let normalized = normalize_relative_path(output).map_err(|error| {
+                        format!("stage {index} review path {output:?}: {error}")
+                    })?;
+                    if !paths.insert(duplicate_path_key(&normalized)) {
+                        return Err(format!(
+                            "stage {index} review path {output:?} aliases an earlier artifact; every normalized path must be unique"
+                        ));
+                    }
+                }
+            }
             Stage::Capture {
                 screenshot,
                 zoom,
@@ -840,6 +1410,156 @@ fn validate_sequence_dimensions(
         .map_err(|error| format!("stage {index} sequence dimensions are invalid: {error}"))
 }
 
+fn review_map_dimensions(
+    index: usize,
+    zoom: u32,
+    grid: bool,
+    width_cells: u32,
+    height_cells: u32,
+) -> Result<(u32, u32), String> {
+    let extra = u32::from(grid);
+    let width = width_cells
+        .checked_mul(8)
+        .and_then(|width| width.checked_mul(zoom))
+        .and_then(|width| width.checked_add(extra))
+        .ok_or_else(|| format!("stage {index} review map width overflows"))?;
+    let height = height_cells
+        .checked_mul(8)
+        .and_then(|height| height.checked_mul(zoom))
+        .and_then(|height| height.checked_add(extra))
+        .ok_or_else(|| format!("stage {index} review map height overflows"))?;
+    Ok((width, height))
+}
+
+fn preflight_review(
+    scenario: &Scenario,
+    reference_image: Option<&visual::RgbaImage>,
+) -> Result<(), String> {
+    let Some((review_index, review_stage)) = scenario
+        .stages
+        .iter()
+        .enumerate()
+        .find(|(_, stage)| matches!(stage, Stage::Review { .. }))
+    else {
+        return Ok(());
+    };
+    let Stage::Review {
+        stages,
+        views,
+        zoom,
+        columns,
+        motion_samples,
+        reference,
+        layers,
+        map,
+        ..
+    } = review_stage
+    else {
+        unreachable!();
+    };
+
+    let selected = stages.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let mut frame_count = 0u64;
+    let mut sources = Vec::<(String, u32, u32)>::new();
+    for stage in &scenario.stages[..review_index] {
+        let frame_start = frame_count;
+        match stage {
+            Stage::Input { frames, .. } | Stage::Sequence { frames, .. } => {
+                frame_count = frame_count
+                    .checked_add(*frames)
+                    .ok_or("review preflight frame count overflows")?;
+            }
+            _ => {}
+        }
+        let Some(name) = stage.name().filter(|name| selected.contains(*name)) else {
+            continue;
+        };
+        if let Stage::Sequence {
+            frames,
+            every,
+            crop,
+            ..
+        } = stage
+        {
+            let sample_count = (*frames / *every) as usize;
+            let count = sample_count.min(*motion_samples as usize);
+            let selected_indices = if count == 1 {
+                vec![sample_count - 1]
+            } else {
+                (0..count)
+                    .map(|sample| sample * (sample_count - 1) / (count - 1))
+                    .collect()
+            };
+            for sample in selected_indices {
+                let frame_offset = (sample as u64 + 1)
+                    .checked_mul(*every)
+                    .ok_or("review preflight sequence frame offset overflows")?;
+                let frame = frame_start
+                    .checked_add(frame_offset)
+                    .ok_or("review preflight sequence frame number overflows")?;
+                sources.push((format!("{name} F{frame}"), crop.w, crop.h));
+            }
+        } else {
+            sources.push((
+                format!("{name} F{frame_count}"),
+                SCREEN_W as u32,
+                SCREEN_H as u32,
+            ));
+        }
+    }
+
+    if let Some(layers) = layers {
+        for tag in &layers.tags {
+            sources.push((
+                format!("LAYER {tag} @ {}", layers.stage),
+                SCREEN_W as u32,
+                SCREEN_H as u32,
+            ));
+        }
+        if layers.include_untagged {
+            sources.push((
+                format!("LAYER UNTAGGED @ {}", layers.stage),
+                SCREEN_W as u32,
+                SCREEN_H as u32,
+            ));
+        }
+    }
+    if let Some(map) = map {
+        let full_tiles = Box::new([1u8; console_core::MAP_LEN]);
+        let (_, _, width_cells, height_cells) =
+            map::parse_region(map.region.as_deref(), &full_tiles).map_err(|error| {
+                format!("stage {review_index} review map region is invalid: {error}")
+            })?;
+        let (width, height) =
+            review_map_dimensions(review_index, map.zoom, map.grid, width_cells, height_cells)?;
+        sources.push((
+            format!("MAP {} @ {}", map_source_name(map.source), map.stage),
+            width,
+            height,
+        ));
+    }
+    if reference.is_some() {
+        let image = reference_image.ok_or("review reference was not decoded for preflight")?;
+        sources.push(("REFERENCE".to_string(), image.width, image.height));
+    }
+
+    let source_preflight = sources
+        .iter()
+        .map(|(label, width, height)| visual::DiagnosticSourcePreflight {
+            label,
+            width: *width,
+            height: *height,
+        })
+        .collect::<Vec<_>>();
+    visual::preflight_diagnostic_board(&visual::DiagnosticBoardPreflight {
+        sources: &source_preflight,
+        views,
+        zoom: *zoom,
+        columns: *columns,
+    })
+    .map_err(|error| format!("stage {review_index} review dimensions are invalid: {error}"))
+}
+
 fn validate_capture_dimensions(zoom: u32, cell: u32) -> Result<(), String> {
     let screen_width = (SCREEN_W as u32)
         .checked_mul(zoom)
@@ -877,6 +1597,7 @@ fn execute_stage(
     artifact_root: Option<&Path>,
     scenario_dir: &Path,
     report: &mut StageReport,
+    review: &mut ReviewCollector,
 ) -> Result<(), String> {
     match stage {
         Stage::Eval { code, .. } => {
@@ -958,6 +1679,12 @@ fn execute_stage(
                 .map_err(|button| format!("unknown input button {button:?} in {buttons:?}"))?;
             let mut images = Vec::with_capacity(sample_count as usize);
             let mut frame_numbers = Vec::with_capacity(sample_count as usize);
+            let collect_review = review.wants_stage(name.as_deref());
+            let mut review_indices = Vec::with_capacity(if collect_review {
+                sample_count as usize
+            } else {
+                0
+            });
             for _ in 0..sample_count {
                 let outcome = session
                     .step(*every, mask)
@@ -971,21 +1698,37 @@ fn execute_stage(
                             .unwrap_or_else(|| "unknown error".to_string())
                     ));
                 }
-                let rgba = {
+                let (rgba, indices) = {
                     let console = session.console().map_err(|error| error.to_string())?;
-                    crate::session::framebuffer_rgba(
-                        console.framebuffer(),
-                        console.display_palette(),
+                    (
+                        crate::session::framebuffer_rgba(
+                            console.framebuffer(),
+                            console.display_palette(),
+                        ),
+                        collect_review.then(|| {
+                            presented_indices(console.framebuffer(), console.display_palette())
+                        }),
                     )
                 };
                 let frame = RgbaImage::new(SCREEN_W as u32, SCREEN_H as u32, rgba)?;
                 images.push(frame.crop(rect)?);
+                if let Some(indices) = indices {
+                    review_indices.push(crop_indices(&indices, rect)?);
+                }
                 frame_numbers.push(outcome.frame_count);
             }
             if frame_numbers != expected_frame_numbers {
                 return Err(format!(
                     "sequence cadence drifted: expected {expected_frame_numbers:?}, got {frame_numbers:?}"
                 ));
+            }
+            if collect_review {
+                review.capture_sequence(
+                    name.as_deref(),
+                    &images,
+                    &review_indices,
+                    &frame_numbers,
+                )?;
             }
 
             // Produce every requested artifact in memory before writing any of
@@ -1089,6 +1832,50 @@ fn execute_stage(
                     equals, actual
                 ));
             }
+        }
+        Stage::Review {
+            board,
+            report: report_path,
+            views,
+            zoom,
+            columns,
+            ..
+        } => {
+            let root = artifact_root.expect("review validation requires an artifact root");
+            let sources = review.finish_sources(stage, session)?;
+            let (image, layout, metrics) =
+                visual::diagnostic_board(&visual::DiagnosticBoardSpec {
+                    sources: &sources,
+                    views,
+                    zoom: *zoom,
+                    columns: *columns,
+                })?;
+            let payload = json!({
+                "kind": "visual_diagnostics",
+                "interpretation": "evidence_only_no_aesthetic_score",
+                "views": views,
+                "layout": layout,
+                "sources": metrics,
+            });
+            let mut report_bytes = serde_json::to_vec_pretty(&payload)
+                .map_err(|error| format!("serializing visual diagnostic report: {error}"))?;
+            report_bytes.push(b'\n');
+            let board_png = image.png();
+            report.artifacts.push(write_artifact(
+                root,
+                board,
+                "visual_review_board",
+                &board_png,
+            )?);
+            if let Some(path) = report_path {
+                report.artifacts.push(write_artifact(
+                    root,
+                    path,
+                    "visual_review_report",
+                    &report_bytes,
+                )?);
+            }
+            report.actual = Some(payload);
         }
         Stage::Capture {
             screenshot,
@@ -1291,7 +2078,7 @@ fn frame_count(session: &Session) -> u64 {
 
 fn load_reference(scenario_dir: &Path, reference: &str) -> Result<RgbaImage, String> {
     if reference.trim().is_empty() {
-        return Err("sequence reference path is empty".to_string());
+        return Err("visual reference path is empty".to_string());
     }
     let reference_path = Path::new(reference);
     let path = if reference_path.is_absolute() {
@@ -1300,9 +2087,9 @@ fn load_reference(scenario_dir: &Path, reference: &str) -> Result<RgbaImage, Str
         scenario_dir.join(reference_path)
     };
     let bytes = fs::read(&path)
-        .map_err(|error| format!("reading sequence reference {}: {error}", path.display()))?;
+        .map_err(|error| format!("reading visual reference {}: {error}", path.display()))?;
     let decoded = crate::palette::decode_png_rgba(&bytes)
-        .map_err(|error| format!("decoding sequence reference {}: {error}", path.display()))?;
+        .map_err(|error| format!("decoding visual reference {}: {error}", path.display()))?;
     RgbaImage::new(decoded.width, decoded.height, decoded.rgba)
 }
 

@@ -763,6 +763,9 @@ are:
   and/or labeled review board;
 - `{"op":"assert","code":"return ...","equals":<json>}` — exact JSON
   comparison of the evaluated value;
+- `{"op":"review","board":"...","stages":[...],...}` — as the final
+  stage, consolidate prior named still/motion evidence and optional semantic
+  layers, map context, and reference art into a diagnostic board/report;
 - `{"op":"capture",...}` — write one or more `screenshot`, `screen_text`,
   `wav`, `spectrogram`, `audio_events`, `audio_stats`, `text_events`, or
   `draw_trace` artifacts, an optional `layers` mapping, plus an optional nested
@@ -787,6 +790,28 @@ requires `board`; it is decoded before stepping, copied byte-for-byte at native
 size, and labeled `NOT PIXEL-ALIGNED`. It is a visual comparison panel, never
 an implied quantitative or pixel-aligned score. Sequence frames count toward
 the same 36000-frame scenario limit, and all visual allocations are bounded.
+
+A `review` must be the final stage and names one or more unique prior stages in
+`stages`. A selected ordinary stage contributes its current full framebuffer;
+a selected `sequence` contributes evenly spaced samples from its declared crop
+(`motion_samples` 1-8, default 3). `views` defaults to `color`, `grayscale`,
+`luma_bands`, `edges`, and `palette_index`; duplicates and empty lists are
+rejected. `zoom` is nearest-neighbor scale 1-4 and `columns` is 1-8. At most
+24 sources and 120 derived panels may be requested, with the ordinary 64 MiB
+visual-allocation bound still enforced on actual dimensions.
+
+The required `board` path receives a labeled PNG. Optional `report` receives
+deterministic JSON containing panel geometry, exact or nearest-Apollo64 palette
+histograms, opaque/transparent and bright-pixel counts, four luma-band counts,
+edge counts, and 8x8-cell detail-density counts. The report identifies itself
+as evidence only and contains no aesthetic quality score. Optional `reference`
+is resolved relative to the scenario. Optional `layers` names an exact prior
+`stage`, an exact list of `draw_tag()` strings, and/or `include_untagged`; it
+uses the isolated current-frame evidence captured at that stage. Optional `map`
+names a prior `stage` and accepts `source`, `region`, `zoom`, `grid`, and `ids`
+like map capture, preserving authored or live-runtime topology from that exact
+point. Every output remains a unique confined artifact path, and malformed
+references are decoded before the cart begins stepping.
 
 Capture fields are strict and typed. `screenshot` and `screen_text` capture the
 current framebuffer. `zoom` is an integer from 1 through 16 (default 1) used by

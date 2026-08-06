@@ -781,12 +781,7 @@ pub fn encode_png_zoomed(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT], zoom: u32)
 
 fn encode_layer_png_zoomed(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT], zoom: u32) -> Vec<u8> {
     let zoom = zoom.max(1);
-    let mut rgba = framebuffer_rgba(fb, dpal);
-    for (pixel, &index) in rgba.chunks_exact_mut(4).zip(fb) {
-        if index == LAYER_TRANSPARENT {
-            pixel.copy_from_slice(&[0, 0, 0, 0]);
-        }
-    }
+    let rgba = layer_framebuffer_rgba(fb, dpal);
     let (rgba, width, height) = if zoom == 1 {
         (rgba, SCREEN_W as u32, SCREEN_H as u32)
     } else {
@@ -797,6 +792,16 @@ fn encode_layer_png_zoomed(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT], zoom: u3
         )
     };
     crate::palette::encode_png_rgba(&rgba, width, height)
+}
+
+pub(crate) fn layer_framebuffer_rgba(fb: &[u8; FB_LEN], dpal: &[u8; COLOR_COUNT]) -> Vec<u8> {
+    let mut rgba = framebuffer_rgba(fb, dpal);
+    for (pixel, &index) in rgba.chunks_exact_mut(4).zip(fb) {
+        if index == LAYER_TRANSPARENT {
+            pixel.copy_from_slice(&[0, 0, 0, 0]);
+        }
+    }
+    rgba
 }
 
 /// Convert raw framebuffer indices to opaque RGBA using the current display

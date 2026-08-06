@@ -757,6 +757,229 @@ fn visual_sequence_is_deterministic_and_preserves_native_reference_pixels() {
 }
 
 #[test]
+fn scenario_review_consolidates_motion_layers_map_reference_and_diagnostics() {
+    let dir = scratch("scenario-review");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    let scenario = dir.join("review.json");
+    let reference = dir.join("reference.png");
+    fs::write(
+        &cart,
+        "__lua__\n\
+         frame=0\n\
+         function _update() frame=frame+1 mset(0,0,1) end\n\
+         function _draw()\n\
+           draw_tag('background') cls(2)\n\
+           draw_tag('terrain') rectfill(0,20,31,22,7)\n\
+           draw_tag('actor') pset(frame%32,19,63)\n\
+           draw_tag() pset(31,0,0)\n\
+         end\n\
+         __map__\n0002\n",
+    )
+    .unwrap();
+    let mut reference_rgba = vec![0u8; 32 * 32 * 4];
+    for (index, pixel) in reference_rgba.chunks_exact_mut(4).enumerate() {
+        let color = console_core::PALETTE[if index % 7 == 0 { 63 } else { 2 }];
+        pixel.copy_from_slice(&[color[0], color[1], color[2], 255]);
+    }
+    fs::write(
+        &reference,
+        console_agent::palette::encode_png_rgba(&reference_rgba, 32, 32),
+    )
+    .unwrap();
+    fs::write(
+        &scenario,
+        serde_json::to_vec_pretty(&json!({
+            "version":1,
+            "stages":[
+                {"op":"input", "name":"start", "frames":1},
+                {"op":"sequence", "name":"hop", "frames":6, "every":2,
+                 "crop":{"x":0,"y":0,"w":32,"h":32}, "strip":"hop.png"},
+                {"op":"input", "name":"landing", "frames":1},
+                {"op":"review", "name":"visual-review",
+                 "board":"review/board.png", "report":"review/report.json",
+                 "stages":["start","hop","landing"], "motion_samples":2,
+                 "zoom":1, "columns":5, "reference":"reference.png",
+                 "layers":{"stage":"landing", "tags":["background","terrain","actor"],
+                           "include_untagged":true},
+                 "map":{"stage":"landing", "source":"live", "region":"0,0,2,1",
+                        "zoom":1, "grid":true, "ids":true}}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let first = dir.join("first");
+    let second = dir.join("second");
+    for artifacts in [&first, &second] {
+        let output = run(&[
+            "playtest",
+            as_str(&cart),
+            "--scenario",
+            as_str(&scenario),
+            "--artifacts",
+            as_str(artifacts),
+            "--format",
+            "json",
+        ]);
+        assert!(
+            output.status.success(),
+            "review failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["scenario"]["status"], "passed");
+        assert_eq!(report["scenario"]["artifact_count"], 3);
+        assert_eq!(report["stages"][3]["op"], "review");
+        assert_eq!(
+            report["stages"][3]["actual"]["layout"]["panels"]
+                .as_array()
+                .unwrap()
+                .len(),
+            50
+        );
+        assert_eq!(
+            report["stages"][3]["actual"]["sources"]
+                .as_array()
+                .unwrap()
+                .len(),
+            10
+        );
+    }
+
+    for path in ["hop.png", "review/board.png", "review/report.json"] {
+        assert_eq!(
+            fs::read(first.join(path)).unwrap(),
+            fs::read(second.join(path)).unwrap(),
+            "{path} must be byte-identical"
+        );
+    }
+    let board = fs::read(first.join("review/board.png")).unwrap();
+    assert!(board.starts_with(b"\x89PNG"));
+    let diagnostics: Value =
+        serde_json::from_slice(&fs::read(first.join("review/report.json")).unwrap()).unwrap();
+    assert_eq!(
+        diagnostics["interpretation"],
+        "evidence_only_no_aesthetic_score"
+    );
+    assert!(diagnostics.get("score").is_none());
+    let sources = diagnostics["sources"].as_array().unwrap();
+    assert!(
+        sources
+            .iter()
+            .any(|source| source["source"] == "LAYER terrain @ landing")
+    );
+    assert!(
+        sources
+            .iter()
+            .any(|source| source["source"] == "MAP LIVE @ landing")
+    );
+    assert!(sources.iter().any(|source| {
+        source["source"] == "REFERENCE" && source["palette_basis"] == "nearest_apollo64"
+    }));
+}
+
+#[test]
+fn invalid_scenario_reviews_are_rejected_before_execution() {
+    let dir = scratch("scenario-review-schema");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    fs::write(
+        &cart,
+        "__lua__\nfunction _init() error('review preflight must not load cart') end\n",
+    )
+    .unwrap();
+
+    let cases = [
+        (
+            "not-final.json",
+            json!([
+                {"op":"input", "name":"scene", "frames":1},
+                {"op":"review", "board":"board.png", "stages":["scene"]},
+                {"op":"input", "frames":1}
+            ]),
+            "review must be the final stage",
+        ),
+        (
+            "future.json",
+            json!([
+                {"op":"input", "name":"scene", "frames":1},
+                {"op":"review", "board":"board.png", "stages":["missing"]}
+            ]),
+            "references non-prior stage",
+        ),
+        (
+            "views.json",
+            json!([
+                {"op":"input", "name":"scene", "frames":1},
+                {"op":"review", "board":"board.png", "stages":["scene"],
+                 "views":["color","color"]}
+            ]),
+            "repeats a diagnostic view",
+        ),
+        (
+            "path.json",
+            json!([
+                {"op":"input", "name":"scene", "frames":1},
+                {"op":"review", "board":"../board.png", "stages":["scene"]}
+            ]),
+            "`..` path components are not allowed",
+        ),
+        (
+            "map-size.json",
+            json!([
+                {"op":"input", "name":"scene", "frames":1},
+                {"op":"review", "board":"board.png", "stages":["scene"],
+                 "map":{"stage":"scene", "source":"live", "zoom":16}}
+            ]),
+            "review map can need",
+        ),
+        (
+            "derived-map-size.json",
+            json!([
+                {"op":"input", "name":"scene", "frames":1},
+                {"op":"review", "board":"board.png", "stages":["scene"],
+                 "zoom":4,
+                 "map":{"stage":"scene", "source":"live",
+                        "region":"0,0,128,64", "zoom":1}}
+            ]),
+            "visual diagnostic panels need",
+        ),
+    ];
+    for (file, stages, expected) in cases {
+        let scenario = dir.join(file);
+        fs::write(
+            &scenario,
+            serde_json::to_vec(&json!({"version":1, "stages":stages})).unwrap(),
+        )
+        .unwrap();
+        let artifacts = dir.join(format!("{file}-artifacts"));
+        let output = run(&[
+            "playtest",
+            as_str(&cart),
+            "--scenario",
+            as_str(&scenario),
+            "--artifacts",
+            as_str(&artifacts),
+        ]);
+        assert_eq!(output.status.code(), Some(2), "case {file}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "case {file}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr)
+                .contains("review preflight must not load cart"),
+            "case {file} loaded the cart before review validation: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!artifacts.exists());
+    }
+}
+
+#[test]
 fn invalid_visual_sequences_are_rejected_before_execution_or_writing() {
     let dir = scratch("visual-sequence-schema");
     fs::create_dir_all(&dir).unwrap();
