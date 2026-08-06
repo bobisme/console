@@ -8,3 +8,7 @@
 .botbox.json
 .claude/
 opencode.json
+
+# Generated single-file WASM artifact. Review its Rust/Lua sources and the
+# native/WASM parity smokes; the minified build product overwhelms text diffs.
+web/engine.js

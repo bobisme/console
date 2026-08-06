@@ -136,6 +136,111 @@ fn full_session_flow_against_demo_cart() {
 }
 
 #[test]
+fn ecs_query_is_bounded_projected_and_replay_stable() {
+    let cart = r#"__lua__
+world = ecs.world("game", {capacity=32})
+function _init()
+  for i=1,6 do world:spawn({pos={x=i,y=i*2,private=i*99},bullet={kind="arc"},tag=true}) end
+end
+function _update()
+  world:each({"pos"}, function(_,pos) pos.x=pos.x+1 end)
+end
+"#;
+    let mut session = Session::new();
+    let loaded = handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":1,"method":"load_cart","params":{"text":cart}}),
+    );
+    assert!(loaded.get("error").is_none(), "load failed: {loaded}");
+    handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":2,"method":"step","params":{"frames":3}}),
+    );
+    let query = json!({
+        "jsonrpc":"2.0","id":3,"method":"ecs_query","params":{
+            "world":"game",
+            "with":["bullet"],
+            "select":{"pos":["x","y"],"bullet":["kind"],"tag":[]},
+            "limit":2
+        }
+    });
+    let first = handle(&mut session, query.clone());
+    assert!(first.get("error").is_none(), "query failed: {first}");
+    assert_eq!(first["result"]["frame_count"], 3);
+    assert_eq!(first["result"]["alive"], 6);
+    assert_eq!(first["result"]["matched"], 6);
+    assert_eq!(first["result"]["returned"], 2);
+    assert_eq!(first["result"]["truncated"], true);
+    assert_eq!(first["result"]["next_after"], 2);
+    assert_eq!(
+        first["result"]["entities"][0]["components"]["pos"],
+        json!({"x":4,"y":2})
+    );
+    assert!(first["result"]["entities"][0]["components"]["pos"]["private"].is_null());
+
+    handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":4,"method":"save_state","params":{"name":"three"}}),
+    );
+    handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":5,"method":"step","params":{"frames":4}}),
+    );
+    handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":6,"method":"load_state","params":{"name":"three"}}),
+    );
+    let replayed = handle(&mut session, query);
+    assert_eq!(first["result"], replayed["result"]);
+
+    // The host calls its registry-held inspector, not the cart-replaceable
+    // public global.
+    handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":7,"method":"eval","params":{"code":"ecs=nil"}}),
+    );
+    let protected = handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":8,"method":"ecs_query","params":{"world":"game","limit":1}}),
+    );
+    assert_eq!(protected["result"]["alive"], 6);
+}
+
+#[test]
+fn ecs_query_rejects_unbounded_or_malformed_requests() {
+    let mut session = Session::new();
+    handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":1,"method":"load_cart","params":{"text":"__lua__\nworld=ecs.world('game')\n"}}),
+    );
+    for (params, needle) in [
+        (json!({"world":"game","limit":0}), "limit"),
+        (json!({"world":"game","limit":129}), "limit"),
+        (json!({"world":"game","with":"bullet"}), "with"),
+        (json!({"world":"bad world"}), "begin with"),
+        (json!({"world":"game","with":["9bad"]}), "begin with"),
+        (
+            json!({"world":"game","select":{"pos":"x"}}),
+            "select component",
+        ),
+        (json!({"limit":1}), "world"),
+    ] {
+        let response = handle(
+            &mut session,
+            json!({"jsonrpc":"2.0","id":2,"method":"ecs_query","params":params}),
+        );
+        assert_eq!(response["error"]["code"], -32602, "{response}");
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(needle),
+            "{response}"
+        );
+    }
+}
+
+#[test]
 fn text_events_report_anchors_bounds_camera_and_frame_filters() {
     let cart = "__lua__\n\
 function _init() print('INIT', 96, 2, 7, 'center') end\n\

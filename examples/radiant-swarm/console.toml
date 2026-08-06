@@ -1,0 +1,23 @@
+manifest_version = 1
+
+[cart]
+title = "Radiant Swarm"
+author = "console agents"
+version = "1"
+preview_palette = [48, 49, 1, 2, 5, 7, 14, 15, 31, 38, 39, 45, 47, 62, 63]
+
+[cart.meta]
+genre = "bullet-hell"
+runtime = "lua-ecs-prototype"
+
+[lua]
+entry = "lua/main.lua"
+root = "lua"
+
+[sections]
+instruments = "audio/instruments.txt"
+sfx = "audio/sfx.txt"
+music = "audio/music.txt"
+
+[build]
+output = "build/radiant-swarm.cart"

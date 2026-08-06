@@ -1,0 +1,11 @@
+inst pulse wave=1 env=0,5,1 sweep=5,3
+inst impact wave=5 env=0,9,0 sweep=-12,4
+inst nova wave=4 env=0,24,2 vib=18,3,0 echo=3
+inst glint wave=6 fm=3,7,4 env=0,10,1 echo=2
+inst warning wave=2 env=0,18,3 vib=28,4,2
+inst bass wave=3 env=1,8,4
+inst lead wave=1 env=0,8,2 vib=12,2,2 echo=2
+inst arp wave=0 env=0,5,1
+inst kick wave=3 env=0,7,0 sweep=-18,4 duck=4,4
+master drive=2 tone=1 hiss=0
+echo delay=18 feedback=3 level=2

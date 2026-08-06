@@ -1,0 +1,2 @@
+bpm=112 rows_per_beat=4
+pat 0 loop=0 : 16 17 18 19

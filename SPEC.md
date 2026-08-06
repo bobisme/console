@@ -9,9 +9,9 @@ single-file HTML deployment.
 Cargo workspace:
 
 - `crates/console-core` — pure library. Lua 5.4 VM (mlua, vendored), software
-  framebuffer, input, fixed timestep. **No windowing, no GPU, no audio device, no
-  wall-clock, no filesystem access from Lua.** Compiles for native AND
-  `wasm32-unknown-emscripten`.
+  framebuffer, input, fixed timestep, and the console-native deterministic Lua
+  ECS. **No windowing, no GPU, no audio device, no wall-clock, no filesystem
+  access from Lua.** Compiles for native AND `wasm32-unknown-emscripten`.
 - `crates/console-agent` — the single native `console` binary and its testable
   library: headless harness, JSON-RPC, authoring tools, HTML packer/server.
 - `crates/console-web` — emscripten cdylib/staticlib exposing a C ABI over the core.
@@ -112,8 +112,76 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `t()` | seconds since cart start = frame_count / 60 (exact, from frame counter) |
 | `flr(x)`, `ceil(x)`, `abs(x)`, `min/max/mid(...)`, `sin(x)`, `cos(x)` | conveniences; sin/cos take **turns** (PICO-8 style: `sin(0.25) = -1`... actually use standard sign: `sin(t)` = `math.sin(t*2π)`, PICO-8 inverts — we do NOT invert) |
 | `printh(s)` | log line to host (harness `logs`, browser console). Never draws. |
+| `ecs.world(name, [options])` | create one named deterministic entity world; `options.capacity` defaults to 1024 and is capped at 4096 |
+| `ecs.inspect(name, [options])` | return the same bounded, read-only projection used by the host `ecs_query` RPC; intended for diagnostics rather than game logic |
 
 All draw coordinates are floats, truncated toward negative infinity (`flr`) before use.
+
+### Entity component system
+
+`ecs` is a small console-native Lua ECS for entity-heavy games. It is part of
+the deterministic core on native and wasm; it is not Bevy ECS and exposes no
+scheduler, Rust types, or host storage. A cart may create at most 16 uniquely
+named worlds. Names are 1–64 bytes, begin with a letter or `_`, and otherwise
+contain only letters, digits, `_`, `.`, or `-`. A world registers at most 128
+distinct component names over its lifetime, and one entity may have at most
+128 components; these caps keep inspection breadth finite.
+
+```lua
+local world=ecs.world("arena",{capacity=1200})
+local player=world:spawn({
+  pos={x=96,y=280},
+  velocity={x=0,y=0},
+  player=true,
+})
+
+world:each({"pos","velocity"},function(id,pos,velocity)
+  pos.x=pos.x+velocity.x
+  pos.y=pos.y+velocity.y
+  if pos.y>340 then world:despawn(id) end
+end)
+```
+
+World methods:
+
+| method | behavior |
+|---|---|
+| `world:name()` | return the registered world name |
+| `world:spawn(components)` | copy the top-level component map and return a monotonically increasing integer entity ID; IDs are never reused, including after `clear` |
+| `world:despawn(id)` | remove a live entity and return true; return false when absent/already queued |
+| `world:alive(id)` | report whether the entity is currently live |
+| `world:get(id,name)` / `world:has(id,name)` | return a component/reference or test its presence; absent entities/components return nil/false |
+| `world:add(id,name,value)` / `world:remove(id,name)` | add, replace, or remove one component; return false for an absent/queued entity |
+| `world:entities([with])` | allocate and return matching IDs in creation order |
+| `world:each(with,callback)` | call `callback(id, component...)` in creation order and return the selected count |
+| `world:count([with])` | count all live entities or those containing every requested component |
+| `world:clear()` | remove every entity without reusing old IDs; forbidden inside `each` |
+| `world:stats()` | return name, alive/capacity/next ID, registered component-type count, and per-component counts |
+
+Component values may be any non-nil Lua value. Table components are returned
+by reference, so field mutation inside `each` is immediate. Structural
+operations (`spawn`, `despawn`, `add`, and `remove`) issued by any nested
+`each` are instead queued FIFO and flushed after the outermost query. The
+current selection is therefore stable: newly spawned entities are not visited,
+and a queued removal cannot invalidate later callback arguments. Query filters
+are dense arrays of at most 16 unique component names. Query order is always
+entity creation order; do not substitute `pairs` when order changes state.
+Before that flush, `count`/`stats` exclude pending spawns and include entities
+queued for despawn. Capacity likewise counts both currently live and pending
+spawns, so a queued despawn does not make room for a spawn in the same query;
+stage replacement spawns until after `each` when operating at capacity.
+
+`ecs.inspect(name,{with?,select?,limit?,after?})` is deliberately bounded.
+`with` filters entities; `select` maps up to 8 component names to arrays of up
+to 16 scalar field names; `limit` defaults to 64 and is capped at 128; `after`
+is an entity-ID cursor. Results contain stable `entities`, counts,
+`next_after`, `truncated`, and `budget_exhausted`. Only selected scalar values
+are copied (tables/functions/userdata become type placeholders); strings are
+truncated to 256 bytes, with global budgets of 2048 cells and 32768 string
+bytes per request. The host retains its original inspector in the Lua registry,
+so replacing the public `ecs` global cannot hide a world from agent diagnostics.
+Do not step or structurally mutate the world between cursor pages when the
+pages must describe one coherent observation.
 
 ### Text layout
 
@@ -710,6 +778,9 @@ one response per line on stdout. Methods:
   the same 64-character alphabet as `__sprites__`
 - `eval {code}` — run Lua, return result serialized to JSON (tables best-effort, depth-limited)
 - `get_global {name}` — shorthand for eval returning that global
+- `ecs_query {world,with?=[],select?={},limit?=64,after?=0}` — bounded,
+  read-only inspection of one named ECS world in stable entity order; the host
+  adds `frame_count` to the `ecs.inspect` result
 - `logs {}` — drain `printh` output
 - `text_events {from_frame?}` — every `print` call with frame, text, alignment,
   world/screen anchor, screen-space logical bounds, color, visibility, and

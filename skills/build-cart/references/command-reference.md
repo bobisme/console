@@ -595,6 +595,7 @@ One line is one request. Important error codes: `-32700` parse error,
 | `screen_text` | `{}` | `{lines}`: 320 strings × 192 palette characters, raw draw-space indices. |
 | `eval` | `{code}` | Execute chunk; `{result}` JSON conversion. |
 | `get_global` | `{name}` | Return one global as `{result}`. |
+| `ecs_query` | `{world,with?=[],select?={},limit?=64,after?=0}` | Read a bounded field projection from one named ECS world in stable creation order. |
 | `logs` | `{}` | Drain `printh` lines as `{logs}`. |
 | `save_state` | `{name}` | Save a replay checkpoint by name. |
 | `load_state` | `{name}` | Reset/replay it; return frame/halt state. |
@@ -611,6 +612,25 @@ One line is one request. Important error codes: `-32700` parse error,
 Saved states are reset-plus-replay, so they reproduce pixels, map mutations,
 audio samples, sequencer events, text events, and enabled draw traces rather
 than serializing opaque VM memory.
+
+`ecs_query` is the agent-facing ECS inspector. `with` is a dense array of at
+most 16 required component names. `select` maps at most 8 component names to
+dense arrays of at most 16 scalar fields; an empty field array includes a
+scalar component value or an empty object for a table component. `limit` is
+1–128 and `after` is the previous page's `next_after` entity ID. Example:
+
+```json
+{"jsonrpc":"2.0","id":7,"method":"ecs_query","params":{"world":"arena","with":["hostile","pos"],"select":{"hostile":["kind"],"pos":["x","y"]},"limit":32,"after":0}}
+```
+
+The result includes `frame_count`, world counts, capacity, registered
+`component_type_count`, total `matched`,
+page `returned`, `truncated`, `budget_exhausted`, `next_after`,
+`component_counts`, and ordered `{id,components}` entries. Projection is capped
+at 2048 scalar cells and 32768 string bytes (256 bytes per string); unsupported
+Lua types become placeholders. This method uses a protected read-only
+inspector retained by the host, so replacing the cart's public `ecs` table does
+not disable it.
 
 Draw traces distinguish primitives from `spr`/`sspr`/`aspr`/`map`, snapshot
 camera, clip, non-identity palette remaps, transparency, and fill state, and

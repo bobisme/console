@@ -1,6 +1,6 @@
 ---
 name: build-cart
-description: Build, modify, inspect, test, migrate, and package games for the console fantasy-console platform. Use when creating or editing a .cart file or console.toml multi-file project; using console build; writing gameplay in the console Lua API; authoring sprites, declared animations, tile maps, metatiles, instruments, SFX, or music; using console CLI or JSON-RPC tooling; debugging deterministic behavior, pixels, input, or audio; or producing and validating a single-file HTML game with console pack.
+description: Build, modify, inspect, test, migrate, and package games for the console fantasy-console platform. Use when creating or editing a .cart file or console.toml multi-file project; using console build; writing gameplay or entity-heavy ECS logic in the console Lua API; authoring sprites, declared animations, tile maps, metatiles, instruments, SFX, or music; using console CLI or JSON-RPC tooling; debugging deterministic behavior, entities, pixels, input, or audio; or producing and validating a single-file HTML game with console pack.
 ---
 
 # Build console carts

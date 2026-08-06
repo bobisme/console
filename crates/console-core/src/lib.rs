@@ -23,6 +23,7 @@ mod api;
 mod audio;
 mod cart;
 mod draw_trace;
+mod ecs;
 mod error;
 mod font;
 mod gfx;
@@ -31,9 +32,10 @@ mod rng;
 mod state;
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use mlua::{Function, Lua, StdLib, Value};
+use mlua::{Function, Lua, RegistryKey, StdLib, Value};
 
 pub use crate::api::BUTTON_COUNT;
 pub use crate::audio::{
@@ -52,6 +54,10 @@ pub use crate::cart::{Cart, PreviewPalette};
 pub use crate::draw_trace::{
     Bounds as DrawBounds, DrawDetails, DrawEvent, DrawTraceFrame, MAX_DRAW_EVENTS_PER_FRAME,
     PaletteRemap as DrawPaletteRemap,
+};
+pub use crate::ecs::{
+    ECS_MAX_SAFE_ID, ECS_QUERY_DEFAULT_LIMIT, ECS_QUERY_MAX_FIELDS, ECS_QUERY_MAX_LIMIT,
+    ECS_QUERY_MAX_SELECT, ECS_QUERY_MAX_WITH,
 };
 pub use crate::error::Error;
 pub use crate::gfx::{
@@ -106,6 +112,7 @@ pub mod input {
 /// A loaded cart plus its running Lua VM.
 pub struct Console {
     lua: Lua,
+    ecs_inspector: RegistryKey,
     state: Rc<RefCell<state::State>>,
     /// Snapshot of the framebuffer, refreshed after every step/eval so
     /// [`Console::framebuffer`] can hand out a plain reference.
@@ -164,9 +171,11 @@ impl Console {
 
         api::sandbox(&lua)?;
         api::register(&lua, &st)?;
+        let ecs_inspector = ecs::install(&lua)?;
 
         let mut console = Console {
             lua,
+            ecs_inspector,
             state: st,
             fb: Box::new([0u8; FB_LEN]),
             dpal: IDENTITY_PAL,
@@ -453,6 +462,30 @@ impl Console {
     /// Read a global out of the cart's environment.
     pub fn get_global(&self, name: &str) -> Result<Value, Error> {
         Ok(self.lua.globals().get::<Value>(name)?)
+    }
+
+    /// Read a bounded, normalized snapshot from one named Lua ECS world.
+    ///
+    /// The original inspector lives in the Lua registry, so cart code cannot
+    /// replace the host's read-only path by overwriting the public `ecs`
+    /// global. Query order is stable entity-creation order.
+    pub fn ecs_query(
+        &self,
+        world: &str,
+        required: &[String],
+        select: &BTreeMap<String, Vec<String>>,
+        limit: usize,
+        after: u64,
+    ) -> Result<Value, Error> {
+        Ok(ecs::query(
+            &self.lua,
+            &self.ecs_inspector,
+            world,
+            required,
+            select,
+            limit,
+            after,
+        )?)
     }
 
     /// Direct access to the VM for hosts that need it.

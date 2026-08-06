@@ -7,6 +7,7 @@ sandbox. Function arguments in square brackets are optional.
 ## Contents
 
 - [Runtime and callbacks](#runtime-and-callbacks)
+- [Entity component system](#entity-component-system)
 - [Drawing primitives](#drawing-primitives)
 - [Sprites and declared animations](#sprites-and-declared-animations)
 - [Tile map](#tile-map)
@@ -42,6 +43,109 @@ message and traceback.
 
 All numeric draw coordinates are floored. Colors are floored and masked to the
 low six bits (`0..63`). Optional booleans use Lua truthiness.
+
+## Entity component system
+
+Use the built-in `ecs` library when a game has many similarly processed
+objects: bullets, particles, enemies, pickups, crowds, or effects. It is a
+small deterministic Lua ECS owned by the console core, not an exposure of Bevy
+ECS. There is no scheduler: call queries explicitly from `_update` and render
+explicitly from `_draw`.
+
+### Create and populate a world
+
+```lua
+local world=ecs.world("arena",{capacity=1200})
+local player_id=world:spawn({
+  pos={x=96,y=280},
+  velocity={x=0,y=0},
+  player=true,
+})
+```
+
+`ecs.world(name,[options])` creates a uniquely named world. The default
+capacity is 1024 entities; choose 1–4096. A cart may create at most 16 worlds.
+World and component names are 1–64 bytes, start with a letter or `_`, and use
+only letters, digits, `_`, `.`, or `-`. Entity IDs are monotonically increasing
+integers and are never reused, even after `world:clear()`. A world registers at
+most 128 distinct component names over its lifetime; an entity may contain at
+most 128 components. Prefer a small stable component vocabulary.
+
+The components argument is a string-keyed table. Its top level is copied on
+spawn, while component values are retained. A component may be any non-nil Lua
+value; mutable tables are conventional. Because nested values are retained by
+reference, reusing the same component table in multiple `spawn` calls makes
+those entities share it. Allocate a fresh mutable table per entity unless that
+aliasing is intentional.
+
+### World methods
+
+| Method | Behavior |
+|---|---|
+| `world:name()` | Return this world's registered name. |
+| `world:spawn(components)` | Create an entity and return its integer ID; error at capacity. |
+| `world:despawn(id)` | Queue/remove a live entity and return true; false if absent/already queued. |
+| `world:alive(id)` | Test current liveness. |
+| `world:get(id,name)` | Return the component value/reference, or nil. |
+| `world:has(id,name)` | Test component presence. |
+| `world:add(id,name,value)` | Queue/add or replace a component; false for absent/queued entities. |
+| `world:remove(id,name)` | Queue/remove a component; false for absent/queued entities. |
+| `world:entities([with])` | Allocate matching IDs in creation order. |
+| `world:each(with,callback)` | Visit matching entities in creation order as `callback(id, component...)`; return selected count. |
+| `world:count([with])` | Count all live entities or those matching every filter. |
+| `world:clear()` | Remove all entities; IDs remain monotonic. Forbidden during `each`. |
+| `world:stats()` | Return `{name,alive,capacity,next_id,component_type_count,component_counts}`. |
+
+Filters are dense arrays with at most 16 unique component names. An empty
+filter selects every entity. `world:each({"pos","velocity"},fn)` passes values
+in exactly that requested order:
+
+```lua
+world:each({"pos","velocity"},function(id,pos,velocity)
+  pos.x=pos.x+velocity.x
+  pos.y=pos.y+velocity.y
+  if pos.y>340 then world:despawn(id) end
+end)
+```
+
+Component-table field mutation is immediate. Structural calls (`spawn`,
+`despawn`, `add`, `remove`) inside nested `each` calls are queued FIFO and
+flush only after the outermost query. Consequently the selected entity set and
+callback arguments stay valid, and new entities do not appear midway through a
+query. Prefer `each` for hot loops and `entities` when IDs must outlive the
+callback.
+
+Until the outermost query flushes, `count()` and `stats()` exclude pending
+spawns and include entities queued for despawn. Capacity checks count live plus
+pending spawns; a queued despawn does not free a slot for a spawn in that same
+query. Near capacity, collect replacement spawn specifications in a dense
+array and create them after `each` returns.
+
+### Bounded inspection
+
+```lua
+local page=ecs.inspect("arena",{
+  with={"hostile","pos"},
+  select={pos={"x","y"},hostile={"kind"}},
+  limit=32,
+  after=0,
+})
+```
+
+`with` filters, `select` projects up to 8 components with at most 16 fields
+each, `limit` defaults to 64 and is capped at 128, and `after` pages by entity
+ID. The result has `world`, `alive`, `capacity`, `component_type_count`, `matched`, `returned`,
+`truncated`, `budget_exhausted`, `next_after`, `component_counts`, and stable
+`entities` entries. Only requested scalars are copied. Strings are capped at
+256 bytes; a request is capped at 2048 scalar cells and 32768 string bytes.
+Unsupported values are short type placeholders.
+
+Prefer the host `ecs_query` JSON-RPC method for agent diagnostics: it calls a
+registry-protected inspector even if cart code replaces the public `ecs`
+global, and adds the observed `frame_count`. Do not feed inspection output
+back into gameplay; normal world queries are cheaper and clearer. When paging,
+do not step or structurally mutate the world until all pages are collected if
+they must represent one coherent snapshot.
 
 ## Drawing primitives
 

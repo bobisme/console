@@ -1,0 +1,103 @@
+sfx 0 speed=2
+C6 pulse 3
+G6 pulse 1
+
+sfx 1 speed=3
+C4 impact 6
+G3 impact 4
+C3 impact 2
+
+sfx 2 speed=5
+C4 nova 7
+G4 nova 7
+C5 nova 6
+E5 nova 5
+G5 nova 4
+C6 nova 3
+
+sfx 3 speed=2
+E6 glint 3
+A6 glint 2
+
+sfx 4 speed=6
+C4 impact 7
+G3 impact 7
+C3 impact 6
+G2 impact 5
+C2 impact 4
+
+sfx 5 speed=6
+C4 warning 5
+G4 warning 5
+C5 warning 6
+G5 warning 6
+
+sfx 16 speed=8
+C2 bass 5
+---
+C2 bass 4
+---
+G2 bass 5
+---
+A#2 bass 4
+---
+C2 bass 5
+---
+C2 bass 4
+---
+D#2 bass 5
+---
+G2 bass 4
+
+sfx 17 speed=8
+C4 lead 3
+D#4 lead 3
+G4 lead 4
+A#4 lead 3
+G4 lead 3
+D#4 lead 3
+D4 lead 3
+F4 lead 3
+G4 lead 4
+A#4 lead 3
+C5 lead 4
+A#4 lead 3
+G4 lead 3
+F4 lead 3
+D4 lead 3
+---
+
+sfx 18 speed=8
+C5 arp 2
+---
+D#5 arp 2
+---
+G5 arp 2
+---
+A#5 arp 2
+---
+G5 arp 2
+---
+D#5 arp 2
+---
+D5 arp 2
+---
+F5 arp 2
+
+sfx 19 speed=8
+C3 kick 6
+---
+---
+---
+C3 kick 5
+---
+C3 kick 4
+---
+C3 kick 6
+---
+---
+---
+C3 kick 5
+---
+C3 kick 4
+---

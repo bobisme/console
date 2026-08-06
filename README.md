@@ -38,6 +38,7 @@ orientation, not the spec.
 | Input | 7 buttons: d-pad, A, B, menu |
 | Audio | 6 channels, waveforms: pulse 12.5%/25%, square, triangle, saw, noise, plus 8 cart-defined 32×4-bit wavetables |
 | Script | Lua 5.4 (mlua, vendored), sandboxed — no host `io`/`os`/`debug`/`package`; project builds provide a private static `require` |
+| Entities | deterministic console-native Lua ECS; creation-order queries, deferred structural edits, bounded host inspection |
 | Cart | projects compile normal source files into one plain-text `.cart`: Lua + sprites (64-character grid) + tile map + sfx/music (tracker text) |
 
 192×320 is the retained platform resolution, not a transitional or optional
@@ -56,6 +57,12 @@ played by `aspr(name, x, y, [t0])`, which is stateless (the frame is a pure
 function of the frame counter) and draws from the sprite's declared anchor —
 see SPEC.md for exact semantics.
 
+Entity-heavy carts can create named `ecs.world` instances and compose plain Lua
+components without exposing Bevy or host internals. Queries are deterministic,
+structural edits are deferred until iteration ends, and agents can inspect a
+bounded field projection through the read-only `ecs_query` RPC. The
+multi-file `examples/radiant-swarm` bullet hell is the reference vertical slice.
+
 ## Repo layout
 
 | path | what |
@@ -64,7 +71,8 @@ see SPEC.md for exact semantics.
 | `crates/console-agent` | the unified `console` CLI: headless runs, JSON-RPC, playtests, asset authoring, packing, and local serving |
 | `crates/console-web` | emscripten build exposing a small C ABI over the core |
 | `web/` | the device-chassis HTML/JS shell and the engine build recipe ([web/BUILD.md](web/BUILD.md)) |
-| `carts/` | example carts: `demo.cart`, `soundtest.cart`, and the `lantern-leap.cart` platformer |
+| `carts/` | compact example carts: `demo.cart`, `soundtest.cart`, and the `lantern-leap.cart` platformer |
+| `examples/` | multi-file source projects, including the ECS-heavy `radiant-swarm` bullet hell |
 | `skills/build-cart` | a publishable skill for authoring carts — the thing to hand an agent |
 | `SPEC.md` | the authoritative platform contract |
 
@@ -216,7 +224,9 @@ pull a screenshot or the framebuffer as text (`screen_text`), `eval` Lua,
 and inspect audio without ears (`audio_state`, `audio_events`,
 `audio_stats`, `spectrogram`). Optional `draw_trace`/`draw_events` diagnostics
 explain which tagged primitive, sprite, animation, map, or text call produced a
-region without changing the rendered frame. Full method list in SPEC.md.
+region without changing the rendered frame. `ecs_query` pages through selected
+scalar fields from a named ECS world without requiring cart-authored debug
+tables. Full method list in SPEC.md.
 
 For repeatable multi-stage acceptance, use a versioned playtest scenario
 instead of hand-driving an RPC session:

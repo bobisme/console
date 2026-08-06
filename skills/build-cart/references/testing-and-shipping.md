@@ -83,13 +83,22 @@ Send one JSON object per line:
 {"jsonrpc":"2.0","id":6,"method":"eval","params":{"code":"return dev_status()"}}
 {"jsonrpc":"2.0","id":7,"method":"screenshot","params":{"path":"/tmp/jump.png","zoom":2}}
 {"jsonrpc":"2.0","id":8,"method":"text_events","params":{"from_frame":30}}
-{"jsonrpc":"2.0","id":9,"method":"load_state","params":{"name":"before_jump"}}
+{"jsonrpc":"2.0","id":9,"method":"ecs_query","params":{"world":"arena","with":["enemy","pos"],"select":{"enemy":["kind","hp"],"pos":["x","y"]},"limit":32}}
+{"jsonrpc":"2.0","id":10,"method":"load_state","params":{"name":"before_jump"}}
 ```
 
 Use named replay states for alternative input branches. A state restores by
 reset and replay, so it validates reproducibility rather than hiding VM state.
 After a CLI command rewrites the cart, call `load_cart` again; the session does
 not watch files.
+
+For ECS-heavy games, use `ecs_query` instead of serializing the entire world
+through `eval`. Ask only for the component fields needed to test the current
+hypothesis, assert `alive`/`matched`/`returned`, and follow `next_after` while
+`truncated` is true. This keeps inspection bounded even when hundreds of
+bullets are live. Do not step between pages when they must describe the same
+world snapshot. Pair it with a small `dev_status()` for semantic game state
+such as phase, score, peak entity count, and dropped-spawn count.
 
 ## Developer hooks
 

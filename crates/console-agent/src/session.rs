@@ -436,6 +436,20 @@ impl Session {
         Ok(console.get_global(name)?)
     }
 
+    /// Inspect one named console ECS world without exposing mutable storage.
+    pub fn ecs_query(
+        &self,
+        world: &str,
+        required: &[String],
+        select: &BTreeMap<String, Vec<String>>,
+        limit: usize,
+        after: u64,
+    ) -> Result<console_core::mlua::Value, SessionError> {
+        Ok(self
+            .console()?
+            .ecs_query(world, required, select, limit, after)?)
+    }
+
     pub fn logs(&mut self) -> Result<Vec<String>, SessionError> {
         let console = self.console_mut()?;
         Ok(console.take_logs())

@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "seed": 11,
+  "stages": [
+    {"op": "assert", "name": "title", "code": "return dev_status().phase", "equals": "title"},
+    {"op": "eval", "name": "dense_setup", "code": "dev_stress()"},
+    {"op": "assert", "name": "playing", "code": "return dev_status().phase", "equals": "play"},
+    {"op": "input", "name": "focus_fire", "frames": 180, "buttons": "A"},
+    {"op": "assert", "name": "dense_entities", "code": "return dev_status().peak_alive >= 250", "equals": true},
+    {"op": "assert", "name": "dense_bullets", "code": "return dev_status().peak_bullets >= 120", "equals": true},
+    {"op": "assert", "name": "within_capacity", "code": "return dev_status().dropped_spawns", "equals": 0},
+    {
+      "op": "capture",
+      "name": "storm_frame",
+      "screenshot": "storm.png",
+      "zoom": 2,
+      "audio_stats": "storm-audio-stats.json"
+    },
+    {"op": "input", "name": "nova", "frames": 1, "buttons": "B"},
+    {"op": "input", "name": "release", "frames": 20, "buttons": ""},
+    {"op": "assert", "name": "bomb_spent", "code": "return dev_status().bombs", "equals": 2},
+    {
+      "op": "sequence",
+      "name": "swarm_motion",
+      "frames": 90,
+      "every": 15,
+      "buttons": "LA",
+      "crop": [0, 20, 192, 300],
+      "zoom": 2,
+      "gif": "swarm.gif",
+      "strip": "swarm-contact.png"
+    },
+    {
+      "op": "capture",
+      "name": "post_nova",
+      "screenshot": "post-nova.png",
+      "zoom": 2,
+      "screen_text": "dense.txt",
+      "wav": "dense.wav",
+      "audio_events": "audio-events.json",
+      "audio_stats": "audio-stats.json"
+    }
+  ]
+}

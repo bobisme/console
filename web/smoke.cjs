@@ -450,6 +450,43 @@ function hex64(v) {
   check(equalBytes(rightAligned, rightManual),
         "wasm print right alignment matches manual placement at x=137");
 
+  // --- Lua API parity: deterministic ECS and deferred structural edits ---
+  // A committed engine can otherwise lag the native core while every packed
+  // cart still appears to load. Encode the expected entity order and counts
+  // into pixels so an engine built before the ECS API fails this smoke test.
+  {
+    const ecsCart = new TextEncoder().encode(
+      "__lua__\n" +
+      "world=ecs.world('parity',{capacity=8}) visited=0\n" +
+      "function _init()\n" +
+      " for i=1,3 do world:spawn({pos={x=i}}) end\n" +
+      " world:each({'pos'},function(id,pos)\n" +
+      "  visited=visited+1 pos.x=pos.x+1 world:add(id,'hot',true)\n" +
+      "  if id==1 then world:despawn(id) world:spawn({pos={x=9},late=true}) end\n" +
+      " end)\n" +
+      "end\n" +
+      "function _draw()\n" +
+      " cls(0) local order=0\n" +
+      " world:each({'pos'},function(id,pos) order=order+1 pset(pos.x,order,id+1) end)\n" +
+      " pset(0,0,world:count({'hot'})) pset(1,0,visited) pset(2,0,world:count())\n" +
+      "end\n",
+    );
+    const p = con_alloc(ecsCart.length);
+    Module.HEAPU8.set(ecsCart, p);
+    if (!check(con_init(p, ecsCart.length) === 0, "con_init loads the ECS parity probe",
+               currentError())) process.exit(1);
+    con_step(0);
+    if (!check(currentError() === null, "ECS parity probe runs clean", currentError())) {
+      process.exit(1);
+    }
+    const frame = Module.HEAPU8.slice(con_fb(), con_fb() + FB_LEN);
+    check(frame[0] === 2 && frame[1] === 3 && frame[2] === 3,
+          "wasm ECS flushes add/despawn/spawn after iteration",
+          `hot=${frame[0]} visited=${frame[1]} alive=${frame[2]}`);
+    check(frame[W + 3] === 3 && frame[W * 2 + 4] === 4 && frame[W * 3 + 9] === 5,
+          "wasm ECS queries preserve surviving creation order");
+  }
+
   // --- display-palette fade: pixels stay put, only con_dpal moves ---
   // This is the whole point of pal(c0, c1, 1): the shell composes
   // palette[dpal[idx]], so a cart can fade the screen without redrawing and
