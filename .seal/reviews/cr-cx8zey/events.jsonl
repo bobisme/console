@@ -5,3 +5,4 @@
 {"ts":"2026-08-06T20:34:21.948715521Z","author":"console-reviewer-core","event":"ReviewerVoted","data":{"review_id":"cr-cx8zey","vote":"lgtm","reason":"Explicit eval phase contract is correct and thoroughly tested; clippy clean, focused regressions pass. No CRITICAL/HIGH issues."}}
 {"ts":"2026-08-06T20:34:21.987649267Z","author":"console-reviewer-core","event":"ReviewApproved","data":{"review_id":"cr-cx8zey"}}
 {"ts":"2026-08-06T20:35:00.061249989Z","author":"console-dev","event":"ThreadResolved","data":{"thread_id":"th-38otjf","reason":"Accepted as verification evidence; no source change requested."}}
+{"ts":"2026-08-06T20:35:32.079325378Z","author":"console-dev","event":"ReviewMerged","data":{"review_id":"cr-cx8zey","final_commit":"6dc2b55d1a911cb67ee72c5943e77ad848c987f1"}}
