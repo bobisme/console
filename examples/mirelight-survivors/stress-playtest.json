@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "seed": 37,
+  "stages": [
+    {"op":"hook","name":"dense_setup","hook":"stress"},
+    {"op":"input","name":"grid_warmup","frames":120,"buttons":"R"},
+    {"op":"hook","name":"population_floor","hook":"status","expect":{"op":"at_least","field":"stress_min_alive","value":800}},
+    {"op":"hook","name":"ceiling","hook":"status","expect":{"op":"equals","field":"within_entity_ceiling","value":true}},
+    {"op":"hook","name":"all_categories","hook":"status","expect":{"op":"equals","field":"all_categories_live","value":true}},
+    {"op":"hook","name":"no_drops","hook":"status","expect":{"op":"equals","field":"dropped_spawns","value":0}},
+    {"op":"input","name":"sweep_down","frames":120,"buttons":"D"},
+    {"op":"hook","name":"spatial_broadphase","hook":"status","expect":{"op":"equals","field":"spatial_reduction","value":true}},
+    {"op":"hook","name":"churn","hook":"status","expect":{"op":"at_least","field":"despawned_total","value":500}},
+    {
+      "op":"sequence",
+      "name":"dense_motion",
+      "frames":60,
+      "every":10,
+      "buttons":"L",
+      "crop":[0,20,192,300],
+      "zoom":2,
+      "gif":"dense-motion.gif",
+      "strip":"dense-motion-strip.png"
+    },
+    {
+      "op":"capture",
+      "name":"dense_frame",
+      "screenshot":"dense-frame.png",
+      "zoom":2,
+      "screen_text_summary":"dense-screen.json",
+      "audio_events":"dense-audio.json",
+      "audio_stats":"dense-audio-stats.json"
+    }
+  ]
+}

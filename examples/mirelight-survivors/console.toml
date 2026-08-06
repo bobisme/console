@@ -1,0 +1,27 @@
+manifest_version = 1
+
+[cart]
+title = "Mirelight Survivors"
+author = "console agents"
+version = "1"
+preview_palette = [0, 1, 2, 5, 6, 7, 8, 9, 10, 12, 14, 15, 22, 28, 29, 30, 31, 38, 45, 46, 63]
+
+[cart.meta]
+genre = "survivors"
+runtime = "lua-ecs-stress"
+entity_floor = "800"
+
+[lua]
+entry = "lua/main.lua"
+root = "lua"
+
+[sections]
+sprites = "data/sprites.txt"
+map = "data/map.txt"
+gfx_meta = "data/gfx-meta.txt"
+instruments = "audio/instruments.txt"
+sfx = "audio/sfx.txt"
+music = "audio/music.txt"
+
+[build]
+output = "build/mirelight-survivors.cart"

@@ -1,0 +1,12 @@
+inst dew wave=6 fm=3,5,3 echo=2
+inst step wave=5 env=0,5,0 sweep=-8,3
+inst pulse wave=4 vib=16,3,1 echo=2
+inst hurt wave=7 sweep=-14,4
+inst bloom wave=1 vib=10,2,2 echo=3
+inst rootbass wave=3
+inst mirelead wave=1 vib=18,2,2 echo=2
+inst spores wave=0 echo=1
+inst bark wave=7 env=0,5,0
+inst moonlead wave=6 fm=2,7,5 vib=13,3,1 echo=3
+master drive=2 tone=1 hiss=0
+echo delay=16 feedback=3 level=2

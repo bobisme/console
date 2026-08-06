@@ -1,0 +1,10 @@
+sprite player rect=5,0 size=1x1 anchor=4,4
+sprite crawler rect=6,0 size=1x1 anchor=4,4
+sprite skitter rect=7,0 size=1x1 anchor=4,4
+sprite lantern rect=8,0 size=1x1 anchor=4,4
+sprite seed rect=9,0 size=1x1 anchor=4,4
+sprite dew rect=10,0 size=1x1 anchor=4,4
+sprite player_dash rect=11,0 size=1x1 anchor=4,4
+sprite rootling rect=12,0 size=1x1 anchor=4,4
+anim player.idle frames=5:0 fps=1 loop
+anim player.dash frames=5:0,11:0 fps=12 loop

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "seed": 37,
+  "stages": [
+    {"op":"hook","name":"dense_setup","hook":"stress"},
+    {
+      "op":"ecs_watch",
+      "name":"dense_population",
+      "watch":"population",
+      "define":{"world":"survivors","with":[],"select":{},"limit":1,"entity_delta_limit":1}
+    },
+    {
+      "op":"ecs_watch",
+      "name":"enemy_baseline",
+      "watch":"enemies",
+      "define":{"world":"survivors","with":["enemy","pos"],"select":{"enemy":["kind","hp","elite"],"pos":["x","y"]},"limit":128,"entity_delta_limit":128}
+    },
+    {
+      "op":"ecs_watch",
+      "name":"projectile_baseline",
+      "watch":"projectiles",
+      "define":{"world":"survivors","with":["projectile","pos"],"select":{"projectile":["kind","damage","ttl"],"pos":["x","y"]},"limit":128,"entity_delta_limit":128}
+    },
+    {
+      "op":"ecs_watch",
+      "name":"pickup_baseline",
+      "watch":"pickups",
+      "define":{"world":"survivors","with":["pickup","pos"],"select":{"pickup":["kind","value"],"pos":["x","y"]},"limit":64,"entity_delta_limit":64}
+    },
+    {
+      "op":"ecs_watch",
+      "name":"particle_baseline",
+      "watch":"particles",
+      "define":{"world":"survivors","with":["particle","pos"],"select":{"particle":["kind","ttl"],"pos":["x","y"]},"limit":64,"entity_delta_limit":64}
+    },
+    {"op":"input","name":"churn_window","frames":120,"buttons":"R"},
+    {"op":"ecs_watch","name":"population_after_churn","watch":"population"},
+    {"op":"ecs_watch","name":"enemies_after_churn","watch":"enemies"},
+    {"op":"ecs_watch","name":"projectiles_after_churn","watch":"projectiles"},
+    {"op":"ecs_watch","name":"pickups_after_churn","watch":"pickups"},
+    {"op":"ecs_watch","name":"particles_after_churn","watch":"particles"}
+  ]
+}

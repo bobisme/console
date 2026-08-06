@@ -1,0 +1,164 @@
+sfx 0 speed=2
+C6 dew 3
+E6 dew 2
+G6 dew 1
+
+sfx 1 speed=2
+C4 step 5
+G3 step 4
+C3 step 2
+
+sfx 2 speed=3
+C4 pulse 7
+G4 pulse 6
+C5 pulse 5
+E5 pulse 4
+G5 pulse 3
+C6 pulse 2
+
+sfx 3 speed=3
+C4 hurt 7
+G3 hurt 5
+C3 hurt 3
+
+sfx 4 speed=3
+C5 bloom 4
+E5 bloom 4
+G5 bloom 5
+C6 bloom 4
+
+sfx 16 speed=8
+C2 rootbass 4
+---
+C2 rootbass 3
+---
+G2 rootbass 4
+---
+A#2 rootbass 3
+---
+C2 rootbass 4
+---
+D#2 rootbass 3
+---
+G2 rootbass 4
+---
+A#2 rootbass 3
+---
+
+sfx 17 speed=8
+C4 mirelead 3
+D#4 mirelead 3
+G4 mirelead 4
+A#4 mirelead 3
+G4 mirelead 3
+D#4 mirelead 3
+D4 mirelead 3
+F4 mirelead 3
+G4 mirelead 4
+A#4 mirelead 3
+C5 mirelead 4
+A#4 mirelead 3
+G4 mirelead 3
+F4 mirelead 3
+D4 mirelead 3
+---
+
+sfx 18 speed=8
+C5 spores 2
+---
+G5 spores 2
+---
+D#5 spores 2
+---
+A#5 spores 2
+---
+G5 spores 2
+---
+D5 spores 2
+---
+F5 spores 2
+---
+A#5 spores 2
+---
+
+sfx 19 speed=8
+C3 bark 4
+---
+---
+---
+C3 bark 3
+---
+C3 bark 2
+---
+C3 bark 4
+---
+---
+---
+G2 bark 3
+---
+C3 bark 2
+---
+
+sfx 20 speed=6
+C2 rootbass 5
+G2 rootbass 4
+C3 rootbass 5
+G2 rootbass 4
+D#2 rootbass 5
+A#2 rootbass 4
+D#3 rootbass 5
+A#2 rootbass 4
+C2 rootbass 5
+G2 rootbass 4
+C3 rootbass 5
+A#2 rootbass 4
+D2 rootbass 5
+A2 rootbass 4
+D3 rootbass 5
+A2 rootbass 4
+
+sfx 21 speed=6
+C5 moonlead 3
+G4 moonlead 3
+A#4 moonlead 4
+C5 moonlead 3
+D#5 moonlead 4
+C5 moonlead 3
+G5 moonlead 4
+D#5 moonlead 3
+D5 moonlead 3
+A4 moonlead 3
+C5 moonlead 4
+D5 moonlead 3
+F5 moonlead 4
+D5 moonlead 3
+A5 moonlead 4
+F5 moonlead 3
+
+sfx 22 speed=6
+C6 spores 2
+D#6 spores 2
+G6 spores 2
+A#6 spores 2
+G6 spores 2
+D#6 spores 2
+C6 spores 2
+G5 spores 2
+D6 spores 2
+F6 spores 2
+A6 spores 2
+C7 spores 2
+A6 spores 2
+F6 spores 2
+D6 spores 2
+A5 spores 2
+
+sfx 23 speed=10
+C4 bloom 3
+E4 bloom 3
+G4 bloom 4
+C5 bloom 4
+E5 bloom 3
+G5 bloom 3
+C6 bloom 4
+---

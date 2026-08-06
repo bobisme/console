@@ -62,7 +62,10 @@ Entity-heavy carts can create named `ecs.world` instances and compose plain Lua
 components without exposing Bevy or host internals. Queries are deterministic,
 structural edits are deferred until iteration ends, and agents can inspect a
 bounded field projection through the read-only `ecs_query` RPC. The
-multi-file `examples/radiant-swarm` bullet hell is the reference vertical slice.
+multi-file `examples/radiant-swarm` bullet hell is the first reference vertical
+slice. `examples/mirelight-survivors` adds a playable 800–1000-live-entity
+stress cart, reusable spatial buckets, bounded population watches, and native
+timing/allocation telemetry.
 Named ECS watches reuse a bounded projection across selected frames and report
 population/component/returned-ID deltas without retaining an unbounded log.
 That cart also demonstrates the `devhook.register` convention: discover hooks
@@ -79,7 +82,7 @@ save-state replay.
 | `crates/console-web` | emscripten build exposing a small C ABI over the core |
 | `web/` | the device-chassis HTML/JS shell and the engine build recipe ([web/BUILD.md](web/BUILD.md)) |
 | `carts/` | compact example carts: `demo.cart`, `soundtest.cart`, and the `lantern-leap.cart` platformer |
-| `examples/` | multi-file source projects, including the ECS-heavy `radiant-swarm` bullet hell |
+| `examples/` | multi-file source projects, including the ECS-heavy `radiant-swarm` bullet hell and `mirelight-survivors` ceiling benchmark |
 | `skills/build-cart` | a publishable skill for authoring carts — the thing to hand an agent |
 | `SPEC.md` | the authoritative platform contract |
 

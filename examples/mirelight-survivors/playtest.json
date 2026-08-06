@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "seed": 19,
+  "stages": [
+    {"op":"hook","name":"title","hook":"status","expect":{"op":"equals","field":"phase","value":"title"}},
+    {"op":"hook","name":"start_run","hook":"start"},
+    {"op":"hook","name":"playing","hook":"status","expect":{"op":"equals","field":"phase","value":"play"}},
+    {"op":"input","name":"dash_right","frames":1,"buttons":"RA"},
+    {"op":"input","name":"cross_garden","frames":59,"buttons":"R"},
+    {"op":"hook","name":"grant_level","hook":"grant_xp","args":18},
+    {"op":"hook","name":"level_choice","hook":"status","expect":{"op":"equals","field":"phase","value":"levelup"}},
+    {"op":"input","name":"choose_down","frames":1,"buttons":"D"},
+    {"op":"input","name":"release_choice","frames":1,"buttons":""},
+    {"op":"input","name":"accept_choice","frames":1,"buttons":"A"},
+    {"op":"hook","name":"level_two","hook":"status","expect":{"op":"equals","field":"level","value":2}},
+    {
+      "op":"capture",
+      "name":"upgraded_hunt",
+      "screenshot":"upgraded-hunt.png",
+      "zoom":2,
+      "text_events":"upgraded-text.json",
+      "audio_events":"upgraded-audio.json",
+      "audio_stats":"upgraded-audio-stats.json"
+    },
+    {"op":"hook","name":"heavy_damage","hook":"damage_player","args":5},
+    {"op":"hook","name":"one_heart","hook":"status","expect":{"op":"equals","field":"hp","value":1}},
+    {"op":"input","name":"iframes_expire","frames":55,"buttons":""},
+    {"op":"hook","name":"fatal_damage","hook":"damage_player","args":2},
+    {"op":"input","name":"render_loss","frames":1,"buttons":""},
+    {"op":"hook","name":"game_over","hook":"status","expect":{"op":"equals","field":"phase","value":"gameover"}},
+    {"op":"capture","name":"loss","screenshot":"loss.png","zoom":2}
+  ]
+}
