@@ -255,8 +255,7 @@ weighted deterministic variants, stamps, overrides, and anchored objects. All
 paths remain confined to the manifest directory, source PNGs stay at native
 resolution, and validation completes before any output is published. See the
 [normative schema](../SPEC.md#layered-scene-compiler-console-scene-compile) and
-the executable [RIBBIT RECOIL environment
-subset](../carts/ribbit-recoil-scene).
+the executable layered-scene example
 
 ## Keep native grammar lossless
 

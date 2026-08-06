@@ -234,8 +234,7 @@ scenario instead of choosing one favorable screenshot:
 ```json
 {"op":"sequence","name":"tongue swing","frames":24,"buttons":"B","every":3,
  "crop":{"x":24,"y":64,"w":144,"h":128},"zoom":2,"columns":4,
- "gif":"tongue.gif","strip":"tongue-strip.png","board":"tongue-board.png",
- "reference":"frog-game-design-inspo.png"}
+ "gif":"tongue.gif","strip":"tongue-strip.png","board":"tongue-board.png"}}
 ```
 
 The GIF timing follows the 60 Hz sample cadence. The strip makes pose-to-pose

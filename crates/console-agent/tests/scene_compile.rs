@@ -53,39 +53,6 @@ fn tile(fill: u8, accent: u8) -> [u8; 64] {
     tile
 }
 
-fn png_cell_indices(png: &[u8], cell_x: u32, cell_y: u32) -> [u8; 64] {
-    let decoded = console_agent::palette::decode_png_rgba(png).unwrap();
-    let mut indices = [0u8; 64];
-    for y in 0..8 {
-        for x in 0..8 {
-            let offset = (((cell_y * 8 + y) * decoded.width + cell_x * 8 + x) * 4) as usize;
-            let pixel = &decoded.rgba[offset..offset + 4];
-            indices[(y * 8 + x) as usize] = if pixel[3] == 0 {
-                0
-            } else {
-                PALETTE
-                    .iter()
-                    .position(|rgb| rgb == &pixel[..3])
-                    .expect("compiled exact PNG stays in Apollo64") as u8
-            };
-        }
-    }
-    indices
-}
-
-fn cart_tile_indices(cart: &console_core::Cart, id: u8) -> [u8; 64] {
-    let mut indices = [0u8; 64];
-    let cell_x = usize::from(id) % 16;
-    let cell_y = usize::from(id) / 16;
-    for y in 0..8 {
-        for x in 0..8 {
-            indices[y * 8 + x] =
-                cart.sprites()[(cell_y * 8 + y) * console_core::SHEET_W + cell_x * 8 + x];
-        }
-    }
-    indices
-}
-
 fn write_fixture(root: &Path, mapping: &str, arbitrary_rgb: bool) -> PathBuf {
     fs::create_dir_all(root).unwrap();
     let width = 32;
@@ -131,7 +98,7 @@ fn write_fixture(root: &Path, mapping: &str, arbitrary_rgb: bool) -> PathBuf {
     };
     let manifest = format!(
         r#"scene_version = 1
-name = "ribbit_subset"
+name = "layered_subset"
 seed = 91
 
 [atlas]
@@ -294,110 +261,6 @@ fn compile_scene(manifest: &Path, output: &Path) -> (Output, Value) {
     (result, report)
 }
 
-fn copy_tree(source: &Path, destination: &Path) {
-    fs::create_dir_all(destination).unwrap();
-    for entry in fs::read_dir(source).unwrap() {
-        let entry = entry.unwrap();
-        let target = destination.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_tree(&entry.path(), &target);
-        } else {
-            fs::copy(entry.path(), target).unwrap();
-        }
-    }
-}
-
-#[test]
-fn checked_in_ribbit_subset_compiles_builds_and_playtests_without_special_runtime_support() {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let source = repository.join("carts/ribbit-recoil-scene");
-    let project = scratch("ribbit-example");
-    copy_tree(&source, &project);
-    let generated = project.join("generated");
-    let (first, first_report) = compile_scene(&project.join("scene.toml"), &generated);
-    assert!(
-        first.status.success(),
-        "scene compile failed: {}",
-        String::from_utf8_lossy(&first.stderr)
-    );
-    assert_eq!(first_report["scene"], "ribbit_recoil_environment_subset");
-    assert_eq!(first_report["atlas"]["origin"], json!([0, 12]));
-    assert_eq!(first_report["atlas"]["used"], 5);
-    assert_eq!(first_report["map"]["autotile_cells"], 4);
-    assert_eq!(first_report["map"]["variant_cells"], 4);
-
-    let production_text = fs::read_to_string(repository.join("carts/ribbit-recoil.cart")).unwrap();
-    let production = console_core::Cart::parse(&production_text).unwrap();
-    let compiled_atlas = fs::read(generated.join("atlas.png")).unwrap();
-    let expected = [
-        ("steel_cap", 192u8, "solid"),
-        ("girder", 193, "solid"),
-        ("slime_cap", 194, "solid"),
-        ("acid", 195, "hazard"),
-        ("breakable", 196, "breakable"),
-    ];
-    for (name, production_id, class) in expected {
-        let packed = first_report["atlas"]["tiles"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|tile| {
-                tile["names"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|value| value == name)
-            })
-            .unwrap_or_else(|| panic!("compiled atlas is missing {name}"));
-        assert_eq!(packed["class"], class);
-        let [atlas_x, atlas_y] = [
-            packed["atlas_cell"][0].as_u64().unwrap() as u32,
-            packed["atlas_cell"][1].as_u64().unwrap() as u32,
-        ];
-        assert_eq!(
-            png_cell_indices(&compiled_atlas, atlas_x, atlas_y - 12),
-            cart_tile_indices(&production, production_id),
-            "compiled {name} pixels drifted from production tile {production_id}"
-        );
-    }
-    assert_eq!(
-        first_report["objects"],
-        json!([
-            {"name":"frog_spawn","kind":"spawn","at":[32,472],"anchor":[7,15],"bounds":[25,457,39,473]},
-            {"name":"laser_pickup","kind":"mutation","at":[338,449],"anchor":[6,6],"bounds":[332,443,344,455]}
-        ])
-    );
-    assert!(production_text.contains("start={32,472}"));
-    assert!(production_text.contains("pickups={{P_LASER,338,449}"));
-    assert!(production_text.contains("[STEEL]=true,[GIRDER]=true,[MUD]=true,[BREAKABLE]=true"));
-    assert!(production_text.contains("tile==ACID or tile==ACID_LIP"));
-
-    let build = run(&["build", path(&project), "--format", "json"]);
-    assert!(
-        build.status.success(),
-        "project build failed: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let artifacts = project.join("artifacts");
-    let playtest = run(&[
-        "playtest",
-        path(&project),
-        "--scenario",
-        path(&project.join("playtest.json")),
-        "--artifacts",
-        path(&artifacts),
-        "--format",
-        "json",
-    ]);
-    assert!(
-        playtest.status.success(),
-        "example playtest failed: {}",
-        String::from_utf8_lossy(&playtest.stderr)
-    );
-    assert!(artifacts.join("scene.png").exists());
-    assert!(artifacts.join("map.png").exists());
-}
-
 #[test]
 fn scene_compile_exercises_semantics_metatiles_autotiles_variants_and_review_outputs() {
     let root = scratch("complete");
@@ -417,7 +280,7 @@ fn scene_compile_exercises_semantics_metatiles_autotiles_variants_and_review_out
         String::from_utf8_lossy(&again.stderr)
     );
 
-    assert_eq!(report["scene"], "ribbit_subset");
+    assert_eq!(report["scene"], "layered_subset");
     assert_eq!(report["mapping"], "exact");
     assert_eq!(report["atlas"]["capacity"], 8);
     assert!(report["atlas"]["used"].as_u64().unwrap() < 8);
@@ -561,7 +424,7 @@ fn generated_scene_assets_are_consumed_by_normal_build_run_and_playtest() {
         project.join("console.toml"),
         r#"manifest_version = 1
 [cart]
-title = "Compiled Ribbit Scene"
+title = "Compiled Layered Scene"
 [lua]
 entry = "lua/main.lua"
 root = "."

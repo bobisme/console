@@ -661,15 +661,6 @@ optional evidence remains. Recompiling exact output safely removes a previous
 `review/lossy-heatmap.png`. CLI misuse exits 2; manifest, compile, check, and
 I/O failures exit 1.
 
-The checked-in `carts/ribbit-recoil-scene` example compiles five real RIBBIT
-RECOIL environment cells from an ordinary exact PNG, exercises autotiles,
-weighted variants, a metatile, an override, collision classes, and object
-anchors, then builds/runs/playtests through the normal project path. Its
-regression compares named tile pixels, semantic classes, and production object
-anchors to the production cart. This vertical slice proves the replacement
-boundary; it does not claim the full cart's topology code or legacy atlas
-builder is retired.
-
 `__map__` follows the sprite grid's row conventions but keeps its own hex
 alphabet: `#` starts a comment line, blank lines and comments do not consume a row, and rows shorter
 than 128 cells pad with tile 0 (missing rows are all tile 0). Unlike

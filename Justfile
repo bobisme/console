@@ -9,7 +9,6 @@ check:
     cargo test --workspace
     node web/smoke.cjs
     node web/smoke.cjs --cart carts/lantern-leap.cart --frames 180 --input-mask 16 --expect-audio
-    node web/smoke.cjs --cart carts/ribbit-recoil.cart --frames 180 --input-mask 16 --expect-audio
 
 # Real-browser diagnostic fault containment. Requires agent-browser and an
 # explicit Chromium executable so missing browser infrastructure never skips.
@@ -22,11 +21,6 @@ browser-diagnostics:
 browser-check:
     test -n "${CONSOLE_BROWSER:-}" || { echo "CONSOLE_BROWSER must name a Chromium executable" >&2; exit 2; }
     out="$(mktemp --suffix=.console.html)"; trap 'rm -f "$out"' EXIT; cargo run -q -p console -- pack carts/lantern-leap.cart -o "$out"; node web/browser-smoke.cjs "$out" --artifacts "${CONSOLE_BROWSER_ARTIFACTS:-out/browser-check}"
-
-# End-to-end acceptance of RIBBIT RECOIL in the exact offline phone shell.
-browser-check-ribbit:
-    test -n "${CONSOLE_BROWSER:-}" || { echo "CONSOLE_BROWSER must name a Chromium executable" >&2; exit 2; }
-    out="$(mktemp --suffix=.ribbit-recoil.html)"; trap 'rm -f "$out"' EXIT; cargo run -q -p console -- pack carts/ribbit-recoil.cart -o "$out"; node web/browser-smoke.cjs "$out" --artifacts "${CONSOLE_BROWSER_ARTIFACTS:-out/browser-check-ribbit}"
 
 # Install the one unified CLI binary, even at the same version.
 install:

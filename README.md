@@ -64,7 +64,7 @@ see SPEC.md for exact semantics.
 | `crates/console-agent` | the unified `console` CLI: headless runs, JSON-RPC, playtests, asset authoring, packing, and local serving |
 | `crates/console-web` | emscripten build exposing a small C ABI over the core |
 | `web/` | the device-chassis HTML/JS shell and the engine build recipe ([web/BUILD.md](web/BUILD.md)) |
-| `carts/` | example carts: `demo.cart`, `soundtest.cart`, the `lantern-leap.cart` platformer, and the tongue-grappling mutant action showcase `ribbit-recoil.cart` |
+| `carts/` | example carts: `demo.cart`, `soundtest.cart`, and the `lantern-leap.cart` platformer |
 | `skills/build-cart` | a publishable skill for authoring carts — the thing to hand an agent |
 | `SPEC.md` | the authoritative platform contract |
 
@@ -112,8 +112,7 @@ console build my-game
 
 The compiler emits a packed atlas, native map, collision/decorative/object Lua,
 provenance, and labeled visual review sheets. It is an authoring tool only: the
-resulting game uses the existing sprite, map, and Lua runtime. A complete
-checked-in example is [carts/ribbit-recoil-scene](carts/ribbit-recoil-scene).
+resulting game uses the existing sprite, map, and Lua runtime.
 
 The default output is `my-game/build/game.cart`; `[build].output` or `-o`
 selects another path. See the project-manifest contract in [SPEC.md](SPEC.md).

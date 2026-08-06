@@ -114,8 +114,8 @@ as hazard and solid keep distinct IDs. Atlas overflow, missing autotile
 masks, map bounds, path escapes, and overlapping object bounds are hard errors.
 
 Generated files are ordinary `console.toml` inputs and require no scene runtime.
-Use [carts/ribbit-recoil-scene](../../../carts/ribbit-recoil-scene) as a
-minimal executable pattern, and the command reference for the exact CLI.
+Use the layered-scene fixture in the test suite as a minimal executable pattern,
+and the command reference for the exact CLI.
 
 ## Represent metatiles
 
