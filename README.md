@@ -178,7 +178,8 @@ take a 4x screenshot — this is exactly how an agent iterates on a cart:
 ```bash
 ./target/release/console run carts/demo.cart \
   --frames 90 --input "30:,30:R,30:" \
-  --screenshot /tmp/frame90.png --screenshot-zoom 4
+  --screenshot /tmp/frame90.png --screenshot-zoom 4 \
+  --eval-after 'return {frame=t()*60}'
 ```
 
 Pack the same cart into a single-file game:

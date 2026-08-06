@@ -1,5 +1,5 @@
 //! Convert `mlua::Value` results (from `eval`/`get_global`) into JSON,
-//! best-effort, for the RPC layer and the oneshot `--eval` flag.
+//! best-effort, for the RPC layer and the oneshot post-frame eval flags.
 
 use console_core::mlua::{Table, Value};
 use serde_json::{Map, Number, Value as Json};

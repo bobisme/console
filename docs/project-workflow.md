@@ -164,7 +164,7 @@ console build my-game
 console music play my-game --song 0 --dry-run
 console music lint my-game/build/game.cart --strict
 console run my-game --frames 120 --input '30:,20:R,10:RA,60:' \
-  --audio-events --eval 'return dev_status()'
+  --audio-events --eval-after 'return dev_status()'
 console build my-game --check
 ```
 
@@ -296,7 +296,7 @@ explicit manifest and compile in memory:
 ```bash
 console run my-game --frames 120 --input '30:,60:R,1:A,29:' \
   --screenshot /tmp/frame.png --screenshot-zoom 2 \
-  --eval 'return dev_status()'
+  --eval-after 'return dev_status()'
 console playtest my-game --scenario my-game/playtest.json \
   --artifacts /tmp/playtest --format json
 console pack my-game -o dist/game.html

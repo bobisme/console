@@ -67,6 +67,13 @@ fn command_family_and_leaf_help_use_stdout_and_exit_zero() {
             stdout(&output).contains(expected),
             "{args:?} omitted {expected}"
         );
+        if args == ["run", "--help"] {
+            let help = stdout(&output);
+            assert!(help.contains("--eval-before CODE"));
+            assert!(help.contains("--eval-after CODE"));
+            assert!(help.contains("after cart top-level + _init"));
+            assert!(help.contains("before captures"));
+        }
     }
 }
 

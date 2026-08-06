@@ -88,7 +88,7 @@ console build my-game
 console build my-game --check
 console music play my-game --song 0 --dry-run
 console run my-game --frames 120 --input '30:,20:R,10:RA,60:' \
-  --audio-events --eval 'return dev_status()'
+  --audio-events --eval-after 'return dev_status()'
 ```
 
 Running `--check` before the normal build is expected to fail when the output

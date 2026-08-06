@@ -17,7 +17,9 @@ Run or serve the source project directly:
 ```bash
 console run examples/radiant-swarm --frames 300 --input '1:A,299:RA' \
   --screenshot /tmp/radiant.png --screenshot-zoom 2 \
-  --eval 'return dev_status()'
+  --eval-after 'return dev_status()'
+console run examples/radiant-swarm --frames 180 --input '180:A' \
+  --eval-before 'dev_stress()' --eval-after 'return dev_status()'
 console serve examples/radiant-swarm
 ```
 

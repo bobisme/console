@@ -760,11 +760,22 @@ as regression tests: `(cart, input log) → expected framebuffer hash`.
 
 ## Agent harness (`console`)
 
-Oneshot: `console run <cart|project> [--frames N] [--input SPEC] [--screenshot out.png]
+Oneshot: `console run <cart|project> [--frames N] [--input SPEC]
+[--eval-before CODE] [--eval-after CODE] [--screenshot out.png]
 [--screenshot-zoom N] [--screen-text] [--text-events] [--draw-trace trace.json]
-[--eval CODE] [--seed N]`
+[--seed N]`
 where SPEC is comma-separated `COUNT:BUTTONS`, e.g. `30:,10:R,5:RA,60:` (empty
 buttons = no input).
+
+The run lifecycle is fixed independently of flag order: parse/compile the cart;
+execute its Lua top level and `_init`; run `--eval-before` once; apply the input
+mask and step every requested frame; run `--eval-after` once; then collect the
+final screenshot, framebuffer text, audio, events, and draw trace. The setup
+eval's return value is discarded. The post-frame value is JSON-serialized last
+on stdout, after any requested diagnostic output. `--eval CODE` remains an
+alias for `--eval-after CODE`, and the two spellings cannot both be supplied.
+A failing pre-frame eval exits before any frame or artifact; a failing
+post-frame eval still permits final artifacts from the completed run.
 
 RPC: `console rpc` — JSON-RPC 2.0, one request per line on stdin,
 one response per line on stdout. Methods:

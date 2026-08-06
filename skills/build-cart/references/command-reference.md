@@ -121,7 +121,8 @@ console run <cart|project>
   [--input SPEC]
   [--screenshot out.png] [--screenshot-zoom N]
   [--screen-text]
-  [--eval CODE]
+  [--eval-before CODE]
+  [--eval-after CODE]
   [--seed N]
   [--wav out.wav]
   [--spectrogram out.png]
@@ -141,22 +142,27 @@ are idle. An empty spec plus `--frames N` is an idle run.
 |---|---|
 | `--frames N` | Total fixed frames to step. |
 | `--input SPEC` | Per-frame button masks. |
-| `--screenshot FILE` | Final PNG after stepping and `--eval`. |
+| `--screenshot FILE` | Final PNG after stepping and the post-frame eval. |
 | `--screenshot-zoom N` | Integer nearest-neighbor PNG scale, at least 1; default 1. |
 | `--screen-text` | Print 320 framebuffer rows of 192 palette characters. |
-| `--eval CODE` | Evaluate after stepping; JSON-serialize the result to stdout. |
+| `--eval-before CODE` | Evaluate after cart top-level + `_init`, before input/frame 1; discard the result. |
+| `--eval-after CODE` | Evaluate after all frames and JSON-serialize the result last on stdout. |
+| `--eval CODE` | Compatibility alias for `--eval-after`; do not combine the spellings. |
 | `--seed N` | Initial deterministic seed; default 0. |
 | `--wav FILE` | Write all retained audio as 16-bit mono PCM WAV. |
 | `--spectrogram FILE` | Write the retained audio as a PNG, default cell 4. |
 | `--audio-events` | Print one JSON sequencer event per line. |
 | `--audio-stats` | Print JSON mix windows using 6 frames/window. |
 | `--text-events` | Print one JSON text-draw event per line, including resolved bounds. |
-| `--draw-trace FILE` | Write a bounded JSON draw-call trace for all stepped frames and the final eval. |
+| `--draw-trace FILE` | Write a bounded JSON draw-call trace for setup, stepped frames, and post-frame eval (not `_init`). |
 
-`printh` lines go to stderr as `[log] ...`. A readable cart that fails to load,
-a project that fails to compile, a halted runtime, or a failed eval exits 1
-after reporting the error. An unreadable/missing input path exits 2, as does
-invalid CLI syntax.
+Lifecycle order is fixed independently of flag order: load and `_init`,
+pre-frame eval, input/frame stepping, post-frame eval, then all requested
+captures. A failing pre-frame eval exits before frames and artifacts. A failing
+post-frame eval is reported after captures from the completed run. `printh`
+lines go to stderr as `[log] ...`. A readable cart that fails to load, a
+project that fails to compile, a halted runtime, or a failed eval exits 1.
+An unreadable/missing input path exits 2, as does invalid CLI syntax.
 `<project>` may be a directory containing `console.toml` or the manifest path;
 it is compiled and validated in memory without writing `[build].output`.
 

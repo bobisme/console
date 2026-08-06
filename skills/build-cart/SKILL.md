@@ -63,7 +63,7 @@ Start with a short deterministic smoke run:
 ```bash
 console run game.cart --frames 120 --input '30:,20:R,10:RA,60:' \
   --screenshot /tmp/game-f120.png --screenshot-zoom 2 \
-  --eval 'return {x=player.x,y=player.y}'
+  --eval-after 'return {x=player.x,y=player.y}'
 ```
 
 For a multi-file game, pass its directory or `console.toml` in place of

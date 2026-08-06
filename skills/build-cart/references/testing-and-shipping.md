@@ -47,12 +47,30 @@ console run game.cart \
   --seed 0 \
   --screenshot /tmp/game-f180.png \
   --screenshot-zoom 2 \
-  --eval 'return dev_status()' \
+  --eval-after 'return dev_status()' \
   --wav /tmp/game.wav \
   --audio-events \
   --audio-stats \
   --text-events
 ```
+
+Use `--eval-before CODE` when a run needs deterministic setup that must exist
+before frame 1, such as `dev_start()`, a warp, or a dense stress state. It runs
+after cart top-level code and `_init`, but before input is latched. Use
+`--eval-after CODE` for the one JSON inspection result after all frames:
+
+```bash
+console run game.cart --frames 180 --input '180:A' \
+  --eval-before 'dev_stress()' \
+  --eval-after 'return dev_status()' \
+  --screenshot /tmp/stress.png
+```
+
+Flag order does not change lifecycle order. Screenshots, screen text, audio,
+and event captures are collected after the post-frame eval. The setup return
+value is discarded; only the post-frame result is serialized, last, on stdout.
+`--eval` is an alias for `--eval-after`, but prefer the explicit name in new
+automation.
 
 Keep input segments at meaningful boundaries: start, hold direction, press an
 action for one frame, release, observe recovery. `btnp` requires a transition,

@@ -39,9 +39,15 @@ pub mod visual;
 
 pub const RUN_USAGE: &str = "\
 usage:
-  console run <cart|project> [--frames N] [--input SPEC] [--screenshot out.png] [--screen-text] [--eval CODE] [--seed N]
+  console run <cart|project> [--frames N] [--input SPEC] [--eval-before CODE] [--eval-after CODE]
+                    [--screenshot out.png] [--screen-text] [--seed N]
                     [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats] [--text-events]
-                    [--draw-trace trace.json]";
+                    [--draw-trace trace.json]
+
+phases:
+  --eval-before CODE  after cart top-level + _init, before input/frame 1; result discarded
+  --eval-after CODE   after all frames, before captures; result printed as JSON last
+  --eval CODE         compatibility alias for --eval-after";
 
 pub const RPC_USAGE: &str = "usage:\n  console rpc";
 
