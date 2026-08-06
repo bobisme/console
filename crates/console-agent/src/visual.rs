@@ -633,10 +633,19 @@ pub fn default_diagnostic_views() -> Vec<DiagnosticView> {
 #[derive(Debug, Clone)]
 pub struct DiagnosticSource {
     pub label: String,
+    /// Exact machine identity for playtest selection. Human-readable labels
+    /// are deliberately not parsed because valid names can share prefixes.
+    pub selector: Option<DiagnosticSelector>,
     pub image: RgbaImage,
     /// Presented Apollo64 indices, one per pixel. 255 means transparent.
     /// `None` makes diagnostics use a deterministic nearest-palette mapping.
     pub palette_indices: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiagnosticSelector {
+    Stage(String),
+    Layer(String),
 }
 
 #[derive(Debug)]
@@ -1232,6 +1241,7 @@ mod tests {
     fn diagnostic_board_is_deterministic_and_reports_evidence_not_a_score() {
         let source = DiagnosticSource {
             label: "LANDING F42".to_string(),
+            selector: None,
             image: RgbaImage::new(
                 2,
                 2,
@@ -1270,6 +1280,7 @@ mod tests {
     fn diagnostic_board_bounds_panel_count_before_rendering() {
         let source = DiagnosticSource {
             label: "FRAME".to_string(),
+            selector: None,
             image: RgbaImage::new(1, 1, vec![0, 0, 0, 255]).unwrap(),
             palette_indices: Some(vec![0]),
         };

@@ -245,6 +245,15 @@ tag-isolated layers, a live/authored map panel, and reference art into one
 deterministic diagnostic board. Its color, grayscale, luma-band, edge, and
 false-color palette-index views ship with a JSON evidence report containing
 counts and histograms—not a synthetic claim that the art is good.
+Reviews can also enforce game-authored temporal limits. `boundary` checks
+compare two named still stages, while `consecutive` checks find the worst pair
+among a named motion sequence. Both report exact changed-pixel fractions,
+support explicit allowed-motion rectangles, and can emit deterministic diff
+heatmaps; exceeding the declared limit fails the playtest while preserving the
+evidence. Optional tag-aware lint reports warnings for reserved palette roles,
+bright background horizontals, weak actor/background luma separation, and
+dense traversal-corridor edges. These are narrow authored contracts, not an
+automated art score.
 
 ## Development
 

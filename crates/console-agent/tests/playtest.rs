@@ -1,5 +1,6 @@
 mod common;
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -769,7 +770,7 @@ fn scenario_review_consolidates_motion_layers_map_reference_and_diagnostics() {
          frame=0\n\
          function _update() frame=frame+1 mset(0,0,1) end\n\
          function _draw()\n\
-           draw_tag('background') cls(2)\n\
+           draw_tag('background') cls(2) draw_tag('background') rectfill(0,10,31,10,63)\n\
            draw_tag('terrain') rectfill(0,20,31,22,7)\n\
            draw_tag('actor') pset(frame%32,19,63)\n\
            draw_tag() pset(31,0,0)\n\
@@ -803,7 +804,25 @@ fn scenario_review_consolidates_motion_layers_map_reference_and_diagnostics() {
                  "layers":{"stage":"landing", "tags":["background","terrain","actor"],
                            "include_untagged":true},
                  "map":{"stage":"landing", "source":"live", "region":"0,0,2,1",
-                        "zoom":1, "grid":true, "ids":true}}
+                        "zoom":1, "grid":true, "ids":true},
+                 "temporal_checks":[
+                   {"kind":"boundary", "name":"camera-continuity",
+                    "from":"start", "to":"landing", "max_changed_fraction":0.0,
+                    "allowed_regions":[{"x":0,"y":19,"w":32,"h":1}],
+                    "heatmap":"review/boundary-diff.png"},
+                   {"kind":"consecutive", "name":"static-scene-shimmer",
+                    "stage":"hop", "max_changed_fraction":0.0,
+                    "allowed_regions":[{"x":0,"y":19,"w":32,"h":1}],
+                    "heatmap":"review/shimmer-diff.png"}
+                 ],
+                 "lint":{
+                   "reserved_collision_colors":{"source_tag":"background","indices":[2]},
+                   "bright_background_horizontals":{"background_tag":"background","min_luma":1,"max_run":16},
+                   "actor_background_luma":{"actor_tag":"actor","background_tag":"background","min_gap":255},
+                   "traversal_corridor_edges":{"background_tag":"background",
+                     "region":{"x":0,"y":8,"w":32,"h":5},
+                     "min_luma_delta":24,"max_edge_fraction":0.01}
+                 }}
             ]
         }))
         .unwrap(),
@@ -830,7 +849,7 @@ fn scenario_review_consolidates_motion_layers_map_reference_and_diagnostics() {
         );
         let report: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(report["scenario"]["status"], "passed");
-        assert_eq!(report["scenario"]["artifact_count"], 3);
+        assert_eq!(report["scenario"]["artifact_count"], 5);
         assert_eq!(report["stages"][3]["op"], "review");
         assert_eq!(
             report["stages"][3]["actual"]["layout"]["panels"]
@@ -848,7 +867,13 @@ fn scenario_review_consolidates_motion_layers_map_reference_and_diagnostics() {
         );
     }
 
-    for path in ["hop.png", "review/board.png", "review/report.json"] {
+    for path in [
+        "hop.png",
+        "review/board.png",
+        "review/report.json",
+        "review/boundary-diff.png",
+        "review/shimmer-diff.png",
+    ] {
         assert_eq!(
             fs::read(first.join(path)).unwrap(),
             fs::read(second.join(path)).unwrap(),
@@ -864,6 +889,30 @@ fn scenario_review_consolidates_motion_layers_map_reference_and_diagnostics() {
         "evidence_only_no_aesthetic_score"
     );
     assert!(diagnostics.get("score").is_none());
+    assert_eq!(
+        diagnostics["temporal_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|check| check["passed"] == true)
+            .count(),
+        2
+    );
+    let warning_kinds = diagnostics["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|warning| warning["kind"].as_str().unwrap())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        warning_kinds,
+        BTreeSet::from([
+            "actor_background_luma",
+            "bright_background_horizontals",
+            "reserved_collision_colors",
+            "traversal_corridor_edges",
+        ])
+    );
     let sources = diagnostics["sources"].as_array().unwrap();
     assert!(
         sources
@@ -878,6 +927,123 @@ fn scenario_review_consolidates_motion_layers_map_reference_and_diagnostics() {
     assert!(sources.iter().any(|source| {
         source["source"] == "REFERENCE" && source["palette_basis"] == "nearest_apollo64"
     }));
+}
+
+#[test]
+fn temporal_review_failure_keeps_deterministic_diff_evidence() {
+    let dir = scratch("temporal-review-failure");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    let scenario = dir.join("review.json");
+    let artifacts = dir.join("artifacts");
+    fs::write(
+        &cart,
+        "__lua__\nframe=0\nfunction _update() frame=frame+1 end\nfunction _draw() cls(frame%2==0 and 2 or 63) end\n",
+    )
+    .unwrap();
+    fs::write(
+        &scenario,
+        serde_json::to_vec_pretty(&json!({
+            "version":1,
+            "stages":[
+                {"op":"input", "name":"before-boundary", "frames":1},
+                {"op":"input", "name":"after-boundary", "frames":1},
+                {"op":"review", "board":"board.png", "report":"report.json",
+                 "stages":["before-boundary","after-boundary"],
+                 "temporal_checks":[{
+                   "kind":"boundary", "name":"no-scene-swap",
+                   "from":"before-boundary", "to":"after-boundary",
+                   "max_changed_fraction":0.25, "heatmap":"scene-swap.png"
+                 }]}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&[
+        "playtest",
+        as_str(&cart),
+        "--scenario",
+        as_str(&scenario),
+        "--artifacts",
+        as_str(&artifacts),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("temporal visual assertion failed"));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["scenario"]["status"], "failed");
+    assert_eq!(report["scenario"]["artifact_count"], 3);
+    let check = &report["stages"][2]["actual"]["temporal_checks"][0];
+    assert_eq!(check["changed_fraction"], 1.0);
+    assert_eq!(check["passed"], false);
+    assert!(
+        fs::read(artifacts.join("scene-swap.png"))
+            .unwrap()
+            .starts_with(b"\x89PNG")
+    );
+    let persisted: Value =
+        serde_json::from_slice(&fs::read(artifacts.join("report.json")).unwrap()).unwrap();
+    assert_eq!(persisted["temporal_checks"][0]["passed"], false);
+}
+
+#[test]
+fn visual_review_selectors_do_not_parse_collision_prone_display_labels() {
+    let dir = scratch("visual-review-selector-collisions");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    let scenario = dir.join("review.json");
+    let artifacts = dir.join("artifacts");
+    fs::write(
+        &cart,
+        "__lua__\nfunction _draw() draw_tag('bg') cls(2) draw_tag('bg @ variant') pset(0,0,3) end\n",
+    )
+    .unwrap();
+    fs::write(
+        &scenario,
+        serde_json::to_vec_pretty(&json!({
+            "version":1,
+            "stages":[
+                {"op":"input", "name":"foo", "frames":1},
+                {"op":"input", "name":"foo F1", "frames":1},
+                {"op":"review", "board":"board.png", "report":"report.json",
+                 "stages":["foo","foo F1"],
+                 "layers":{"stage":"foo F1","tags":["bg","bg @ variant"]},
+                 "temporal_checks":[{"kind":"boundary", "name":"exact-stage-identity",
+                   "from":"foo", "to":"foo F1", "max_changed_fraction":0.0}],
+                 "lint":{"reserved_collision_colors":{"source_tag":"bg","indices":[2]}}}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&[
+        "playtest",
+        as_str(&cart),
+        "--scenario",
+        as_str(&scenario),
+        "--artifacts",
+        as_str(&artifacts),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.status.success(),
+        "selector collision review failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["stages"][2]["actual"]["temporal_checks"][0]["passed"],
+        true
+    );
+    assert_eq!(
+        report["stages"][2]["actual"]["warnings"][0]["source"],
+        "LAYER bg @ foo F1"
+    );
 }
 
 #[test]
@@ -945,6 +1111,28 @@ fn invalid_scenario_reviews_are_rejected_before_execution() {
                         "region":"0,0,128,64", "zoom":1}}
             ]),
             "visual diagnostic panels need",
+        ),
+        (
+            "temporal-threshold.json",
+            json!([
+                {"op":"input", "name":"before", "frames":1},
+                {"op":"input", "name":"after", "frames":1},
+                {"op":"review", "board":"board.png", "stages":["before","after"],
+                 "temporal_checks":[{"kind":"boundary", "name":"bad-limit",
+                   "from":"before", "to":"after", "max_changed_fraction":1.1}]}
+            ]),
+            "max_changed_fraction must be in 0..=1",
+        ),
+        (
+            "lint-tag.json",
+            json!([
+                {"op":"input", "name":"scene", "frames":1},
+                {"op":"review", "board":"board.png", "stages":["scene"],
+                 "layers":{"stage":"scene", "tags":["background"]},
+                 "lint":{"actor_background_luma":{"actor_tag":"actor",
+                   "background_tag":"background", "min_gap":24}}}
+            ]),
+            "actor luma lint tag \"actor\" is not requested",
         ),
     ];
     for (file, stages, expected) in cases {

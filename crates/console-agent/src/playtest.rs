@@ -56,7 +56,9 @@ Scenario format (version 1):
       \"layers\":{\"background\":\"layers/background.png\",\"terrain\":\"layers/terrain.png\"},
       \"map\":{\"source\":\"live\",\"png\":\"map.png\",\"dump\":\"map.txt\"}},
     {\"op\":\"review\",\"board\":\"visual-board.png\",\"report\":\"visual-report.json\",
-      \"stages\":[\"hop\"],\"reference\":\"reference.png\"}
+      \"stages\":[\"hop\"],\"reference\":\"reference.png\",
+      \"temporal_checks\":[{\"kind\":\"consecutive\",\"name\":\"static-shimmer\",
+        \"stage\":\"hop\",\"max_changed_fraction\":0.2,\"heatmap\":\"hop-diff.png\"}]}
   ]}
 
 Exit codes:
@@ -158,6 +160,10 @@ pub enum Stage {
         layers: Option<Box<ReviewLayers>>,
         #[serde(default)]
         map: Option<Box<ReviewMap>>,
+        #[serde(default)]
+        temporal_checks: Vec<TemporalVisualCheck>,
+        #[serde(default)]
+        lint: Option<Box<ReviewVisualLint>>,
     },
     Capture {
         #[serde(default)]
@@ -272,6 +278,75 @@ pub struct ReviewMap {
     ids: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TemporalVisualCheck {
+    Boundary {
+        name: String,
+        from: String,
+        to: String,
+        max_changed_fraction: f64,
+        #[serde(default)]
+        allowed_regions: Vec<Crop>,
+        #[serde(default)]
+        heatmap: Option<String>,
+    },
+    Consecutive {
+        name: String,
+        stage: String,
+        max_changed_fraction: f64,
+        #[serde(default)]
+        allowed_regions: Vec<Crop>,
+        #[serde(default)]
+        heatmap: Option<String>,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewVisualLint {
+    #[serde(default)]
+    reserved_collision_colors: Option<ReservedCollisionColorLint>,
+    #[serde(default)]
+    bright_background_horizontals: Option<BrightHorizontalLint>,
+    #[serde(default)]
+    actor_background_luma: Option<ActorBackgroundLumaLint>,
+    #[serde(default)]
+    traversal_corridor_edges: Option<TraversalCorridorEdgeLint>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReservedCollisionColorLint {
+    source_tag: String,
+    indices: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrightHorizontalLint {
+    background_tag: String,
+    min_luma: u8,
+    max_run: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActorBackgroundLumaLint {
+    actor_tag: String,
+    background_tag: String,
+    min_gap: u8,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TraversalCorridorEdgeLint {
+    background_tag: String,
+    region: Crop,
+    min_luma_delta: u8,
+    max_edge_fraction: f64,
+}
+
 fn default_zoom() -> u32 {
     1
 }
@@ -381,6 +456,35 @@ pub struct Advice {
     pub message: String,
 }
 
+#[derive(Debug, Serialize)]
+struct TemporalVisualResult {
+    name: String,
+    kind: &'static str,
+    from: String,
+    to: String,
+    compared_pixels: u64,
+    changed_pixels: u64,
+    changed_fraction: f64,
+    max_changed_fraction: f64,
+    passed: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct SemanticVisualWarning {
+    kind: &'static str,
+    source: String,
+    message: String,
+    actual: Json,
+    limit: Json,
+}
+
+struct TemporalComparison {
+    compared_pixels: u64,
+    changed_pixels: u64,
+    changed_fraction: f64,
+    heatmap: visual::RgbaImage,
+}
+
 #[derive(Debug, Clone)]
 struct ReviewLayerPlan {
     stage: String,
@@ -458,6 +562,7 @@ impl ReviewCollector {
         if self.selected_stages.contains(name) && !matches!(stage, Stage::Sequence { .. }) {
             self.sources.push(runtime_source(
                 format!("{name} F{}", console.frame_count()),
+                Some(visual::DiagnosticSelector::Stage(name.to_string())),
                 console.framebuffer(),
                 console.display_palette(),
                 Rect {
@@ -520,6 +625,7 @@ impl ReviewCollector {
         for index in selected {
             self.sources.push(visual::DiagnosticSource {
                 label: format!("{name} F{}", frame_numbers[index]),
+                selector: Some(visual::DiagnosticSelector::Stage(name.to_string())),
                 image: images[index].clone(),
                 palette_indices: Some(indices[index].clone()),
             });
@@ -591,6 +697,7 @@ impl ReviewCollector {
                         tag.unwrap_or("UNTAGGED"),
                         layer_request.stage
                     ),
+                    selector: tag.map(|tag| visual::DiagnosticSelector::Layer(tag.to_string())),
                     image: visual::RgbaImage::new(SCREEN_W as u32, SCREEN_H as u32, rgba)?,
                     palette_indices: Some(indices),
                 });
@@ -618,6 +725,7 @@ impl ReviewCollector {
                     map_source_name(map_request.source),
                     map_request.stage
                 ),
+                selector: None,
                 image: visual::RgbaImage::new(image.width, image.height, image.rgba)?,
                 palette_indices: None,
             });
@@ -625,6 +733,7 @@ impl ReviewCollector {
         if let Some(reference) = &self.reference {
             sources.push(visual::DiagnosticSource {
                 label: "REFERENCE".to_string(),
+                selector: None,
                 image: reference.clone(),
                 palette_indices: None,
             });
@@ -675,6 +784,7 @@ fn crop_indices(indices: &[u8], crop: Rect) -> Result<Vec<u8>, String> {
 
 fn runtime_source(
     label: String,
+    selector: Option<visual::DiagnosticSelector>,
     framebuffer: &[u8; console_core::FB_LEN],
     display_palette: &[u8; 64],
     crop: Rect,
@@ -684,9 +794,316 @@ fn runtime_source(
     let indices = crop_indices(&presented_indices(framebuffer, display_palette), crop)?;
     Ok(visual::DiagnosticSource {
         label,
+        selector,
         image,
         palette_indices: Some(indices),
     })
+}
+
+fn stage_review_sources<'a>(
+    sources: &'a [visual::DiagnosticSource],
+    stage: &str,
+) -> Vec<&'a visual::DiagnosticSource> {
+    sources
+        .iter()
+        .filter(|source| {
+            matches!(
+                source.selector.as_ref(),
+                Some(visual::DiagnosticSelector::Stage(name)) if name == stage
+            )
+        })
+        .collect()
+}
+
+fn layer_review_source<'a>(
+    sources: &'a [visual::DiagnosticSource],
+    tag: &str,
+) -> Result<&'a visual::DiagnosticSource, String> {
+    let matches = sources
+        .iter()
+        .filter(|source| {
+            matches!(
+                source.selector.as_ref(),
+                Some(visual::DiagnosticSelector::Layer(name)) if name == tag
+            )
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [source] => Ok(*source),
+        [] => Err(format!("visual lint layer tag {tag:?} was not captured")),
+        _ => Err(format!("visual lint layer tag {tag:?} is ambiguous")),
+    }
+}
+
+fn region_contains(region: &Crop, x: u32, y: u32) -> bool {
+    x >= region.x
+        && x < region.x.saturating_add(region.w)
+        && y >= region.y
+        && y < region.y.saturating_add(region.h)
+}
+
+fn compare_visual_sources(
+    from: &visual::DiagnosticSource,
+    to: &visual::DiagnosticSource,
+    allowed_regions: &[Crop],
+) -> Result<TemporalComparison, String> {
+    if (from.image.width, from.image.height) != (to.image.width, to.image.height) {
+        return Err(format!(
+            "temporal comparison dimensions differ: {:?} is {}x{}, {:?} is {}x{}",
+            from.label,
+            from.image.width,
+            from.image.height,
+            to.label,
+            to.image.width,
+            to.image.height
+        ));
+    }
+    for region in allowed_regions {
+        let right = region
+            .x
+            .checked_add(region.w)
+            .ok_or("temporal allowed region x+w overflows")?;
+        let bottom = region
+            .y
+            .checked_add(region.h)
+            .ok_or("temporal allowed region y+h overflows")?;
+        if region.w == 0 || region.h == 0 || right > from.image.width || bottom > from.image.height
+        {
+            return Err(format!(
+                "temporal allowed region {},{},{},{} exceeds {}x{} comparison",
+                region.x, region.y, region.w, region.h, from.image.width, from.image.height
+            ));
+        }
+    }
+
+    let pixels = (from.image.width as usize) * (from.image.height as usize);
+    let exact = from
+        .palette_indices
+        .as_ref()
+        .zip(to.palette_indices.as_ref())
+        .filter(|(a, b)| a.len() == pixels && b.len() == pixels);
+    let mut rgba = vec![0u8; pixels * 4];
+    let mut compared_pixels = 0u64;
+    let mut changed_pixels = 0u64;
+    for index in 0..pixels {
+        let x = index as u32 % from.image.width;
+        let y = index as u32 / from.image.width;
+        let output = &mut rgba[index * 4..index * 4 + 4];
+        if allowed_regions
+            .iter()
+            .any(|region| region_contains(region, x, y))
+        {
+            output.copy_from_slice(&[48, 48, 48, 255]);
+            continue;
+        }
+        compared_pixels += 1;
+        let changed = exact.map_or_else(
+            || from.image.rgba[index * 4..index * 4 + 4] != to.image.rgba[index * 4..index * 4 + 4],
+            |(a, b)| a[index] != b[index],
+        );
+        if changed {
+            changed_pixels += 1;
+            output.copy_from_slice(&[255, 0, 96, 255]);
+        } else {
+            output.copy_from_slice(&[8, 12, 20, 255]);
+        }
+    }
+    if compared_pixels == 0 {
+        return Err("temporal allowed regions exclude every comparison pixel".to_string());
+    }
+    Ok(TemporalComparison {
+        compared_pixels,
+        changed_pixels,
+        changed_fraction: changed_pixels as f64 / compared_pixels as f64,
+        heatmap: visual::RgbaImage::new(from.image.width, from.image.height, rgba)?,
+    })
+}
+
+fn pixel_luma(pixel: &[u8]) -> u8 {
+    ((u32::from(pixel[0]) * 77 + u32::from(pixel[1]) * 150 + u32::from(pixel[2]) * 29 + 128) >> 8)
+        as u8
+}
+
+fn visual_lint_warnings(
+    lint: Option<&ReviewVisualLint>,
+    sources: &[visual::DiagnosticSource],
+) -> Result<Vec<SemanticVisualWarning>, String> {
+    let Some(lint) = lint else {
+        return Ok(Vec::new());
+    };
+    let mut warnings = Vec::new();
+
+    if let Some(check) = &lint.reserved_collision_colors {
+        let source = layer_review_source(sources, &check.source_tag)?;
+        let indices = source.palette_indices.as_ref().ok_or_else(|| {
+            format!(
+                "visual lint source {:?} has no exact palette indices",
+                source.label
+            )
+        })?;
+        let hits = indices
+            .iter()
+            .filter(|index| check.indices.contains(index))
+            .count() as u64;
+        if hits != 0 {
+            warnings.push(SemanticVisualWarning {
+                kind: "reserved_collision_colors",
+                source: source.label.clone(),
+                message: format!(
+                    "{} pixels use game-authored collision-contact colors {:?}",
+                    hits, check.indices
+                ),
+                actual: json!({"pixels": hits, "indices": check.indices}),
+                limit: json!({"pixels": 0}),
+            });
+        }
+    }
+
+    if let Some(check) = &lint.bright_background_horizontals {
+        let source = layer_review_source(sources, &check.background_tag)?;
+        let mut longest = 0u32;
+        for row in source
+            .image
+            .rgba
+            .chunks_exact((source.image.width * 4) as usize)
+        {
+            let mut run = 0u32;
+            for pixel in row.chunks_exact(4) {
+                if pixel[3] != 0 && pixel_luma(pixel) >= check.min_luma {
+                    run += 1;
+                    longest = longest.max(run);
+                } else {
+                    run = 0;
+                }
+            }
+        }
+        if longest > check.max_run {
+            warnings.push(SemanticVisualWarning {
+                kind: "bright_background_horizontals",
+                source: source.label.clone(),
+                message: format!(
+                    "bright background horizontal runs for {longest}px, above the authored {}px limit",
+                    check.max_run
+                ),
+                actual: json!({"longest_run": longest, "min_luma": check.min_luma}),
+                limit: json!({"max_run": check.max_run}),
+            });
+        }
+    }
+
+    if let Some(check) = &lint.actor_background_luma {
+        let actor = layer_review_source(sources, &check.actor_tag)?;
+        let background = layer_review_source(sources, &check.background_tag)?;
+        if (actor.image.width, actor.image.height)
+            != (background.image.width, background.image.height)
+        {
+            return Err("actor/background lint layers have different dimensions".to_string());
+        }
+        let mut actor_sum = 0u64;
+        let mut background_sum = 0u64;
+        let mut pixels = 0u64;
+        for (actor_pixel, background_pixel) in actor
+            .image
+            .rgba
+            .chunks_exact(4)
+            .zip(background.image.rgba.chunks_exact(4))
+        {
+            if actor_pixel[3] == 0 {
+                continue;
+            }
+            actor_sum += u64::from(pixel_luma(actor_pixel));
+            background_sum += u64::from(pixel_luma(background_pixel));
+            pixels += 1;
+        }
+        if pixels == 0 {
+            return Err(format!(
+                "visual lint actor layer {:?} is empty",
+                actor.label
+            ));
+        }
+        let actor_mean = actor_sum as f64 / pixels as f64;
+        let background_mean = background_sum as f64 / pixels as f64;
+        let gap = (actor_mean - background_mean).abs();
+        if gap < f64::from(check.min_gap) {
+            warnings.push(SemanticVisualWarning {
+                kind: "actor_background_luma",
+                source: format!("{} vs {}", actor.label, background.label),
+                message: format!(
+                    "actor/background mean luma gap is {gap:.2}, below the authored {} limit",
+                    check.min_gap
+                ),
+                actual: json!({"gap": gap, "actor_mean": actor_mean, "background_mean": background_mean}),
+                limit: json!({"min_gap": check.min_gap}),
+            });
+        }
+    }
+
+    if let Some(check) = &lint.traversal_corridor_edges {
+        let source = layer_review_source(sources, &check.background_tag)?;
+        let region = &check.region;
+        let right = region
+            .x
+            .checked_add(region.w)
+            .ok_or("traversal corridor x+w overflows")?;
+        let bottom = region
+            .y
+            .checked_add(region.h)
+            .ok_or("traversal corridor y+h overflows")?;
+        if region.w == 0
+            || region.h == 0
+            || right > source.image.width
+            || bottom > source.image.height
+        {
+            return Err(format!(
+                "traversal corridor {},{},{},{} exceeds lint source {}x{}",
+                region.x, region.y, region.w, region.h, source.image.width, source.image.height
+            ));
+        }
+        let mut edge_pixels = 0u64;
+        let mut pixels = 0u64;
+        for y in region.y..bottom {
+            for x in region.x..right {
+                let index = (y * source.image.width + x) as usize;
+                let current = pixel_luma(&source.image.rgba[index * 4..index * 4 + 4]);
+                let right_luma = if x + 1 < source.image.width {
+                    pixel_luma(&source.image.rgba[(index + 1) * 4..(index + 1) * 4 + 4])
+                } else {
+                    current
+                };
+                let down_luma = if y + 1 < source.image.height {
+                    let next = index + source.image.width as usize;
+                    pixel_luma(&source.image.rgba[next * 4..next * 4 + 4])
+                } else {
+                    current
+                };
+                edge_pixels += u64::from(
+                    current
+                        .abs_diff(right_luma)
+                        .max(current.abs_diff(down_luma))
+                        >= check.min_luma_delta,
+                );
+                pixels += 1;
+            }
+        }
+        let fraction = edge_pixels as f64 / pixels as f64;
+        if fraction > check.max_edge_fraction {
+            warnings.push(SemanticVisualWarning {
+                kind: "traversal_corridor_edges",
+                source: source.label.clone(),
+                message: format!(
+                    "background edge density in the traversal corridor is {fraction:.4}, above the authored {:.4} limit",
+                    check.max_edge_fraction
+                ),
+                actual: json!({"edge_pixels": edge_pixels, "pixels": pixels, "fraction": fraction}),
+                limit: json!({
+                    "min_luma_delta": check.min_luma_delta,
+                    "max_edge_fraction": check.max_edge_fraction
+                }),
+            });
+        }
+    }
+
+    Ok(warnings)
 }
 
 pub fn cli_playtest(args: &[String]) -> i32 {
@@ -1098,6 +1515,8 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                 reference,
                 layers,
                 map,
+                temporal_checks,
+                lint,
                 ..
             } => {
                 if index + 1 != scenario.stages.len() {
@@ -1153,6 +1572,136 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                         ));
                     }
                 }
+                if temporal_checks.len() > 16 {
+                    return Err(format!(
+                        "stage {index} review requests {} temporal checks; at most 16 are allowed",
+                        temporal_checks.len()
+                    ));
+                }
+                let mut check_names = BTreeSet::new();
+                for check in temporal_checks {
+                    let (name, referenced, limit, regions) = match check {
+                        TemporalVisualCheck::Boundary {
+                            name,
+                            from,
+                            to,
+                            max_changed_fraction,
+                            allowed_regions,
+                            ..
+                        } => (
+                            name,
+                            vec![from.as_str(), to.as_str()],
+                            *max_changed_fraction,
+                            allowed_regions,
+                        ),
+                        TemporalVisualCheck::Consecutive {
+                            name,
+                            stage,
+                            max_changed_fraction,
+                            allowed_regions,
+                            ..
+                        } => (
+                            name,
+                            vec![stage.as_str()],
+                            *max_changed_fraction,
+                            allowed_regions,
+                        ),
+                    };
+                    if name.is_empty() || name.len() > 64 {
+                        return Err(format!(
+                            "stage {index} temporal check name {name:?} must be 1..=64 UTF-8 bytes"
+                        ));
+                    }
+                    if !check_names.insert(name) {
+                        return Err(format!(
+                            "stage {index} repeats temporal check name {name:?}"
+                        ));
+                    }
+                    if !limit.is_finite() || !(0.0..=1.0).contains(&limit) {
+                        return Err(format!(
+                            "stage {index} temporal check {name:?} max_changed_fraction must be in 0..=1"
+                        ));
+                    }
+                    for stage_name in &referenced {
+                        if !selected.contains(stage_name) {
+                            return Err(format!(
+                                "stage {index} temporal check {name:?} references {stage_name:?}, which is not selected by review stages"
+                            ));
+                        }
+                    }
+
+                    let dimensions = |stage_name: &str| -> Result<(u32, u32, bool, usize), String> {
+                        let matches = scenario.stages[..index]
+                            .iter()
+                            .filter(|stage| stage.name() == Some(stage_name))
+                            .collect::<Vec<_>>();
+                        let [stage] = matches.as_slice() else {
+                            return Err(format!(
+                                "stage {index} temporal check {name:?} needs exactly one prior stage {stage_name:?}, found {}",
+                                matches.len()
+                            ));
+                        };
+                        match stage {
+                            Stage::Sequence {
+                                crop,
+                                frames,
+                                every,
+                                ..
+                            } => Ok((
+                                crop.w,
+                                crop.h,
+                                true,
+                                ((*frames / *every) as usize).min(*motion_samples as usize),
+                            )),
+                            _ => Ok((SCREEN_W as u32, SCREEN_H as u32, false, 1)),
+                        }
+                    };
+                    let mut common_dimensions = None;
+                    for stage_name in &referenced {
+                        let (width, height, _, _) = dimensions(stage_name)?;
+                        if let Some(expected) = common_dimensions {
+                            if expected != (width, height) {
+                                return Err(format!(
+                                    "stage {index} temporal check {name:?} compares different dimensions"
+                                ));
+                            }
+                        } else {
+                            common_dimensions = Some((width, height));
+                        }
+                    }
+                    let (width, height) = common_dimensions.expect("one referenced stage");
+                    for region in regions {
+                        let right = region.x.checked_add(region.w).ok_or_else(|| {
+                            format!("stage {index} temporal allowed region x+w overflows")
+                        })?;
+                        let bottom = region.y.checked_add(region.h).ok_or_else(|| {
+                            format!("stage {index} temporal allowed region y+h overflows")
+                        })?;
+                        if region.w == 0 || region.h == 0 || right > width || bottom > height {
+                            return Err(format!(
+                                "stage {index} temporal check {name:?} allowed region {},{},{},{} exceeds {width}x{height}",
+                                region.x, region.y, region.w, region.h
+                            ));
+                        }
+                    }
+                    match check {
+                        TemporalVisualCheck::Boundary { from, to, .. } => {
+                            if dimensions(from)?.2 || dimensions(to)?.2 {
+                                return Err(format!(
+                                    "stage {index} boundary check {name:?} requires single-frame stages, not sequences"
+                                ));
+                            }
+                        }
+                        TemporalVisualCheck::Consecutive { stage, .. } => {
+                            let (_, _, is_sequence, samples) = dimensions(stage)?;
+                            if !is_sequence || samples < 2 {
+                                return Err(format!(
+                                    "stage {index} consecutive check {name:?} requires a reviewed sequence with at least two motion_samples"
+                                ));
+                            }
+                        }
+                    }
+                }
                 let mut source_count = scenario.stages[..index]
                     .iter()
                     .filter(|stage| stage.name().is_some_and(|name| selected.contains(name)))
@@ -1192,6 +1741,84 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                         }
                     }
                     source_count += layers.tags.len() + usize::from(layers.include_untagged);
+                }
+                if let Some(lint) = lint {
+                    let Some(layers) = layers.as_deref() else {
+                        return Err(format!("stage {index} visual lint requires review layers"));
+                    };
+                    let configured = usize::from(lint.reserved_collision_colors.is_some())
+                        + usize::from(lint.bright_background_horizontals.is_some())
+                        + usize::from(lint.actor_background_luma.is_some())
+                        + usize::from(lint.traversal_corridor_edges.is_some());
+                    if configured == 0 {
+                        return Err(format!("stage {index} visual lint configures no checks"));
+                    }
+                    let require_tag = |tag: &str, kind: &str| -> Result<(), String> {
+                        if !layers.tags.iter().any(|requested| requested == tag) {
+                            return Err(format!(
+                                "stage {index} {kind} lint tag {tag:?} is not requested by review layers"
+                            ));
+                        }
+                        Ok(())
+                    };
+                    if let Some(check) = &lint.reserved_collision_colors {
+                        require_tag(&check.source_tag, "reserved collision color")?;
+                        if check.indices.is_empty()
+                            || check
+                                .indices
+                                .iter()
+                                .any(|&palette_index| palette_index > 63)
+                        {
+                            return Err(format!(
+                                "stage {index} reserved collision color lint needs Apollo64 indices in 0..=63"
+                            ));
+                        }
+                        let unique = check.indices.iter().copied().collect::<BTreeSet<_>>();
+                        if unique.len() != check.indices.len() {
+                            return Err(format!(
+                                "stage {index} reserved collision color lint repeats an index"
+                            ));
+                        }
+                    }
+                    if let Some(check) = &lint.bright_background_horizontals {
+                        require_tag(&check.background_tag, "bright horizontal")?;
+                        if check.max_run == 0 || check.max_run > SCREEN_W as u32 {
+                            return Err(format!(
+                                "stage {index} bright horizontal max_run must be 1..={SCREEN_W}"
+                            ));
+                        }
+                    }
+                    if let Some(check) = &lint.actor_background_luma {
+                        require_tag(&check.actor_tag, "actor luma")?;
+                        require_tag(&check.background_tag, "background luma")?;
+                    }
+                    if let Some(check) = &lint.traversal_corridor_edges {
+                        require_tag(&check.background_tag, "corridor edge")?;
+                        if !check.max_edge_fraction.is_finite()
+                            || !(0.0..=1.0).contains(&check.max_edge_fraction)
+                        {
+                            return Err(format!(
+                                "stage {index} traversal corridor max_edge_fraction must be in 0..=1"
+                            ));
+                        }
+                        let right =
+                            check.region.x.checked_add(check.region.w).ok_or_else(|| {
+                                format!("stage {index} traversal corridor x+w overflows")
+                            })?;
+                        let bottom =
+                            check.region.y.checked_add(check.region.h).ok_or_else(|| {
+                                format!("stage {index} traversal corridor y+h overflows")
+                            })?;
+                        if check.region.w == 0
+                            || check.region.h == 0
+                            || right > SCREEN_W as u32
+                            || bottom > SCREEN_H as u32
+                        {
+                            return Err(format!(
+                                "stage {index} traversal corridor exceeds the {SCREEN_W}x{SCREEN_H} framebuffer"
+                            ));
+                        }
+                    }
                 }
                 if let Some(map) = map {
                     if map.stage.len() > 64 {
@@ -1252,7 +1879,14 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                         "stage {index} review requests {panel_count} panels; at most 120 are allowed"
                     ));
                 }
-                for output in std::iter::once(board.as_str()).chain(report.as_deref()) {
+                let heatmap_paths = temporal_checks.iter().filter_map(|check| match check {
+                    TemporalVisualCheck::Boundary { heatmap, .. }
+                    | TemporalVisualCheck::Consecutive { heatmap, .. } => heatmap.as_deref(),
+                });
+                for output in std::iter::once(board.as_str())
+                    .chain(report.as_deref())
+                    .chain(heatmap_paths)
+                {
                     let normalized = normalize_relative_path(output).map_err(|error| {
                         format!("stage {index} review path {output:?}: {error}")
                     })?;
@@ -1839,10 +2473,114 @@ fn execute_stage(
             views,
             zoom,
             columns,
+            temporal_checks,
+            lint,
             ..
         } => {
             let root = artifact_root.expect("review validation requires an artifact root");
             let sources = review.finish_sources(stage, session)?;
+            let mut temporal_results = Vec::with_capacity(temporal_checks.len());
+            let mut heatmaps = Vec::new();
+            let mut failures = Vec::new();
+            for check in temporal_checks {
+                let (name, kind, from, to, limit, comparison, heatmap_path) = match check {
+                    TemporalVisualCheck::Boundary {
+                        name,
+                        from,
+                        to,
+                        max_changed_fraction,
+                        allowed_regions,
+                        heatmap,
+                    } => {
+                        let from_sources = stage_review_sources(&sources, from);
+                        let to_sources = stage_review_sources(&sources, to);
+                        let [from_source] = from_sources.as_slice() else {
+                            return Err(format!(
+                                "boundary check {name:?} needs exactly one source for stage {from:?}, found {}",
+                                from_sources.len()
+                            ));
+                        };
+                        let [to_source] = to_sources.as_slice() else {
+                            return Err(format!(
+                                "boundary check {name:?} needs exactly one source for stage {to:?}, found {}",
+                                to_sources.len()
+                            ));
+                        };
+                        (
+                            name,
+                            "boundary",
+                            from_source.label.clone(),
+                            to_source.label.clone(),
+                            *max_changed_fraction,
+                            compare_visual_sources(from_source, to_source, allowed_regions)?,
+                            heatmap.as_deref(),
+                        )
+                    }
+                    TemporalVisualCheck::Consecutive {
+                        name,
+                        stage,
+                        max_changed_fraction,
+                        allowed_regions,
+                        heatmap,
+                    } => {
+                        let stage_sources = stage_review_sources(&sources, stage);
+                        if stage_sources.len() < 2 {
+                            return Err(format!(
+                                "consecutive check {name:?} needs at least two sources for stage {stage:?}, found {}",
+                                stage_sources.len()
+                            ));
+                        }
+                        let mut worst = None;
+                        for pair in stage_sources.windows(2) {
+                            let comparison =
+                                compare_visual_sources(pair[0], pair[1], allowed_regions)?;
+                            if worst.as_ref().is_none_or(
+                                |(_, _, current): &(String, String, TemporalComparison)| {
+                                    comparison.changed_fraction > current.changed_fraction
+                                },
+                            ) {
+                                worst = Some((
+                                    pair[0].label.clone(),
+                                    pair[1].label.clone(),
+                                    comparison,
+                                ));
+                            }
+                        }
+                        let (from, to, comparison) = worst.expect("two sources have one pair");
+                        (
+                            name,
+                            "consecutive",
+                            from,
+                            to,
+                            *max_changed_fraction,
+                            comparison,
+                            heatmap.as_deref(),
+                        )
+                    }
+                };
+                let passed = comparison.changed_fraction <= limit;
+                if !passed {
+                    failures.push(format!(
+                        "{name} changed {:.6} > {:.6}",
+                        comparison.changed_fraction, limit
+                    ));
+                }
+                if let Some(path) = heatmap_path {
+                    heatmaps.push((path.to_string(), comparison.heatmap.png()));
+                }
+                temporal_results.push(TemporalVisualResult {
+                    name: name.clone(),
+                    kind,
+                    from,
+                    to,
+                    compared_pixels: comparison.compared_pixels,
+                    changed_pixels: comparison.changed_pixels,
+                    changed_fraction: comparison.changed_fraction,
+                    max_changed_fraction: limit,
+                    passed,
+                });
+            }
+            let warnings = visual_lint_warnings(lint.as_deref(), &sources)?;
             let (image, layout, metrics) =
                 visual::diagnostic_board(&visual::DiagnosticBoardSpec {
                     sources: &sources,
@@ -1856,6 +2594,8 @@ fn execute_stage(
                 "views": views,
                 "layout": layout,
                 "sources": metrics,
+                "temporal_checks": temporal_results,
+                "warnings": warnings,
             });
             let mut report_bytes = serde_json::to_vec_pretty(&payload)
                 .map_err(|error| format!("serializing visual diagnostic report: {error}"))?;
@@ -1875,7 +2615,18 @@ fn execute_stage(
                     &report_bytes,
                 )?);
             }
+            for (path, bytes) in heatmaps {
+                report
+                    .artifacts
+                    .push(write_artifact(root, &path, "visual_diff_heatmap", &bytes)?);
+            }
             report.actual = Some(payload);
+            if !failures.is_empty() {
+                return Err(format!(
+                    "temporal visual assertion failed: {}",
+                    failures.join("; ")
+                ));
+            }
         }
         Stage::Capture {
             screenshot,

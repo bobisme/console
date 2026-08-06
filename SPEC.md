@@ -813,6 +813,29 @@ like map capture, preserving authored or live-runtime topology from that exact
 point. Every output remains a unique confined artifact path, and malformed
 references are decoded before the cart begins stepping.
 
+Optional `temporal_checks` contains at most 16 explicitly named checks. A
+`boundary` check names single-frame `from` and `to` stages; a `consecutive`
+check names a selected sequence with at least two retained `motion_samples`.
+Every check requires `max_changed_fraction` in `0..=1`, may supply native
+`allowed_regions` whose changes are excluded from numerator and denominator,
+and may name a unique `heatmap` artifact. Comparisons prefer exact presented
+Apollo64 indices and otherwise compare RGBA pixels. The report records the
+worst pair, compared and changed counts, fraction, limit, and pass/fail state.
+A failing threshold makes the review stage fail with exit code 1 only after
+its board, report, and magenta-on-dark diff heatmap evidence have been written.
+Schema, reference, dimensions, and path failures remain pre-execution errors.
+
+Optional `lint` requires matching tag-isolated `layers` and contains any of
+four explicit warning contracts: `reserved_collision_colors` names a
+`source_tag` and Apollo64 `indices`; `bright_background_horizontals` names a
+`background_tag`, `min_luma`, and `max_run`; `actor_background_luma` names
+`actor_tag`, `background_tag`, and `min_gap`; and
+`traversal_corridor_edges` names a `background_tag`, native `region`, and
+explicit `min_luma_delta` and `max_edge_fraction`. Lint findings are
+deterministic warnings in the JSON report, not playtest failures or an
+aggregate aesthetic score. Games choose all colors, regions, and thresholds;
+Console does not infer taste.
+
 Capture fields are strict and typed. `screenshot` and `screen_text` capture the
 current framebuffer. `zoom` is an integer from 1 through 16 (default 1) used by
 `screenshot`. `wav` renders the retained audio between optional integer
