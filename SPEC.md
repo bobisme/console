@@ -199,6 +199,10 @@ current selection is therefore stable: newly spawned entities are not visited,
 and a queued removal cannot invalidate later callback arguments. Query filters
 are dense arrays of at most 16 unique component names. Query order is always
 entity creation order; do not substitute `pairs` when order changes state.
+`each` scans that stable order directly and passes the requested components at
+their exact callback arity without materializing either a matching-ID result or
+a per-entity argument table. `entities` intentionally allocates its returned ID
+array and is the right choice only when those IDs must outlive the callback.
 Before that flush, `count`/`stats` exclude pending spawns and include entities
 queued for despawn. Capacity likewise counts both currently live and pending
 spawns, so a queued despawn does not make room for a spawn in the same query;

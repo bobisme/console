@@ -457,18 +457,23 @@ function hex64(v) {
   {
     const ecsCart = new TextEncoder().encode(
       "__lua__\n" +
-      "world=ecs.world('parity',{capacity=8}) visited=0\n" +
+      "world=ecs.world('parity',{capacity=8}) arity_world=ecs.world('arity') visited=0 arity_ok=0\n" +
       "function _init()\n" +
       " for i=1,3 do world:spawn({pos={x=i}}) end\n" +
       " world:each({'pos'},function(id,pos)\n" +
       "  visited=visited+1 pos.x=pos.x+1 world:add(id,'hot',true)\n" +
       "  if id==1 then world:despawn(id) world:spawn({pos={x=9},late=true}) end\n" +
       " end)\n" +
+      " local wide={} local required={}\n" +
+      " for i=1,16 do wide['c'..i]=i required[i]='c'..i end\n" +
+      " local wide_id=arity_world:spawn(wide)\n" +
+      " arity_world:each({},function(...) if select('#',...)==1 then arity_ok=arity_ok+1 end end)\n" +
+      " arity_world:each(required,function(...) if select('#',...)==17 and select(1,...)==wide_id and select(17,...)==16 then arity_ok=arity_ok+2 end end)\n" +
       "end\n" +
       "function _draw()\n" +
       " cls(0) local order=0\n" +
       " world:each({'pos'},function(id,pos) order=order+1 pset(pos.x,order,id+1) end)\n" +
-      " pset(0,0,world:count({'hot'})) pset(1,0,visited) pset(2,0,world:count())\n" +
+      " pset(0,0,world:count({'hot'})) pset(1,0,visited) pset(2,0,world:count()) pset(3,0,arity_ok)\n" +
       "end\n",
     );
     const p = con_alloc(ecsCart.length);
@@ -485,6 +490,9 @@ function hex64(v) {
           `hot=${frame[0]} visited=${frame[1]} alive=${frame[2]}`);
     check(frame[W + 3] === 3 && frame[W * 2 + 4] === 4 && frame[W * 3 + 9] === 5,
           "wasm ECS queries preserve surviving creation order");
+    check(frame[3] === 3,
+          "wasm ECS callbacks preserve exact empty and 16-component arity",
+          `arity bits=${frame[3]}`);
   }
 
   // --- display-palette fade: pixels stay put, only con_dpal moves ---

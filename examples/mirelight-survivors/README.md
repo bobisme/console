@@ -103,29 +103,37 @@ CONSOLE_MIRELIGHT_MAX_P95_MS=6 cargo test --release -p console \
   -- --ignored --exact --nocapture
 ```
 
-Reference observation on 2026-08-06, Linux x86_64, Rust 1.97.0, AMD Ryzen
-Threadripper 9970X, release profile:
+Reference observations on 2026-08-06, Linux x86_64, Rust 1.97.0, AMD Ryzen
+Threadripper 9970X, release profile. The before and after runs used the same
+seed, input trace, 120-frame warmup, 600-frame measurement, and 820-enemy
+population contract; only allocation-efficient `world:each` internals changed.
 
-| metric | observation |
-|---|---:|
-| mean frame | 3.33 ms |
-| p50 frame | 3.12 ms |
-| p95 frame | 4.33 ms |
-| max frame | 5.67 ms |
-| allocation calls / 600 frames | 7,462,951 |
-| allocated bytes / 600 frames | 453,520,321 |
-| peak bytes above baseline | 3,701,416 |
-| final live / minimum live / peak live | 961 / 931 / 966 |
-| spawned / despawned | 7,824 / 6,863 |
-| dropped spawns | 0 |
+| metric | before `bn-2go` | after `bn-2go` | change |
+|---|---:|---:|---:|
+| mean frame | 3.386579 ms | 2.804133 ms | -17.2% |
+| p50 frame | 3.166172 ms | 2.754060 ms | -13.0% |
+| p95 frame | 4.470705 ms | 3.262965 ms | -27.0% |
+| max frame | 5.846865 ms | 4.307244 ms | -26.3% |
+| allocation calls / 600 frames | 7,462,943 | 5,056,099 | -32.3% |
+| allocated bytes / 600 frames | 453,538,832 | 326,921,874 | -27.9% |
+| peak bytes above baseline | 3,664,819 | 4,290,717 | allocator-noisy |
+| final live / minimum live / peak live | 961 / 931 / 966 | 961 / 931 / 966 | identical |
+| spawned / despawned | 7,824 / 6,863 | 7,824 / 6,863 | identical |
+| dropped spawns | 0 | 0 | identical |
 
-Timing comfortably fits the 16.67 ms real-time budget on that machine, but
-roughly 12,438 allocation calls and 756 KB allocated per frame expose the
-current ECS iteration path as the main tooling/runtime rough edge. Timing is
-reported rather than universally gated because shared and lower-end machines
-have different envelopes; use the optional threshold for controlled hosts.
-Follow-up bone `bn-2go` owns allocation-efficient `world:each` internals while
-preserving deterministic query and deferred-structure semantics.
+`world:each` now scans the structurally stable creation order directly and
+passes 0–16 requested components without building a selected-ID table or one
+argument table per entity. The same-game result removes 2,406,844 allocation
+calls and 126,616,958 allocated bytes from the measured window while preserving
+framebuffer/gameplay determinism. The remaining roughly 8,427 allocation calls
+and 545 KB per frame leave room for later profiling, but the targeted query
+tables are no longer part of the hot path.
+
+Timing is reported rather than universally gated because shared and lower-end
+machines have different envelopes; use the optional threshold for controlled
+hosts. The peak-outstanding observation is retained honestly but is not a
+stable improvement metric: the process-wide allocator counter includes Lua GC
+timing and allocations retained across the measurement boundary.
 
 ## Packed browser check
 

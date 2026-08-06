@@ -112,8 +112,9 @@ Component-table field mutation is immediate. Structural calls (`spawn`,
 `despawn`, `add`, `remove`) inside nested `each` calls are queued FIFO and
 flush only after the outermost query. Consequently the selected entity set and
 callback arguments stay valid, and new entities do not appear midway through a
-query. Prefer `each` for hot loops and `entities` when IDs must outlive the
-callback.
+query. `each` scans that stable order directly: it does not allocate a returned
+ID list or a component-argument table for every entity. Prefer it for hot loops
+and use `entities` when IDs must outlive the callback.
 
 Until the outermost query flushes, `count()` and `stats()` exclude pending
 spawns and include entities queued for despawn. Capacity checks count live plus

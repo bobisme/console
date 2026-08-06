@@ -124,6 +124,73 @@ local function matches(components, required)
   return true
 end
 
+-- Invoke one query callback without materializing a component argument table.
+-- Filters contain at most 16 names, so spelling out the bounded arities keeps
+-- callback(id, component...) exact while leaving Lua's own call stack to hold
+-- the arguments. pcall remains immediately around the cart callback: callers
+-- still get error-safe depth restoration and a flush at the outermost query.
+local function invoke_each(callback, id, components, required)
+  local count = #required
+  if count == 0 then return pcall(callback, id) end
+  if count == 1 then return pcall(callback, id,
+    components[required[1]]) end
+  if count == 2 then return pcall(callback, id,
+    components[required[1]], components[required[2]]) end
+  if count == 3 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]]) end
+  if count == 4 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]]) end
+  if count == 5 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]]) end
+  if count == 6 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]], components[required[6]]) end
+  if count == 7 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]], components[required[6]], components[required[7]]) end
+  if count == 8 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]], components[required[6]], components[required[7]], components[required[8]]) end
+  if count == 9 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]], components[required[6]], components[required[7]], components[required[8]],
+    components[required[9]]) end
+  if count == 10 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]], components[required[6]], components[required[7]], components[required[8]],
+    components[required[9]], components[required[10]]) end
+  if count == 11 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]], components[required[6]], components[required[7]], components[required[8]],
+    components[required[9]], components[required[10]], components[required[11]]) end
+  if count == 12 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]], components[required[6]], components[required[7]], components[required[8]],
+    components[required[9]], components[required[10]], components[required[11]], components[required[12]]) end
+  if count == 13 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]], components[required[6]], components[required[7]], components[required[8]],
+    components[required[9]], components[required[10]], components[required[11]], components[required[12]],
+    components[required[13]]) end
+  if count == 14 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]], components[required[6]], components[required[7]], components[required[8]],
+    components[required[9]], components[required[10]], components[required[11]], components[required[12]],
+    components[required[13]], components[required[14]]) end
+  if count == 15 then return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]], components[required[6]], components[required[7]], components[required[8]],
+    components[required[9]], components[required[10]], components[required[11]], components[required[12]],
+    components[required[13]], components[required[14]], components[required[15]]) end
+  if count ~= 16 then fail("world:each", "unsupported callback arity " .. count, 2) end
+  return pcall(callback, id,
+    components[required[1]], components[required[2]], components[required[3]], components[required[4]],
+    components[required[5]], components[required[6]], components[required[7]], components[required[8]],
+    components[required[9]], components[required[10]], components[required[11]], components[required[12]],
+    components[required[13]], components[required[14]], components[required[15]], components[required[16]])
+end
+
 local function compact(value)
   if value.dead == 0 then return end
   local order = {}
@@ -263,31 +330,27 @@ function methods:each(required, callback)
   required = names(required, "world:each", INSPECT_MAX_WITH)
   if type(callback) ~= "function" then fail("world:each", "callback must be a function", 2) end
 
-  local selected = {}
+  local selected = 0
+  value.depth = value.depth + 1
+  -- Structural operations cannot alter entities/order until the outer query
+  -- flushes. Iterating storage directly therefore has the same stable
+  -- selection as the former ID snapshot, without allocating that snapshot.
   for index = 1, #value.order do
     local id = value.order[index]
     local components = value.entities[id]
-    if components ~= nil and matches(components, required) then selected[#selected + 1] = id end
-  end
-
-  value.depth = value.depth + 1
-  for index = 1, #selected do
-    local id = selected[index]
-    local components = value.entities[id]
-    local arguments = {}
-    for component_index = 1, #required do
-      arguments[component_index] = components[required[component_index]]
-    end
-    local ok, message = pcall(callback, id, table.unpack(arguments, 1, #required))
-    if not ok then
-      value.depth = value.depth - 1
-      if value.depth == 0 then flush(value) end
-      error(message, 0)
+    if components ~= nil and matches(components, required) then
+      selected = selected + 1
+      local ok, message = invoke_each(callback, id, components, required)
+      if not ok then
+        value.depth = value.depth - 1
+        if value.depth == 0 then flush(value) end
+        error(message, 0)
+      end
     end
   end
   value.depth = value.depth - 1
   if value.depth == 0 then flush(value) end
-  return #selected
+  return selected
 end
 
 function methods:count(required)
