@@ -87,6 +87,12 @@ FNV-1a-64 prime `0x100000001b3`; `smoke.cjs` mirrors that multiplier
 (`CORE_HASH_PRIME`) so the constants line up. The two primes agree in the low 40
 bits, so a mismatch shows up only in the top three nibbles of the hash.
 
+The smoke also renders `print(..., "center")` and `print(..., "right")` through
+the committed WASM engine and compares them with equivalent legacy-left calls.
+This is an intentional engine-freshness tripwire: if the Rust API changes but
+`web/engine.js` is not rebuilt, `just check` must fail before stale behavior is
+packed into a cart.
+
 To run the same structural WASM gate against an authored cart without comparing
 it to `demo.cart`'s hashes, select the cart explicitly:
 

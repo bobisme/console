@@ -417,6 +417,39 @@ function hex64(v) {
                 `(expected 0x${FB_GOLDEN.toString(16).padStart(8, "0")})`);
   }
 
+  // --- Lua API parity: committed wasm must include text alignment ---
+  // Core API changes do not rebuild web/engine.js automatically. Comparing
+  // aligned calls with their legacy-left equivalents makes an engine built
+  // before print(..., align) fail loudly instead of shipping in packed carts.
+  const renderTextCart = (draw) => {
+    const cart = new TextEncoder().encode(
+      `__lua__\nfunction _draw() cls(0) ${draw} end\n`,
+    );
+    const p = con_alloc(cart.length);
+    Module.HEAPU8.set(cart, p);
+    if (!check(con_init(p, cart.length) === 0, "con_init loads text-alignment probe",
+               currentError())) process.exit(1);
+    con_step(0);
+    if (!check(currentError() === null, "text-alignment probe runs clean", currentError())) {
+      process.exit(1);
+    }
+    return Module.HEAPU8.slice(con_fb(), con_fb() + FB_LEN);
+  };
+
+  const centered = renderTextCart(
+    `print('PRESS A  NEXT INCIDENT', 96, 10, 63, 'center')`,
+  );
+  const centeredManual = renderTextCart(
+    `print('PRESS A  NEXT INCIDENT', 52, 10, 63)`,
+  );
+  check(equalBytes(centered, centeredManual),
+        "wasm print center alignment matches manual placement at x=52");
+
+  const rightAligned = renderTextCart(`print('10575', 157, 20, 63, 'right')`);
+  const rightManual = renderTextCart(`print('10575', 137, 20, 63)`);
+  check(equalBytes(rightAligned, rightManual),
+        "wasm print right alignment matches manual placement at x=137");
+
   // --- display-palette fade: pixels stay put, only con_dpal moves ---
   // This is the whole point of pal(c0, c1, 1): the shell composes
   // palette[dpal[idx]], so a cart can fade the screen without redrawing and
