@@ -5,3 +5,4 @@
 {"ts":"2026-08-06T20:46:33.838239337Z","author":"console-reviewer-core","event":"ReviewerVoted","data":{"review_id":"cr-1o52gu","vote":"lgtm","reason":"Strict, well-tested bounded screen-text contract; clippy clean, all focused suites pass, backwards-compatible."}}
 {"ts":"2026-08-06T20:46:33.876500747Z","author":"console-reviewer-core","event":"ReviewApproved","data":{"review_id":"cr-1o52gu"}}
 {"ts":"2026-08-06T20:46:40.995364336Z","author":"console-dev","event":"ThreadResolved","data":{"thread_id":"th-2t26ks","reason":"Accepted as verification evidence; no source change requested."}}
+{"ts":"2026-08-06T20:47:30.706952142Z","author":"console-dev","event":"ReviewMerged","data":{"review_id":"cr-1o52gu","final_commit":"8c34593682c227d155eebc8b287da6fe99791d30"}}
