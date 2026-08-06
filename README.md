@@ -212,16 +212,26 @@ console serve my-game
 The command prints the URL and recompiles/re-bundles the project on each page
 refresh. A standalone `.cart` remains accepted everywhere.
 
-With `agent-browser` and Chromium provisioned, the repository's real-browser
-acceptance gate packs and drives Lantern Leap end to end:
+With Chromium provisioned, the sustained load gate launches its own isolated
+browser over direct CDP and requires at least 600 successful dense-mode frames
+of Mirelight Survivors. It does not require `agent-browser`:
+
+```bash
+CONSOLE_BROWSER=/path/to/chromium just browser-load-check
+```
+
+Provision `agent-browser` too when running the combined gate, which adds the
+short packed Lantern Leap interaction and haptics passes:
 
 ```bash
 CONSOLE_BROWSER=/path/to/chromium just browser-check
 ```
 
-It treats missing browser infrastructure as a failure and retains the exact
-packed HTML, screenshot, and browser diagnostics under `out/browser-check/`
-when an assertion fails.
+It treats missing browser infrastructure as a failure. Lantern Leap failures
+retain the exact packed HTML, screenshot, and browser diagnostics under
+`out/browser-check/`. Mirelight always retains an observed-FPS/runtime-memory
+report and final screenshot under `out/mirelight-browser-check/`; those timing
+numbers are evidence, not machine-speed pass thresholds.
 
 ## For AI agents
 

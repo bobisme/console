@@ -123,7 +123,7 @@ Packed pages expose a frozen read-only diagnostic handle immediately, even
 while the engine is still booting:
 
 ```js
-window.__console.status()      // lifecycle, error, frames, input/pause/dead
+window.__console.status()      // lifecycle, frames, input and runtime telemetry
 window.__console.screenState() // dimensions, framebuffer hash/colors, dpal
 window.__console.audioState()  // context, pipeline, frames, nonzero evidence
 ```
@@ -131,6 +131,14 @@ window.__console.audioState()  // context, pipeline, frames, nonzero evidence
 Each call returns a frozen snapshot. The handle deliberately has no reset,
 step, eval, Module, or heap access; browser checks must drive real keyboard,
 pointer, and menu UI paths.
+
+The status snapshot also reports read-only `rafCallbacks`, cumulative
+`stepWallMs`, `maxStepBatchMs`, whole `droppedSimulationFrames`, and current,
+peak, and growth-event counts for committed WASM linear memory. A discarded
+frame is counted only when a complete fixed-timestep step remains beyond the
+loop's four-step catch-up cap. Fractional accumulator time is not a frame. These
+measurements diagnose packed-cart load; they do not grant access to the Module
+or turn host-dependent timing into a pass threshold.
 
 Fault containment has a real-browser regression (not part of the portable
 `just check` gate because Chromium is an explicit prerequisite):
@@ -142,32 +150,54 @@ CONSOLE_BROWSER=/path/to/chromium just browser-diagnostics
 The command packs Lantern Leap, injects a throwing canvas render dependency,
 and requires diagnostics to transition to a latched `failed` state.
 
-The complete packed-page acceptance gate also needs `agent-browser` and an
-explicit Chromium executable. Provision both first (for example,
-`agent-browser install`, or a system Chromium), then run:
+The combined packed-page acceptance gate needs `agent-browser` and an explicit
+Chromium executable. Provision both first (for example, `agent-browser install`
+plus a system Chromium), then run:
 
 ```bash
 CONSOLE_BROWSER=/path/to/chromium just browser-check
 ```
 
-This packs Lantern Leap to a temporary HTML file and opens that exact file over
-`file://`. It requires a healthy boot and advancing 192x320 framebuffer, the
+This first runs the sustained Mirelight Survivors load gate, then packs Lantern
+Leap to a temporary HTML file and opens that exact file over `file://`. Lantern
+Leap requires a healthy boot and advancing 192x320 framebuffer, the
 64-color/display-palette invariants, changing raw framebuffer and rendered
 canvas pixels, trusted held pointer input, exact rising-edge touch haptic
 requests for D-pad/A/B/game-menu/device-menu, a safe unsupported-vibration
 fallback, audio unlock with nonzero samples, pause/resume and RESET through the
 visible controls, and a network log limited to the exact `file://` document plus
 in-memory worklet URLs. It also requires no browser page errors. Missing browser
-infrastructure is an error, never a skipped check. This gate is intentionally
+infrastructure is an error, never a skipped check. These gates are intentionally
 separate from portable `just check`.
 
-On failure it retains the packed page, screenshot, diagnostic snapshots,
-network requests, page errors, and console messages in a timestamped directory
-under `out/browser-check/`. Set `CONSOLE_BROWSER_ARTIFACTS=/other/directory` to
-change the artifact root. Successful runs leave no artifacts. To exercise an
-already-packed compatible cart directly:
+Mirelight's gate uses trusted B then A pointer presses to select and start its
+dense mode, then requires at least 600 successful fixed-timestep frames. It
+samples the framebuffer at the start, midpoint, and end; rejects shell/cart,
+page, console, palette, framebuffer, canvas, and external-network failures; and
+captures effective FPS, step cost, discarded simulation frames, and committed
+WASM memory. The script owns an isolated Chromium profile and connects directly
+through CDP using Node's built-in WebSocket, so this sustained gate does not
+depend on `agent-browser`. The 120-second timeout is only a hang watchdog.
+Observed FPS, batch cost, backlog drops, and memory growth are retained as
+evidence rather than compared with host-speed thresholds. Run it alone with:
+
+```bash
+CONSOLE_BROWSER=/path/to/chromium just browser-load-check
+```
+
+On a Lantern Leap failure the gate retains the packed page, screenshot,
+diagnostic snapshots, network requests, page errors, and console messages in a
+timestamped directory under `out/browser-check/`. Mirelight always retains
+`metrics.json` and `final.png` under `out/mirelight-browser-check/`; failures
+instead retain `diagnostics.json`, the exact `packed.html`, and a failure
+screenshot. Set `CONSOLE_BROWSER_ARTIFACTS=/other/directory` to change either
+artifact root. To exercise already-packed compatible carts directly:
 
 ```bash
 CONSOLE_BROWSER=/path/to/chromium \
   node web/browser-smoke.cjs game.html --artifacts out/browser-check
+
+CONSOLE_BROWSER=/path/to/chromium \
+  node web/mirelight-browser-smoke.cjs mirelight.html \
+    --frames 600 --artifacts out/mirelight-browser-check
 ```

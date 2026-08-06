@@ -258,6 +258,13 @@ var diagnostic = {
   phase: "booting",
   error: null,
   successfulFrames: 0,
+  rafCallbacks: 0,
+  stepWallMs: 0,
+  maxStepBatchMs: 0,
+  droppedSimulationFrames: 0,
+  wasmMemoryBytes: null,
+  peakWasmMemoryBytes: null,
+  wasmMemoryGrowthEvents: 0,
   readStatus: null,
   readScreen: null,
   readAudio: null
@@ -280,6 +287,13 @@ window.__console = Object.freeze({
       phase: diagnostic.phase,
       error: diagnostic.error,
       successfulFrames: diagnostic.successfulFrames,
+      rafCallbacks: diagnostic.rafCallbacks,
+      stepWallMs: diagnostic.stepWallMs,
+      maxStepBatchMs: diagnostic.maxStepBatchMs,
+      droppedSimulationFrames: diagnostic.droppedSimulationFrames,
+      wasmMemoryBytes: diagnostic.wasmMemoryBytes,
+      peakWasmMemoryBytes: diagnostic.peakWasmMemoryBytes,
+      wasmMemoryGrowthEvents: diagnostic.wasmMemoryGrowthEvents,
       inputMask: live.inputMask,
       paused: live.paused,
       dead: live.dead
@@ -569,6 +583,26 @@ window.__console = Object.freeze({
   diagnostic.readStatus = function () {
     return { inputMask: inputMask(), paused: menuOpen, dead: dead };
   };
+  function resetRuntimeTelemetry() {
+    var bytes = Module.HEAPU8.buffer.byteLength;
+    diagnostic.rafCallbacks = 0;
+    diagnostic.stepWallMs = 0;
+    diagnostic.maxStepBatchMs = 0;
+    diagnostic.droppedSimulationFrames = 0;
+    diagnostic.wasmMemoryBytes = bytes;
+    diagnostic.peakWasmMemoryBytes = bytes;
+    diagnostic.wasmMemoryGrowthEvents = 0;
+  }
+  function observeWasmMemory() {
+    var bytes = Module.HEAPU8.buffer.byteLength;
+    if (diagnostic.wasmMemoryBytes !== null && bytes > diagnostic.wasmMemoryBytes) {
+      diagnostic.wasmMemoryGrowthEvents++;
+    }
+    diagnostic.wasmMemoryBytes = bytes;
+    if (diagnostic.peakWasmMemoryBytes === null || bytes > diagnostic.peakWasmMemoryBytes) {
+      diagnostic.peakWasmMemoryBytes = bytes;
+    }
+  }
   function initConsole() {
     var ptr = con_alloc(cartBytes.length); // con_init takes ownership and frees
     Module.HEAPU8.set(cartBytes, ptr);
@@ -581,6 +615,7 @@ window.__console = Object.freeze({
         diagnostic.phase = "ready";
         diagnostic.error = null;
         diagnostic.successfulFrames = 0;
+        resetRuntimeTelemetry();
         errbox.style.display = "none";
         blit();
         if (!rafPending) {
@@ -600,6 +635,7 @@ window.__console = Object.freeze({
   if (!initConsole()) {
     return fatal("Cart failed to load:\n" + (currentError() || "unknown error"));
   }
+  resetRuntimeTelemetry();
 
   var palPtr = con_palette();
   var COLOR_COUNT = con_color_count();
@@ -860,6 +896,7 @@ window.__console = Object.freeze({
 
   function runFrame(now) {
     if (dead) { rafPending = false; return; }
+    diagnostic.rafCallbacks++;
     acc += Math.min(now - last, 100); // clamp huge tab-switch gaps
     last = now;
     if (menuOpen) {
@@ -867,13 +904,25 @@ window.__console = Object.freeze({
     } else {
       var steps = 0;
       var mask = inputMask();
+      var batchStarted = performance.now();
       while (acc >= STEP && steps < 4) {
         con_step(mask);
         pushAudio();
         acc -= STEP;
         steps++;
       }
-      if (steps === 4) acc = 0; // running behind: drop the backlog
+      if (steps > 0) {
+        var batchWallMs = performance.now() - batchStarted;
+        diagnostic.stepWallMs += batchWallMs;
+        diagnostic.maxStepBatchMs = Math.max(diagnostic.maxStepBatchMs, batchWallMs);
+        observeWasmMemory();
+      }
+      if (steps === 4) {
+        // Count only complete simulation steps discarded beyond the four-step
+        // catch-up cap. The fractional remainder is timing drift, not a frame.
+        diagnostic.droppedSimulationFrames += Math.floor(acc / STEP);
+        acc = 0;
+      }
       var err = currentError();
       if (err) {
         dead = true;
