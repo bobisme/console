@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
 use crate::artifact;
+use crate::ecs_watch::{self, WatchDefinition};
 use crate::map;
 use crate::session::{MAX_SCREEN_TEXT_REGION_PIXELS, ScreenTextRegion, Session};
 use crate::value::lua_to_json;
@@ -49,6 +50,8 @@ Scenario format (version 1):
     {\"op\":\"input\",\"frames\":1,\"buttons\":\"A\"},
     {\"op\":\"eval\",\"code\":\"dev_warp(48,449)\"},
     {\"op\":\"assert\",\"code\":\"return dev_status().embers\",\"equals\":1},
+    {\"op\":\"ecs_watch\",\"watch\":\"enemies\",\"define\":{\"world\":\"arena\",\"with\":[\"enemy\"],\"limit\":64}},
+    {\"op\":\"ecs_watch\",\"watch\":\"enemies\"},
     {\"op\":\"sequence\",\"name\":\"hop\",\"frames\":12,\"buttons\":\"R\",\"every\":3,
       \"crop\":{\"x\":16,\"y\":24,\"w\":96,\"h\":80},\"zoom\":2,
       \"gif\":\"hop.gif\",\"strip\":\"hop-strip.png\",\"board\":\"hop-board.png\"},
@@ -140,6 +143,17 @@ pub enum Stage {
         name: Option<String>,
         code: String,
         equals: Json,
+    },
+    /// Define (when `define` is present) and sample one named bounded ECS
+    /// watch. Later stages omit `define` and refer only to `watch`.
+    EcsWatch {
+        #[serde(default)]
+        name: Option<String>,
+        watch: String,
+        #[serde(default)]
+        define: Option<Json>,
+        #[serde(default)]
+        artifact: Option<String>,
     },
     Review {
         #[serde(default)]
@@ -392,6 +406,7 @@ impl Stage {
             Stage::Input { .. } => "input",
             Stage::Sequence { .. } => "sequence",
             Stage::Assert { .. } => "assert",
+            Stage::EcsWatch { .. } => "ecs_watch",
             Stage::Review { .. } => "review",
             Stage::Capture { .. } => "capture",
         }
@@ -403,10 +418,29 @@ impl Stage {
             | Stage::Input { name, .. }
             | Stage::Sequence { name, .. }
             | Stage::Assert { name, .. }
+            | Stage::EcsWatch { name, .. }
             | Stage::Review { name, .. }
             | Stage::Capture { name, .. } => name.as_deref(),
         }
     }
+}
+
+fn playtest_watch_definition(
+    watch: &str,
+    define: &Json,
+    context: &str,
+) -> Result<WatchDefinition, String> {
+    let mut params = define
+        .as_object()
+        .cloned()
+        .ok_or_else(|| format!("{context} define must be an object"))?;
+    if params.contains_key("name") {
+        return Err(format!(
+            "{context} define must not contain \"name\"; use the stage's \"watch\" field"
+        ));
+    }
+    params.insert("name".to_string(), Json::String(watch.to_string()));
+    ecs_watch::parse_definition(&Json::Object(params), "name", context)
 }
 
 #[derive(Debug, Serialize)]
@@ -1378,6 +1412,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
     }
     let mut names = BTreeSet::new();
     let mut paths = BTreeSet::new();
+    let mut ecs_watches = BTreeSet::new();
     let mut stepped_frames = 0u64;
     for (index, stage) in scenario.stages.iter().enumerate() {
         if let Some(name) = stage.name() {
@@ -1389,6 +1424,43 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
             }
         }
         match stage {
+            Stage::EcsWatch {
+                watch,
+                define,
+                artifact,
+                ..
+            } => {
+                ecs_watch::name(watch, &format!("stage {index} ECS watch"))?;
+                if let Some(definition) = define {
+                    playtest_watch_definition(
+                        watch,
+                        definition,
+                        &format!("stage {index} ECS watch"),
+                    )?;
+                    if !ecs_watches.insert(watch.as_str()) {
+                        return Err(format!("stage {index} redefines ECS watch {watch:?}"));
+                    }
+                } else if !ecs_watches.contains(watch.as_str()) {
+                    return Err(format!(
+                        "stage {index} samples undefined ECS watch {watch:?}"
+                    ));
+                }
+                if let Some(output) = artifact {
+                    if artifacts.is_none() {
+                        return Err(format!(
+                            "stage {index} captures a file, so --artifacts <DIR> is required"
+                        ));
+                    }
+                    let normalized = normalize_relative_path(output).map_err(|error| {
+                        format!("stage {index} ECS watch path {output:?}: {error}")
+                    })?;
+                    if !paths.insert(duplicate_path_key(&normalized)) {
+                        return Err(format!(
+                            "stage {index} ECS watch path {output:?} aliases an earlier artifact; every normalized path must be unique"
+                        ));
+                    }
+                }
+            }
             Stage::Input {
                 frames, buttons, ..
             } => {
@@ -2485,6 +2557,35 @@ fn execute_stage(
                 "runtime_panels": runtime_panels,
                 "reference": reference_meta
             }));
+        }
+        Stage::EcsWatch {
+            watch,
+            define,
+            artifact,
+            ..
+        } => {
+            if let Some(definition) = define {
+                let definition =
+                    playtest_watch_definition(watch, definition, "playtest ECS watch")?;
+                session
+                    .define_ecs_watch(definition)
+                    .map_err(|error| error.to_string())?;
+            }
+            let sample = session
+                .sample_ecs_watch(watch)
+                .map_err(|error| error.to_string())?;
+            let actual = serde_json::to_value(&sample)
+                .map_err(|error| format!("serializing ECS watch sample: {error}"))?;
+            if let Some(path) = artifact {
+                let root = artifact_root.expect("ECS watch artifact validation requires a root");
+                let mut bytes = serde_json::to_vec_pretty(&actual)
+                    .map_err(|error| format!("serializing ECS watch artifact: {error}"))?;
+                bytes.push(b'\n');
+                report
+                    .artifacts
+                    .push(write_artifact(root, path, "ecs_watch", &bytes)?);
+            }
+            report.actual = Some(actual);
         }
         Stage::Assert { code, equals, .. } => {
             let value = session.eval(code).map_err(|error| error.to_string())?;

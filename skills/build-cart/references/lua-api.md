@@ -147,6 +147,12 @@ back into gameplay; normal world queries are cheaper and clearer. When paging,
 do not step or structurally mutate the world until all pages are collected if
 they must represent one coherent snapshot.
 
+When observing the same bounded population at several frames, define an
+`ecs_watch` through the host instead of resending this selector. Watches do not
+change the Lua API or deterministic core: they retain one prior bounded host
+sample and report count/component/returned-ID deltas. Read the command
+reference for the lifecycle and truncation contract.
+
 ## Drawing primitives
 
 | Function | Behavior |

@@ -9,6 +9,9 @@ pub const ECS_QUERY_MAX_LIMIT: usize = 128;
 pub const ECS_QUERY_MAX_WITH: usize = 16;
 pub const ECS_QUERY_MAX_SELECT: usize = 8;
 pub const ECS_QUERY_MAX_FIELDS: usize = 16;
+pub const ECS_QUERY_CELL_BUDGET: usize = 2048;
+pub const ECS_QUERY_STRING_BUDGET: usize = 32_768;
+pub const ECS_QUERY_STRING_MAX: usize = 256;
 pub const ECS_MAX_SAFE_ID: u64 = 9_007_199_254_740_991;
 
 pub fn install(lua: &Lua) -> LuaResult<RegistryKey> {

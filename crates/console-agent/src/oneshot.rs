@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::ecs_watch::{self, WatchDefinition};
 use crate::input_spec::{self, Segment};
 use crate::session::{MAX_SCREEN_TEXT_REGION_PIXELS, ScreenTextRegion, Session};
 use crate::value::lua_to_json;
@@ -30,6 +31,7 @@ pub struct RunArgs {
     pub audio_stats: bool,
     pub text_events: bool,
     pub draw_trace: Option<String>,
+    pub ecs_watch: Option<WatchDefinition>,
 }
 
 /// Parse the arguments following `run` (i.e. `args[2..]` of `argv`).
@@ -51,6 +53,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
     let mut audio_stats = false;
     let mut text_events = false;
     let mut draw_trace = None;
+    let mut ecs_watch = None;
 
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -133,6 +136,15 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
                 let v = iter.next().ok_or("--draw-trace requires a value")?;
                 draw_trace = Some(v.clone());
             }
+            "--ecs-watch" => {
+                let raw = iter.next().ok_or("--ecs-watch requires a JSON object")?;
+                if ecs_watch.is_some() {
+                    return Err("--ecs-watch may only be specified once".to_string());
+                }
+                let value: serde_json::Value = serde_json::from_str(raw)
+                    .map_err(|error| format!("invalid --ecs-watch JSON: {error}"))?;
+                ecs_watch = Some(ecs_watch::parse_definition(&value, "name", "--ecs-watch")?);
+            }
             other if other.starts_with("--") => return Err(format!("unknown flag {other:?}")),
             other => {
                 if cart_path.is_some() {
@@ -172,6 +184,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
         audio_stats,
         text_events,
         draw_trace,
+        ecs_watch,
     })
 }
 
@@ -230,6 +243,12 @@ pub fn run(args: &RunArgs) -> i32 {
     if args.draw_trace.is_some() {
         session.set_draw_tracing(true);
     }
+    if let Some(definition) = &args.ecs_watch
+        && let Err(error) = session.define_ecs_watch(definition.clone())
+    {
+        eprintln!("error: defining --ecs-watch: {error}");
+        return 1;
+    }
 
     // `_init` has already run as part of `load_cart`. Setup runs before any
     // input is latched or frame is stepped, irrespective of flag order.
@@ -266,6 +285,20 @@ pub fn run(args: &RunArgs) -> i32 {
             }
         }
     }
+
+    // Capture the stepped state before post-frame eval can mutate it. Output
+    // is delayed until the diagnostics section below so eval-after remains
+    // the final JSON line when both options are present.
+    let watch_result = match &args.ecs_watch {
+        Some(definition) => match session.sample_ecs_watch(&definition.name) {
+            Ok(sample) => Some(sample),
+            Err(error) => {
+                eprintln!("error: sampling --ecs-watch: {error}");
+                return 1;
+            }
+        },
+        None => None,
+    };
 
     // Post-frame eval runs after stepping, regardless of --frames/--input.
     let mut eval_error: Option<String> = None;
@@ -435,6 +468,16 @@ pub fn run(args: &RunArgs) -> i32 {
         }
     }
 
+    if let Some(sample) = watch_result {
+        match serde_json::to_string(&sample) {
+            Ok(json) => println!("{json}"),
+            Err(error) => {
+                eprintln!("error: serializing --ecs-watch: {error}");
+                return 1;
+            }
+        }
+    }
+
     if let Some(v) = eval_result {
         println!("{v}");
     }
@@ -486,6 +529,8 @@ mod tests {
             "--text-events".into(),
             "--draw-trace".into(),
             "trace.json".into(),
+            "--ecs-watch".into(),
+            r#"{"name":"bullets","world":"game","with":["bullet"],"limit":12,"entity_delta_limit":4}"#.into(),
         ])
         .unwrap();
 
@@ -514,6 +559,16 @@ mod tests {
                 audio_stats: true,
                 text_events: true,
                 draw_trace: Some("trace.json".into()),
+                ecs_watch: Some(WatchDefinition {
+                    name: "bullets".into(),
+                    query: ecs_watch::QueryDefinition {
+                        world: "game".into(),
+                        required: vec!["bullet".into()],
+                        select: std::collections::BTreeMap::new(),
+                        limit: 12,
+                    },
+                    entity_delta_limit: 4,
+                }),
             }
         );
     }
@@ -526,6 +581,28 @@ mod tests {
     #[test]
     fn unknown_flag_is_an_error() {
         assert!(parse_run_args(&["cart.cart".into(), "--bogus".into()]).is_err());
+    }
+
+    #[test]
+    fn duplicate_or_unbounded_ecs_watch_is_rejected() {
+        let watch = r#"{"name":"mobs","world":"game"}"#.to_string();
+        let duplicate = parse_run_args(&[
+            "cart.cart".into(),
+            "--ecs-watch".into(),
+            watch.clone(),
+            "--ecs-watch".into(),
+            watch,
+        ])
+        .unwrap_err();
+        assert!(duplicate.contains("only be specified once"), "{duplicate}");
+
+        let unbounded = parse_run_args(&[
+            "cart.cart".into(),
+            "--ecs-watch".into(),
+            r#"{"name":"mobs","world":"game","limit":129}"#.into(),
+        ])
+        .unwrap_err();
+        assert!(unbounded.contains("limit"), "{unbounded}");
     }
 
     #[test]

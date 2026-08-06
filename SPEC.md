@@ -764,16 +764,21 @@ Oneshot: `console run <cart|project> [--frames N] [--input SPEC]
 [--eval-before CODE] [--eval-after CODE] [--screenshot out.png]
 [--screenshot-zoom N] [--screen-text] [--screen-text-region X,Y,WIDTH,HEIGHT]
 [--screen-text-summary] [--text-events] [--draw-trace trace.json]
+[--ecs-watch JSON]
 [--seed N]`
 where SPEC is comma-separated `COUNT:BUTTONS`, e.g. `30:,10:R,5:RA,60:` (empty
 buttons = no input).
 
 The run lifecycle is fixed independently of flag order: parse/compile the cart;
 execute its Lua top level and `_init`; run `--eval-before` once; apply the input
-mask and step every requested frame; run `--eval-after` once; then collect the
+mask and step every requested frame; sample the optional bounded ECS watch;
+run `--eval-after` once; then collect the
 final screenshot, framebuffer text, audio, events, and draw trace. The setup
 eval's return value is discarded. The post-frame value is JSON-serialized last
-on stdout, after any requested diagnostic output. `--eval CODE` remains an
+on stdout, after the watch report and any other requested diagnostic output.
+`--ecs-watch` accepts one JSON definition with `name`, `world`, optional
+`with`, `select`, `limit`, and `entity_delta_limit`; duplicate flags are
+rejected. `--eval CODE` remains an
 alias for `--eval-after CODE`, and the two spellings cannot both be supplied.
 A failing pre-frame eval exits before any frame or artifact; a failing
 post-frame eval still permits final artifacts from the completed run.
@@ -783,7 +788,8 @@ one response per line on stdout. Methods:
 
 - `load_cart {path}` or `{text}` — load + `_init`
 - `reset {seed?}` — reload cart state, reseed, and clear input/audio/text logs
-- `step {frames=1, input=""}` — advance; input as letter string or int mask
+- `step {frames=1, input="", watches?=[]}` — advance; input as letter string
+  or int mask, then sample each already-defined watch at the terminal frame
 - `screenshot {path, zoom=1}` — write PNG (RGBA), nearest-neighbor
   integer-upscaled by `zoom`
 - `screen_text {region?,summary?=false}` — strict raw-framebuffer diagnostic;
@@ -797,6 +803,13 @@ one response per line on stdout. Methods:
 - `ecs_query {world,with?=[],select?={},limit?=64,after?=0}` — bounded,
   read-only inspection of one named ECS world in stable entity order; the host
   adds `frame_count` to the `ecs.inspect` result
+- `ecs_watch_define {name,world,with?=[],select?={},limit?=64,
+  entity_delta_limit?=64}` — retain one named first-page query; at most 32
+  definitions, 128 returned entities, and 128 changed IDs per side
+- `ecs_watch_sample {name}` — sample the current frame and return the bounded
+  projection plus numeric, component-count, and returned-ID deltas
+- `ecs_watch_list {}` / `ecs_watch_remove {name}` — inspect bounded watch
+  metadata or remove one definition
 - `logs {}` — drain `printh` output
 - `text_events {from_frame?}` — every `print` call with frame, text, alignment,
   world/screen anchor, screen-space logical bounds, color, visibility, and
@@ -869,6 +882,9 @@ are:
   and/or labeled review board;
 - `{"op":"assert","code":"return ...","equals":<json>}` — exact JSON
   comparison of the evaluated value;
+- `{"op":"ecs_watch","watch":"bullets","define":{"world":"arena",
+  "with":["hostile"]}}` — define and sample a bounded named query; later
+  stages omit `define` and send only `watch`, with optional `artifact` JSON;
 - `{"op":"review","board":"...","stages":[...],...}` — as the final
   stage, consolidate prior named still/motion evidence and optional semantic
   layers, map context, and reference art into a diagnostic board/report;
@@ -881,6 +897,18 @@ Every stage may have a unique `name`. A scenario declares `version: 1` and an
 optional seed; `--seed` overrides it. Captures require `--artifacts`, use
 relative unique paths beneath that root, and reject absolute paths, `.`/`..`
 components, symlink traversal, and paths that alias after normalization.
+
+ECS watches are host-side diagnostics, not cart state. Each definition retains
+only its previous bounded sample. A sample reports its stable definition and
+budgets, `sample_index`, `frame_count`, current inspector counts/projection,
+and `delta`. Exact numeric changes cover `alive`, `matched`, `returned`, and
+per-component counts. `spawned`/`despawned` compare only returned IDs and are
+capped by `entity_delta_limit`; `entity_membership_complete` is false when
+either first page was truncated, and independent changed-ID truncation flags
+explain cap loss. `budget_exhausted` and inspector `truncated` remain visible.
+Loading another cart clears definitions. `reset` and `load_state` preserve
+definitions but clear baselines and sample counts, so the next sample is
+explicitly non-comparable; save states never serialize watch history.
 
 A `sequence` requires `frames >= 1`, `every >= 1` (default 1), and exact
 divisibility of `frames` by `every`; at most 240 frames may be sampled. Its

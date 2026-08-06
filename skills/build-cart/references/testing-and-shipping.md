@@ -132,6 +132,22 @@ bullets are live. Do not step between pages when they must describe the same
 world snapshot. Pair it with a small `dev_status()` for semantic game state
 such as phase, score, peak entity count, and dropped-spawn count.
 
+When the question is about change over time, define the projection once and
+sample it only at meaningful boundaries:
+
+```json
+{"jsonrpc":"2.0","id":11,"method":"ecs_watch_define","params":{"name":"enemies","world":"arena","with":["enemy"],"select":{"enemy":["kind","hp"]},"limit":64}}
+{"jsonrpc":"2.0","id":12,"method":"ecs_watch_sample","params":{"name":"enemies"}}
+{"jsonrpc":"2.0","id":13,"method":"step","params":{"frames":90,"input":"A","watches":["enemies"]}}
+```
+
+Assert exact numeric `matched`/`alive` deltas first. Treat changed entity IDs as
+exhaustive only when `delta.entity_membership_complete` is true and none of the
+delta truncation flags are set. Reset/load-state intentionally clears the
+baseline; take a new baseline after branching. In playtests, use an
+`ecs_watch` stage with `define` once, then sample by `watch` name at wave,
+attack, clear, and cleanup boundaries.
+
 ## Developer hooks
 
 Expose small Lua globals that report or arrange state through the real game

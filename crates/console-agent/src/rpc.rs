@@ -6,13 +6,13 @@
 //! [`run_rpc`] are thin wrappers for the `rpc` subcommand's stdin/stdout
 //! line protocol.
 
-use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
 
 use console_core::input;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::ecs_watch;
 use crate::map;
 use crate::music;
 use crate::session::{MAX_SESSION_DRAW_EVENTS, ScreenTextRegion, Session, SessionError};
@@ -154,6 +154,10 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "eval" => m_eval(session, params),
         "get_global" => m_get_global(session, params),
         "ecs_query" => m_ecs_query(session, params),
+        "ecs_watch_define" => m_ecs_watch_define(session, params),
+        "ecs_watch_sample" => m_ecs_watch_sample(session, params),
+        "ecs_watch_list" => m_ecs_watch_list(session),
+        "ecs_watch_remove" => m_ecs_watch_remove(session, params),
         "logs" => m_logs(session),
         "save_state" => m_save_state(session, params),
         "load_state" => m_load_state(session, params),
@@ -233,12 +237,31 @@ fn parse_input_param(value: Option<&Value>) -> Result<u8, RpcErr> {
 fn m_step(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
     let frames = params.get("frames").and_then(Value::as_u64).unwrap_or(1);
     let mask = parse_input_param(params.get("input"))?;
+    let watches = watch_names(params, "watches")?;
+    for name in &watches {
+        if !session.has_ecs_watch(name) {
+            return Err(RpcErr::bad_params(format!("no ECS watch named {name:?}")));
+        }
+    }
     let outcome = session.step(frames, mask)?;
-    Ok(json!({
+    let samples = watches
+        .iter()
+        .map(|name| session.sample_ecs_watch(name))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut result = json!({
         "frame_count": outcome.frame_count,
         "halted": outcome.halted,
         "message": outcome.message,
-    }))
+    });
+    if params.get("watches").is_some() {
+        result["watches"] = serde_json::to_value(samples).map_err(|error| {
+            RpcErr::new(
+                -32000,
+                format!("failed to serialize ECS watch samples: {error}"),
+            )
+        })?;
+    }
+    Ok(result)
 }
 
 fn m_screenshot(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
@@ -316,145 +339,93 @@ fn m_get_global(session: &mut Session, params: &Value) -> Result<Value, RpcErr> 
     Ok(json!({ "result": lua_to_json(&value) }))
 }
 
-fn component_name(value: &Value, context: &str) -> Result<String, RpcErr> {
-    let name = value
-        .as_str()
-        .ok_or_else(|| RpcErr::bad_params(format!("{context} must contain only strings")))?;
-    ecs_name(name, context)
-}
-
-fn ecs_name(name: &str, context: &str) -> Result<String, RpcErr> {
-    if name.is_empty() || name.len() > 64 {
-        return Err(RpcErr::bad_params(format!(
-            "{context} names must be 1-64 bytes"
-        )));
-    }
-    let mut bytes = name.bytes();
-    let starts_valid = bytes
-        .next()
-        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_');
-    let rest_valid =
-        bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'));
-    if !starts_valid || !rest_valid {
-        return Err(RpcErr::bad_params(format!(
-            "{context} names must begin with a letter/_ and contain only letters, digits, _, ., or -"
-        )));
-    }
-    Ok(name.to_string())
-}
-
-fn component_array(params: &Value, name: &str, maximum: usize) -> Result<Vec<String>, RpcErr> {
-    let Some(value) = params.get(name) else {
-        return Ok(Vec::new());
-    };
-    if value.is_null() {
-        return Ok(Vec::new());
-    }
-    let items = value
-        .as_array()
-        .ok_or_else(|| RpcErr::bad_params(format!("ecs_query {name:?} must be an array")))?;
-    if items.len() > maximum {
-        return Err(RpcErr::bad_params(format!(
-            "ecs_query {name:?} accepts at most {maximum} names"
-        )));
-    }
-    let mut result = Vec::with_capacity(items.len());
-    for item in items {
-        let component = component_name(item, &format!("ecs_query {name:?}"))?;
-        if result.contains(&component) {
-            return Err(RpcErr::bad_params(format!(
-                "ecs_query {name:?} contains duplicate component {component:?}"
-            )));
-        }
-        result.push(component);
-    }
-    Ok(result)
-}
-
-fn component_selection(params: &Value) -> Result<BTreeMap<String, Vec<String>>, RpcErr> {
-    let Some(value) = params.get("select") else {
-        return Ok(BTreeMap::new());
-    };
-    if value.is_null() {
-        return Ok(BTreeMap::new());
-    }
-    let object = value
-        .as_object()
-        .ok_or_else(|| RpcErr::bad_params("ecs_query \"select\" must be an object"))?;
-    if object.len() > console_core::ECS_QUERY_MAX_SELECT {
-        return Err(RpcErr::bad_params(format!(
-            "ecs_query \"select\" accepts at most {} components",
-            console_core::ECS_QUERY_MAX_SELECT
-        )));
-    }
-    let mut result = BTreeMap::new();
-    for (component, value) in object {
-        let component = component_name(&Value::String(component.clone()), "ecs_query select")?;
-        let fields = value.as_array().ok_or_else(|| {
-            RpcErr::bad_params(format!(
-                "ecs_query select component {component:?} must be an array of field names"
-            ))
-        })?;
-        if fields.len() > console_core::ECS_QUERY_MAX_FIELDS {
-            return Err(RpcErr::bad_params(format!(
-                "ecs_query select component {component:?} accepts at most {} fields",
-                console_core::ECS_QUERY_MAX_FIELDS
-            )));
-        }
-        let mut selected = Vec::with_capacity(fields.len());
-        for field in fields {
-            let field = component_name(field, &format!("ecs_query select {component:?}"))?;
-            if selected.contains(&field) {
-                return Err(RpcErr::bad_params(format!(
-                    "ecs_query select {component:?} contains duplicate field {field:?}"
-                )));
-            }
-            selected.push(field);
-        }
-        result.insert(component, selected);
-    }
-    Ok(result)
-}
-
 fn m_ecs_query(session: &Session, params: &Value) -> Result<Value, RpcErr> {
-    let world = string_param(params, "world")
-        .ok_or_else(|| RpcErr::bad_params("ecs_query requires a \"world\" string param"))?;
-    let world = ecs_name(world, "ecs_query world")?;
-    let required = component_array(params, "with", console_core::ECS_QUERY_MAX_WITH)?;
-    let select = component_selection(params)?;
-    let limit = match params.get("limit") {
-        None | Some(Value::Null) => console_core::ECS_QUERY_DEFAULT_LIMIT,
-        Some(value) => value
-            .as_u64()
-            .and_then(|value| usize::try_from(value).ok())
-            .filter(|value| (1..=console_core::ECS_QUERY_MAX_LIMIT).contains(value))
-            .ok_or_else(|| {
-                RpcErr::bad_params(format!(
-                    "ecs_query \"limit\" must be an integer in 1..={}",
-                    console_core::ECS_QUERY_MAX_LIMIT
-                ))
-            })?,
-    };
-    let after = match params.get("after") {
-        None | Some(Value::Null) => 0,
-        Some(value) => value
-            .as_u64()
-            .filter(|value| *value <= console_core::ECS_MAX_SAFE_ID)
-            .ok_or_else(|| {
-                RpcErr::bad_params(format!(
-                    "ecs_query \"after\" must be an integer in 0..={}",
-                    console_core::ECS_MAX_SAFE_ID
-                ))
-            })?,
-    };
+    let query = ecs_watch::parse_query(params, "ecs_query").map_err(RpcErr::bad_params)?;
+    let after = ecs_watch::parse_after(params, "ecs_query").map_err(RpcErr::bad_params)?;
     let frame_count = session.console()?.frame_count();
-    let snapshot = session.ecs_query(&world, &required, &select, limit, after)?;
+    let snapshot = session.ecs_query(
+        &query.world,
+        &query.required,
+        &query.select,
+        query.limit,
+        after,
+    )?;
     let mut result = lua_to_json(&snapshot);
     let object = result
         .as_object_mut()
         .ok_or_else(|| RpcErr::new(-32000, "ecs inspector returned a non-object"))?;
     object.insert("frame_count".to_string(), json!(frame_count));
     Ok(result)
+}
+
+fn watch_name(params: &Value, method: &str) -> Result<String, RpcErr> {
+    let raw = string_param(params, "name")
+        .ok_or_else(|| RpcErr::bad_params(format!("{method} requires a \"name\" string param")))?;
+    ecs_watch::name(raw, &format!("{method} watch")).map_err(RpcErr::bad_params)
+}
+
+fn watch_names(params: &Value, field: &str) -> Result<Vec<String>, RpcErr> {
+    let Some(value) = params.get(field) else {
+        return Ok(Vec::new());
+    };
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let values = value.as_array().ok_or_else(|| {
+        RpcErr::bad_params(format!("step {field:?} must be an array of watch names"))
+    })?;
+    if values.len() > ecs_watch::MAX_WATCHES {
+        return Err(RpcErr::bad_params(format!(
+            "step {field:?} accepts at most {} names",
+            ecs_watch::MAX_WATCHES
+        )));
+    }
+    let mut names = Vec::with_capacity(values.len());
+    for value in values {
+        let raw = value.as_str().ok_or_else(|| {
+            RpcErr::bad_params(format!("step {field:?} must contain only strings"))
+        })?;
+        let name = ecs_watch::name(raw, &format!("step {field:?}")).map_err(RpcErr::bad_params)?;
+        if names.contains(&name) {
+            return Err(RpcErr::bad_params(format!(
+                "step {field:?} contains duplicate watch {name:?}"
+            )));
+        }
+        names.push(name);
+    }
+    Ok(names)
+}
+
+fn m_ecs_watch_define(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
+    let requested = ecs_watch::parse_definition(params, "name", "ecs_watch_define")
+        .map_err(RpcErr::bad_params)?;
+    let definition = session.define_ecs_watch(requested)?;
+    Ok(json!({
+        "definition": definition,
+        "budgets": ecs_watch::budgets(),
+    }))
+}
+
+fn m_ecs_watch_sample(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
+    let name = watch_name(params, "ecs_watch_sample")?;
+    serde_json::to_value(session.sample_ecs_watch(&name)?).map_err(|error| {
+        RpcErr::new(
+            -32000,
+            format!("failed to serialize ECS watch sample: {error}"),
+        )
+    })
+}
+
+fn m_ecs_watch_list(session: &Session) -> Result<Value, RpcErr> {
+    Ok(json!({
+        "watches": session.ecs_watch_list(),
+        "budgets": ecs_watch::budgets(),
+    }))
+}
+
+fn m_ecs_watch_remove(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
+    let name = watch_name(params, "ecs_watch_remove")?;
+    Ok(json!({"name": name, "removed": session.remove_ecs_watch(&name)}))
 }
 
 fn m_logs(session: &mut Session) -> Result<Value, RpcErr> {

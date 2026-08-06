@@ -62,6 +62,8 @@ components without exposing Bevy or host internals. Queries are deterministic,
 structural edits are deferred until iteration ends, and agents can inspect a
 bounded field projection through the read-only `ecs_query` RPC. The
 multi-file `examples/radiant-swarm` bullet hell is the reference vertical slice.
+Named ECS watches reuse a bounded projection across selected frames and report
+population/component/returned-ID deltas without retaining an unbounded log.
 
 ## Repo layout
 
@@ -227,7 +229,8 @@ and inspect audio without ears (`audio_state`, `audio_events`,
 explain which tagged primitive, sprite, animation, map, or text call produced a
 region without changing the rendered frame. `ecs_query` pages through selected
 scalar fields from a named ECS world without requiring cart-authored debug
-tables. Screen-text requests can select a strict native-pixel region or return a
+tables; `ecs_watch_*` saves those selectors and compares explicit samples.
+Screen-text requests can select a strict native-pixel region or return a
 compact count/bounds summary, avoiding a 192×320 glyph dump when an agent only
 needs a HUD, dialog, or collision area. Full method list in SPEC.md.
 

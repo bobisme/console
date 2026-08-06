@@ -21,6 +21,7 @@
 
 pub mod artifact;
 pub mod audio;
+pub mod ecs_watch;
 pub mod input_spec;
 pub mod map;
 pub mod music;
@@ -43,12 +44,15 @@ usage:
                     [--screenshot out.png] [--screen-text] [--screen-text-region X,Y,WIDTH,HEIGHT]
                     [--screen-text-summary] [--seed N]
                     [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats] [--text-events]
-                    [--draw-trace trace.json]
+                    [--draw-trace trace.json] [--ecs-watch JSON]
 
 phases:
   --eval-before CODE  after cart top-level + _init, before input/frame 1; result discarded
   --eval-after CODE   after all frames, before captures; result printed as JSON last
   --eval CODE         compatibility alias for --eval-after
+
+ECS diagnostics:
+  --ecs-watch JSON    define one bounded named query after load; sample after stepping
 
 screen text:
   --screen-text                         exact full 192x320 raw palette-glyph dump

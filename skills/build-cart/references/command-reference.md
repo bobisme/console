@@ -132,6 +132,7 @@ console run <cart|project>
   [--audio-stats]
   [--text-events]
   [--draw-trace trace.json]
+  [--ecs-watch JSON]
 ```
 
 `SPEC` is comma-separated `COUNT:BUTTONS`, for example
@@ -159,10 +160,13 @@ are idle. An empty spec plus `--frames N` is an idle run.
 | `--audio-stats` | Print JSON mix windows using 6 frames/window. |
 | `--text-events` | Print one JSON text-draw event per line, including resolved bounds. |
 | `--draw-trace FILE` | Write a bounded JSON draw-call trace for setup, stepped frames, and post-frame eval (not `_init`). |
+| `--ecs-watch JSON` | Define one named bounded ECS query after load and emit its sample after stepping. JSON requires `name` and `world`; accepts `with`, `select`, `limit`, and `entity_delta_limit`. |
 
-Lifecycle order is fixed independently of flag order: load and `_init`,
-pre-frame eval, input/frame stepping, post-frame eval, then all requested
-captures. A failing pre-frame eval exits before frames and artifacts. A failing
+Lifecycle order is fixed independently of flag order: load and `_init`, define
+the optional ECS watch, pre-frame eval, input/frame stepping, sample the watch,
+post-frame eval, then all requested captures. The watch JSON line is emitted
+with other diagnostics before the post-frame eval result, which remains last.
+A failing pre-frame eval exits before frames and artifacts. A failing
 post-frame eval is reported after captures from the completed run. `printh`
 lines go to stderr as `[log] ...`. A readable cart that fails to load, a
 project that fails to compile, a halted runtime, or a failed eval exits 1.
@@ -222,6 +226,13 @@ Version 1 schema:
     {"op":"input", "name":"jump", "frames":12, "buttons":"RA"},
     {"op":"assert", "code":"return dev_status().grounded", "equals":false},
     {
+      "op":"ecs_watch",
+      "name":"enemy baseline",
+      "watch":"enemies",
+      "define":{"world":"arena","with":["enemy"],"select":{"enemy":["kind","hp"]},"limit":64}
+    },
+    {"op":"ecs_watch", "name":"enemy delta", "watch":"enemies", "artifact":"enemy-delta.json"},
+    {
       "op":"sequence",
       "name":"jump arc",
       "frames":12,
@@ -277,6 +288,13 @@ range at most 3,600 frames. Audio-stat windows are 1–36,000 frames.
 without either output. The same 16,384-glyph crop budget and report contract as
 `run`/RPC apply. Omit the region only when a full raw golden or full-screen
 summary is intentional.
+
+An `ecs_watch` stage always samples `watch`. On its first use, include a
+`define` object with the normal bounded query fields (`world`, optional `with`,
+`select`, `limit`, and `entity_delta_limit`); later stages omit `define` and
+reuse the name. Optional `artifact` writes the same JSON sample beneath
+`--artifacts`. Scenario preflight rejects undefined/redefined watches and
+unbounded query fields before loading the cart.
 Nested map captures accept `source: "authored"` (default) or `"live"` and one
 or more output paths: `png`, `dump`, `lint`. Optional `region` uses
 `cx,cy,cw,ch`; omitted regions use that snapshot's nonzero extent. Map zoom is
@@ -631,13 +649,17 @@ One line is one request. Important error codes: `-32700` parse error,
 | Method | Params | Result / behavior |
 |---|---|---|
 | `load_cart` | `{path, seed?}` or `{text, seed?}` | Load and run `_init`; `{ok,title,seed}`. `text` wins if both are supplied. |
-| `reset` | `{seed?}` | Reload current cart, optionally replacing seed; clear input/audio/event logs while named save states survive. |
-| `step` | `{frames?=1,input?=""}` | Input string or integer mask; return `{frame_count,halted,message}`. |
+| `reset` | `{seed?}` | Reload current cart, optionally replacing seed; clear input/audio/event logs and ECS watch baselines while watch definitions and named save states survive. |
+| `step` | `{frames?=1,input?="",watches?=[]}` | Input string or integer mask; sample named watches after the terminal frame and include them in `watches`. |
 | `screenshot` | `{path,zoom?=1}` | Write PNG; zoom integer ≥1; return path/dimensions. |
 | `screen_text` | `{region?:{x,y,width,height},summary?:false}` | Dimensions, optional raw lines, palette/glyph counts, absolute non-background bounds, and explicit crop/line-omission metadata. Empty params retain the exact 320×192 lines. |
 | `eval` | `{code}` | Execute chunk; `{result}` JSON conversion. |
 | `get_global` | `{name}` | Return one global as `{result}`. |
 | `ecs_query` | `{world,with?=[],select?={},limit?=64,after?=0}` | Read a bounded field projection from one named ECS world in stable creation order. |
+| `ecs_watch_define` | `{name,world,with?=[],select?={},limit?=64,entity_delta_limit?=64}` | Save one bounded first-page definition; return stable metadata and budgets. |
+| `ecs_watch_sample` | `{name}` | Return the current projection and its delta from this watch's prior explicit sample. |
+| `ecs_watch_list` | `{}` | Return definitions, sample counts, last frames, and global budgets. |
+| `ecs_watch_remove` | `{name}` | Remove one definition; return whether it existed. |
 | `logs` | `{}` | Drain `printh` lines as `{logs}`. |
 | `save_state` | `{name}` | Save a replay checkpoint by name. |
 | `load_state` | `{name}` | Reset/replay it; return frame/halt state. |
@@ -673,6 +695,29 @@ at 2048 scalar cells and 32768 string bytes (256 bytes per string); unsupported
 Lua types become placeholders. This method uses a protected read-only
 inspector retained by the host, so replacing the cart's public `ecs` table does
 not disable it.
+
+Use a named watch when the same hypothesis spans several selected frames:
+
+```json
+{"jsonrpc":"2.0","id":8,"method":"ecs_watch_define","params":{"name":"bullets","world":"arena","with":["hostile"],"select":{"hostile":["kind"],"pos":["x","y"]},"limit":128,"entity_delta_limit":64}}
+{"jsonrpc":"2.0","id":9,"method":"ecs_watch_sample","params":{"name":"bullets"}}
+{"jsonrpc":"2.0","id":10,"method":"step","params":{"frames":60,"input":"A","watches":["bullets"]}}
+```
+
+Samples echo the definition, explicit limits, `sample_index`, `frame_count`,
+the current bounded projection, and `delta`. Numeric `alive`, `matched`, and
+`returned` changes and changed `component_counts` are exact. Sorted `spawned`
+and `despawned` IDs describe only the returned first page and are independently
+capped; check `entity_membership_complete`, `spawned_truncated`,
+`despawned_truncated`, and `delta.truncated` before treating them as exhaustive.
+At most 32 definitions exist per session. Query output retains the inspector's
+128-entity, 2048-cell, 32768-string-byte, and 256-byte-per-string caps.
+
+`load_cart` clears definitions. `reset` and replay-based `load_state` preserve
+definitions but clear baselines/sample counts; the next sample has
+`delta.comparable:false`. Save states contain only seed/input replay state and
+never watch history. This prevents a rewind from masquerading as mass entity
+spawns/despawns.
 
 Draw traces distinguish primitives from `spr`/`sspr`/`aspr`/`map`, snapshot
 camera, clip, non-identity palette remaps, transparency, and fill state, and

@@ -87,6 +87,9 @@ Use `console rpc` when repeated reloads would dominate iteration:
 
 Use the CLI write commands between sessions, then call `load_cart` again. RPC
 inspection methods never rewrite the cart file.
+For entity-population changes across selected frames, define a bounded ECS
+watch once and sample it through RPC or `playtest`; load the command reference
+for delta completeness and rewind semantics.
 
 ## Prefer semantic declarations
 

@@ -16,6 +16,8 @@ use console_core::{
 use serde::Serialize;
 
 use crate::audio::{self, AudioEvent, AudioState, Spectrogram, StatsWindow};
+use crate::ecs_watch::{QueryDefinition, WatchDefinition, WatchMetadata, WatchSample, WatchStore};
+use crate::value::lua_to_json;
 
 /// A named save state: enough to recreate the exact console state via
 /// replay (`Console::new(cart_text, seed)` + step every mask in order).
@@ -305,6 +307,9 @@ pub struct Session {
     /// Host-side opt-in that survives load/reset/load_state just like draw
     /// tracing. Layer buffers themselves remain current-frame core state.
     layer_capture: bool,
+    /// Named, bounded ECS diagnostics. Definitions survive a rewind, while
+    /// their baselines are cleared so deltas never cross reset boundaries.
+    ecs_watches: WatchStore,
 }
 
 impl Default for Session {
@@ -326,6 +331,7 @@ impl Default for Session {
             draw_event_index_frame: None,
             draw_event_next_index: 0,
             layer_capture: false,
+            ecs_watches: WatchStore::default(),
         }
     }
 }
@@ -366,6 +372,7 @@ impl Session {
         self.clear_audio_log();
         self.text_events.clear();
         self.clear_draw_log();
+        self.ecs_watches.clear();
         record_text_draws(&mut self.text_events, 0, init_draws);
         Ok(())
     }
@@ -387,6 +394,7 @@ impl Session {
         self.clear_audio_log();
         self.text_events.clear();
         self.clear_draw_log();
+        self.ecs_watches.reset_baselines();
         record_text_draws(&mut self.text_events, 0, init_draws);
         Ok(())
     }
@@ -632,6 +640,50 @@ impl Session {
             .ecs_query(world, required, select, limit, after)?)
     }
 
+    /// Save a bounded ECS query under a host-side name. Querying once here
+    /// validates that the world exists, but does not establish a baseline;
+    /// only explicit samples participate in deltas.
+    pub fn define_ecs_watch(
+        &mut self,
+        definition: WatchDefinition,
+    ) -> Result<WatchMetadata, SessionError> {
+        let query = &definition.query;
+        self.ecs_query(&query.world, &query.required, &query.select, query.limit, 0)?;
+        self.ecs_watches
+            .define(definition)
+            .map_err(SessionError::BadParams)
+    }
+
+    pub fn sample_ecs_watch(&mut self, name: &str) -> Result<WatchSample, SessionError> {
+        let definition = self
+            .ecs_watches
+            .definition(name)
+            .map_err(SessionError::BadParams)?;
+        let QueryDefinition {
+            world,
+            required,
+            select,
+            limit,
+        } = definition.query;
+        let frame_count = self.console()?.frame_count();
+        let snapshot = self.ecs_query(&world, &required, &select, limit, 0)?;
+        self.ecs_watches
+            .record(name, frame_count, lua_to_json(&snapshot))
+            .map_err(SessionError::BadParams)
+    }
+
+    pub fn ecs_watch_list(&self) -> Vec<WatchMetadata> {
+        self.ecs_watches.list()
+    }
+
+    pub fn has_ecs_watch(&self, name: &str) -> bool {
+        self.ecs_watches.definition(name).is_ok()
+    }
+
+    pub fn remove_ecs_watch(&mut self, name: &str) -> bool {
+        self.ecs_watches.remove(name)
+    }
+
     pub fn logs(&mut self) -> Result<Vec<String>, SessionError> {
         let console = self.console_mut()?;
         Ok(console.take_logs())
@@ -733,6 +785,7 @@ impl Session {
         self.draw_events_dropped = draw_events_dropped;
         self.draw_event_index_frame = draw_event_index_frame;
         self.draw_event_next_index = draw_event_next_index;
+        self.ecs_watches.reset_baselines();
 
         Ok(StepOutcome {
             frame_count: replayed,

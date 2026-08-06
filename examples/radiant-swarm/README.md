@@ -38,6 +38,17 @@ Inspect live ECS state through JSON-RPC without relying on cart globals:
 {"jsonrpc":"2.0","id":3,"method":"ecs_query","params":{"world":"arena","with":["hostile"],"select":{"pos":["x","y"],"hostile":["kind","radius","grazed"]},"limit":32}}
 ```
 
+For population changes, define the projection once and sample selected frames:
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"ecs_watch_define","params":{"name":"bullets","world":"arena","with":["hostile"],"select":{"hostile":["kind"],"pos":["x","y"]},"limit":128}}
+{"jsonrpc":"2.0","id":5,"method":"step","params":{"frames":180,"input":"A","watches":["bullets"]}}
+{"jsonrpc":"2.0","id":6,"method":"step","params":{"frames":1,"input":"B","watches":["bullets"]}}
+```
+
+`watch-playtest.json` is the compact regression for enemy-wave arrival, bullet
+growth, and nova despawns.
+
 The `dev_stress()` hook starts an invulnerable deterministic stress pattern;
 `playtest.json` uses it for repeatable entity-count, capacity, motion, visual,
 and audio evidence. `dev_status()` also exposes the active formation, boss
