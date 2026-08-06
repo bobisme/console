@@ -311,6 +311,20 @@ window.__console = Object.freeze({
 (async function () {
   var W = 192, H = 320, FPS = 60;
   var BTN = { L: 1, R: 2, U: 4, D: 8, A: 16, B: 32, M: 64 };
+  var HAPTIC_NAV_MS = 8, HAPTIC_ACTION_MS = 12;
+
+  // Best-effort shell feedback for physical touch controls. The Vibration API
+  // has no portable intensity control, so action buttons get a slightly
+  // longer tap than navigation. Unsupported/disabled implementations are a
+  // strict no-op, and a browser quirk must never break game input.
+  function hapticTap(bits) {
+    var duration = (bits & (BTN.A | BTN.B)) ? HAPTIC_ACTION_MS : HAPTIC_NAV_MS;
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        navigator.vibrate(duration);
+      }
+    } catch (e) { /* haptics are optional */ }
+  }
 
   var canvas = document.getElementById("screen");
   var ctx = canvas.getContext("2d");
@@ -419,29 +433,32 @@ window.__console = Object.freeze({
     return m;
   }
 
-  function refreshInput() {
-    touchBits = touchMask();
+  function refreshInput(allowHaptic) {
+    var nextBits = touchMask();
+    var pressedBits = nextBits & ~touchBits;
+    touchBits = nextBits;
     dpad.classList.toggle("held", (touchBits & 15) !== 0);
     btnA.classList.toggle("held", (touchBits & BTN.A) !== 0);
     btnB.classList.toggle("held", (touchBits & BTN.B) !== 0);
     gmenu.classList.toggle("held", (touchBits & BTN.M) !== 0);
+    if (allowHaptic && pressedBits) hapticTap(pressedBits);
   }
   window.addEventListener("pointerdown", function (e) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     if (menuOpen) return; // menu items handle their own clicks
     pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
-    refreshInput();
+    refreshInput(e.pointerType === "touch");
     e.preventDefault();
   }, { passive: false });
   window.addEventListener("pointermove", function (e) {
     if (pointers[e.pointerId]) {
       pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
-      refreshInput();
+      refreshInput(e.pointerType === "touch");
     }
   });
   function pointerUp(e) {
     delete pointers[e.pointerId];
-    refreshInput();
+    refreshInput(false);
   }
   window.addEventListener("pointerup", pointerUp);
   window.addEventListener("pointercancel", pointerUp);
@@ -455,6 +472,7 @@ window.__console = Object.freeze({
     if (audioCtx) { if (menuOpen) { audioCtx.suspend(); } else { audioCtx.resume(); } }
   }
   document.getElementById("devmenu").addEventListener("pointerdown", function (e) {
+    if (e.pointerType === "touch") hapticTap(BTN.M);
     toggleMenu();
     e.stopPropagation();
     e.preventDefault();

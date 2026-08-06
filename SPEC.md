@@ -911,7 +911,11 @@ changed or the console is reset.
   toggle for integer-scaled crispness (localStorage `con-pp`). The deck
   keeps a finger-friendly height (~19% of viewport, clamped 108–150px); the
   device centers in larger windows. Multi-touch with 8-way d-pad angle
-  detection; keyboard input; Escape or MENU opens the pause menu
+  detection; newly engaged touch directions/game-menu/device-MENU request an
+  8ms Vibration API tap, while A/B request 12ms. Holds, releases, mouse, and
+  keyboard input do not vibrate; absent, disabled, false-returning, or throwing
+  vibration implementations are best-effort no-ops that never affect input.
+  Escape or MENU opens the pause menu
   (RESUME / RESET / PIXELS / a **VOL slider** — perceptual `vol²` curve into
   a master GainNode, persisted as localStorage `con-vol`, default 60%)
   confined to the screen area — game logic does not step while paused, no
@@ -935,7 +939,8 @@ changed or the console is reset.
   clear its loop-active flag instead of leaving a false `ready` snapshot.
 - Repository acceptance uses `CONSOLE_BROWSER=/path/to/chromium just
   browser-check`. The opt-in gate packs Lantern Leap, opens the exact output
-  from `file://`, drives trusted pointer/menu input, and checks boot/framebuffer,
+  from `file://`, drives trusted pointer/menu input, spies on touch vibration
+  edge requests (including unsupported fallback), and checks boot/framebuffer,
   palette, audio, pause/resume/reset, network isolation, and browser errors.
   Missing browser prerequisites fail rather than skip. Failures retain the
   packed HTML, screenshot, diagnostic snapshots, and browser logs under

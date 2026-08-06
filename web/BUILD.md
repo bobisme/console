@@ -153,11 +153,13 @@ CONSOLE_BROWSER=/path/to/chromium just browser-check
 This packs Lantern Leap to a temporary HTML file and opens that exact file over
 `file://`. It requires a healthy boot and advancing 192x320 framebuffer, the
 64-color/display-palette invariants, changing raw framebuffer and rendered
-canvas pixels, trusted held pointer input, audio unlock with nonzero samples,
-pause/resume and RESET through the visible controls, and a network log limited
-to the exact `file://` document plus in-memory worklet URLs. It also requires no
-browser page errors. Missing browser infrastructure is an error, never a
-skipped check. This gate is intentionally separate from portable `just check`.
+canvas pixels, trusted held pointer input, exact rising-edge touch haptic
+requests for D-pad/A/B/game-menu/device-menu, a safe unsupported-vibration
+fallback, audio unlock with nonzero samples, pause/resume and RESET through the
+visible controls, and a network log limited to the exact `file://` document plus
+in-memory worklet URLs. It also requires no browser page errors. Missing browser
+infrastructure is an error, never a skipped check. This gate is intentionally
+separate from portable `just check`.
 
 On failure it retains the packed page, screenshot, diagnostic snapshots,
 network requests, page errors, and console messages in a timestamped directory

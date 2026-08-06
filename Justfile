@@ -20,7 +20,7 @@ browser-diagnostics:
 # evidence is retained under out/browser-check (or CONSOLE_BROWSER_ARTIFACTS).
 browser-check:
     test -n "${CONSOLE_BROWSER:-}" || { echo "CONSOLE_BROWSER must name a Chromium executable" >&2; exit 2; }
-    out="$(mktemp --suffix=.console.html)"; trap 'rm -f "$out"' EXIT; cargo run -q -p console -- pack carts/lantern-leap.cart -o "$out"; node web/browser-smoke.cjs "$out" --artifacts "${CONSOLE_BROWSER_ARTIFACTS:-out/browser-check}"
+    out="$(mktemp --suffix=.console.html)"; trap 'rm -f "$out"' EXIT; cargo run -q -p console -- pack carts/lantern-leap.cart -o "$out"; node web/haptics-smoke.cjs "$out"; node web/browser-smoke.cjs "$out" --artifacts "${CONSOLE_BROWSER_ARTIFACTS:-out/browser-check}"
 
 # Install the one unified CLI binary, even at the same version.
 install:
