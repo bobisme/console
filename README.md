@@ -210,7 +210,9 @@ console serve my-game
 ```
 
 The command prints the URL and recompiles/re-bundles the project on each page
-refresh. A standalone `.cart` remains accepted everywhere.
+refresh. `localhost` and IP loopback forms are accepted interchangeably, so a
+browser or terminal link handler may normalize the printed loopback address.
+A standalone `.cart` remains accepted everywhere.
 
 With Chromium provisioned, the sustained load gate launches its own isolated
 browser over direct CDP and requires at least 600 successful dense-mode frames

@@ -25,8 +25,9 @@ OPTIONS:
 
 The cart or project is compiled and bundled again on every page refresh, so
 saved source edits appear without restarting the server. Only / and
-/index.html are served. HTTP Host
-must match --host; wildcard binds accept IP-literal Host values only.
+/index.html are served. HTTP Host must match --host; localhost and IP loopback
+aliases are interchangeable, while wildcard binds accept IP-literal Host values
+only.
 "#;
 
 #[derive(Debug, Clone)]
@@ -219,7 +220,7 @@ fn handle_connection(stream: &mut TcpStream, args: &ServeArgs, port: u16) -> Res
             stream,
             "421 Misdirected Request",
             "text/plain; charset=utf-8",
-            b"host not allowed\n",
+            b"host not allowed; use the URL printed by console serve\n",
             head,
         );
     }
@@ -346,14 +347,23 @@ fn host_allowed(authority: &str, configured_host: &str, port: u16) -> bool {
 
     match configured_host {
         "0.0.0.0" | "::" | "[::]" => host.parse::<IpAddr>().is_ok(),
-        configured => match (
-            host.parse::<IpAddr>(),
-            configured.trim_matches(['[', ']']).parse::<IpAddr>(),
-        ) {
-            (Ok(actual), Ok(expected)) => actual == expected,
-            _ => host.eq_ignore_ascii_case(configured),
-        },
+        configured => {
+            let configured = configured.trim_matches(['[', ']']);
+            if is_loopback_authority_host(host) && is_loopback_authority_host(configured) {
+                return true;
+            }
+            match (host.parse::<IpAddr>(), configured.parse::<IpAddr>()) {
+                (Ok(actual), Ok(expected)) => actual == expected,
+                _ => host.eq_ignore_ascii_case(configured),
+            }
+        }
     }
+}
+
+fn is_loopback_authority_host(host: &str) -> bool {
+    host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+        || host.eq_ignore_ascii_case("localhost")
+        || host.eq_ignore_ascii_case("localhost.")
 }
 
 fn split_authority(authority: &str) -> Option<(&str, Option<u16>)> {
@@ -461,9 +471,15 @@ mod tests {
     }
 
     #[test]
-    fn host_validation_rejects_dns_rebinding_and_wrong_ports() {
+    fn host_validation_allows_loopback_aliases_but_rejects_dns_rebinding_and_wrong_ports() {
         assert!(host_allowed("127.0.0.1:8000", "127.0.0.1", 8000));
+        assert!(host_allowed("localhost:8000", "127.0.0.1", 8000));
+        assert!(host_allowed("LOCALHOST.:8000", "127.0.0.1", 8000));
+        assert!(host_allowed("[::1]:8000", "127.0.0.1", 8000));
+        assert!(host_allowed("127.0.0.1:8000", "localhost", 8000));
+        assert!(host_allowed("127.23.45.67:8000", "::1", 8000));
         assert!(!host_allowed("attacker.example:8000", "127.0.0.1", 8000));
+        assert!(!host_allowed("192.0.2.4:8000", "127.0.0.1", 8000));
         assert!(!host_allowed("127.0.0.1:9000", "127.0.0.1", 8000));
         assert!(host_allowed("[::1]:8000", "::1", 8000));
         assert!(!host_allowed("[::2]:8000", "::1", 8000));

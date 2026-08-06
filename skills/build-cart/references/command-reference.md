@@ -655,7 +655,10 @@ returns an error response and never serves the previous page as fresh.
 exits after one connection and is useful for scripts and tests. Use `--host`
 only when another device must reach the development server; the default is
 intentionally loopback-only. Requests must use a `Host` authority matching the
-configured host and actual port; wildcard binds accept IP-literal hosts only.
+configured host and actual port. Exact `localhost` (with an optional trailing
+dot) and IPv4/IPv6 loopback literals are treated as equivalent; wildcard binds
+accept IP-literal hosts only. A rejected request tells the user to return to the
+URL printed by `console serve`.
 
 ## JSON-RPC protocol
 

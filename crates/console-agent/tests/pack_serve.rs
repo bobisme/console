@@ -142,6 +142,41 @@ fn serve_prints_a_url_and_returns_the_packed_page() {
 }
 
 #[test]
+fn default_loopback_serve_accepts_the_localhost_browser_alias() {
+    let mut child = Command::new(console_bin())
+        .arg("serve")
+        .arg(demo_cart())
+        .arg("--port=0")
+        .arg("--once")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn console serve");
+
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut url = String::new();
+    stdout.read_line(&mut url).expect("read server URL");
+    let authority = url
+        .trim()
+        .strip_prefix("http://")
+        .and_then(|value| value.strip_suffix('/'))
+        .expect("stdout contains one HTTP URL");
+    let port = authority.rsplit_once(':').unwrap().1;
+
+    let response = fetch_with_host(authority, &format!("localhost:{port}"));
+
+    let output = child.wait_with_output().expect("wait for console serve");
+    assert!(
+        output.status.success(),
+        "server failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(response.contains("<title>Micro Dash</title>"));
+    assert!(response.contains("function _update()"));
+}
+
+#[test]
 fn serve_rebundles_the_cart_on_refresh() {
     let root = temp_dir("refresh");
     std::fs::create_dir_all(&root).unwrap();
@@ -272,6 +307,7 @@ fn loopback_serve_rejects_an_unrelated_host_header() {
 
     let response = fetch_with_host(authority, &format!("attacker.example:{port}"));
     assert!(response.starts_with("HTTP/1.1 421 Misdirected Request\r\n"));
+    assert!(response.contains("use the URL printed by console serve"));
     assert!(!response.contains("Micro Dash"));
     assert!(!response.contains("function _update()"));
 
