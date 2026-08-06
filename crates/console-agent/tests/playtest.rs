@@ -139,6 +139,123 @@ fn assertion_failure_is_a_structured_exit_one() {
 }
 
 #[test]
+fn scenario_captures_bounded_screen_text_and_compact_summary() {
+    let dir = scratch("screen-text-region");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    let scenario = dir.join("screen.json");
+    let artifacts = dir.join("artifacts");
+    fs::write(
+        &cart,
+        "__lua__\nfunction _draw() cls(0) rectfill(2,3,4,4,5) pset(10,10,63) end\n",
+    )
+    .unwrap();
+    fs::write(
+        &scenario,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "stages": [
+                {"op":"input", "frames":1},
+                {
+                    "op":"capture",
+                    "screen_text":"hud.txt",
+                    "screen_text_summary":"hud.json",
+                    "screen_text_region":{"x":1,"y":2,"width":5,"height":4}
+                }
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&[
+        "playtest",
+        as_str(&cart),
+        "--scenario",
+        as_str(&scenario),
+        "--artifacts",
+        as_str(&artifacts),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(artifacts.join("hud.txt")).unwrap(),
+        "00000\n05550\n05550\n00000\n"
+    );
+    let summary: Value =
+        serde_json::from_slice(&fs::read(artifacts.join("hud.json")).unwrap()).unwrap();
+    assert!(summary.get("lines").is_none());
+    assert_eq!(summary["region"]["x"], 1);
+    assert_eq!(summary["palette_counts"]["5"], 6);
+    assert_eq!(summary["non_background_bounds"]["x"], 2);
+    assert_eq!(summary["truncation"]["cropped_pixels"], 61_420);
+}
+
+#[test]
+fn playtest_rejects_invalid_or_unbounded_screen_text_regions_pre_execution() {
+    let dir = scratch("screen-text-bounds");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    fs::write(
+        &cart,
+        "__lua__\nfunction _init() error('must not run') end\n",
+    )
+    .unwrap();
+    let artifacts = dir.join("artifacts");
+
+    for (name, capture, expected) in [
+        (
+            "outside",
+            json!({
+                "op":"capture", "screen_text":"raw.txt",
+                "screen_text_region":{"x":191,"y":0,"width":2,"height":1}
+            }),
+            "must fit inside",
+        ),
+        (
+            "no-output",
+            json!({
+                "op":"capture",
+                "screen_text_region":{"x":0,"y":0,"width":1,"height":1}
+            }),
+            "requires screen_text",
+        ),
+        (
+            "budget",
+            json!({
+                "op":"capture", "screen_text":"raw.txt",
+                "screen_text_region":{"x":0,"y":0,"width":192,"height":100}
+            }),
+            "limited to",
+        ),
+    ] {
+        let scenario = dir.join(format!("{name}.json"));
+        fs::write(
+            &scenario,
+            serde_json::to_vec(&json!({"version":1,"stages":[capture]})).unwrap(),
+        )
+        .unwrap();
+        let output = run(&[
+            "playtest",
+            as_str(&cart),
+            "--scenario",
+            as_str(&scenario),
+            "--artifacts",
+            as_str(&artifacts),
+        ]);
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "unexpected stderr: {stderr}");
+        assert!(!stderr.contains("must not run"));
+    }
+}
+
+#[test]
 fn playtest_accepts_project_directories_and_explicit_manifests() {
     let project = TestProject::new("playtest", "Playtest Project", 23);
     let scenario = project.root().join("scenario.json");

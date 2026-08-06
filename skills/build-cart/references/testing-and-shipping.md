@@ -76,9 +76,23 @@ Keep input segments at meaningful boundaries: start, hold direction, press an
 action for one frame, release, observe recovery. `btnp` requires a transition,
 so a long held `A` segment triggers it once.
 
-Use `--screen-text` for exact pixel assertions or deterministic hashes, not as
-a replacement for looking at the image. It emits raw draw-space colors after
-`mosaic`/`rshift` but before display-palette remapping.
+Use a bounded screen-text crop for exact local pixel assertions, not as a
+replacement for looking at the image. It emits raw draw-space colors after
+`mosaic`/`rshift` but before display-palette remapping:
+
+```bash
+# HUD alignment: 192 x 48 glyphs, no full-screen log flood.
+console run game.cart --frames 120 --screen-text-region 0,0,192,48
+
+# Find active colors and the absolute ink bounds of a dialog region.
+console run game.cart --frames 120 \
+  --screen-text-region 16,160,160,120 --screen-text-summary
+```
+
+Prefer `--screen-text-summary` when counts/bounds answer the question. Reserve
+the exact 192×320 `--screen-text` dump for intentional framebuffer goldens or
+hashes. Cropped raw output is capped at 16,384 pixels; summary mode remains
+compact for any valid rectangle.
 
 Use `--text-events` while building menus and HUDs. Every JSON line names the
 source text, frame, `left|center|right` alignment, world and camera-adjusted
@@ -169,6 +183,8 @@ Promote valuable smoke scripts into strict versioned JSON:
       "screenshot":"jump-apex.png",
       "zoom":2,
       "screen_text":"jump-apex.txt",
+      "screen_text_region":{"x":64,"y":96,"width":64,"height":64},
+      "screen_text_summary":"jump-apex-screen.json",
       "text_events":"jump-text.json",
       "draw_trace":"jump-draws.json",
       "audio_events":"jump-events.json",

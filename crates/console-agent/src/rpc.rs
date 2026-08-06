@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 
 use crate::map;
 use crate::music;
-use crate::session::{MAX_SESSION_DRAW_EVENTS, Session, SessionError};
+use crate::session::{MAX_SESSION_DRAW_EVENTS, ScreenTextRegion, Session, SessionError};
 use crate::sprite::view::{self, Image, LintThresholds, OverlayOpts, RenderOpts};
 use crate::value::lua_to_json;
 
@@ -150,7 +150,7 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "reset" => m_reset(session, params),
         "step" => m_step(session, params),
         "screenshot" => m_screenshot(session, params),
-        "screen_text" => m_screen_text(session),
+        "screen_text" => m_screen_text(session, params),
         "eval" => m_eval(session, params),
         "get_global" => m_get_global(session, params),
         "ecs_query" => m_ecs_query(session, params),
@@ -262,9 +262,44 @@ fn m_screenshot(session: &mut Session, params: &Value) -> Result<Value, RpcErr> 
     }))
 }
 
-fn m_screen_text(session: &Session) -> Result<Value, RpcErr> {
-    let lines = session.screen_text()?;
-    Ok(json!({ "lines": lines }))
+fn m_screen_text(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let object = match params {
+        Value::Null => None,
+        Value::Object(object) => Some(object),
+        _ => {
+            return Err(RpcErr::bad_params("screen_text params must be an object"));
+        }
+    };
+    if let Some(object) = object {
+        for key in object.keys() {
+            if !matches!(key.as_str(), "region" | "summary") {
+                return Err(RpcErr::bad_params(format!(
+                    "screen_text has unknown param {key:?}; expected \"region\" or \"summary\""
+                )));
+            }
+        }
+    }
+
+    let summary = match object.and_then(|object| object.get("summary")) {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(summary)) => *summary,
+        Some(_) => {
+            return Err(RpcErr::bad_params(
+                "screen_text \"summary\" must be a boolean",
+            ));
+        }
+    };
+    let region = match object.and_then(|object| object.get("region")) {
+        None | Some(Value::Null) => ScreenTextRegion::full(),
+        Some(value) => serde_json::from_value::<ScreenTextRegion>(value.clone()).map_err(|error| {
+            RpcErr::bad_params(format!(
+                "screen_text \"region\" must contain integer x, y, width, and height only: {error}"
+            ))
+        })?,
+    };
+    let report = session.screen_text_report(region, !summary)?;
+    serde_json::to_value(report)
+        .map_err(|error| RpcErr::new(-32603, format!("serializing screen_text: {error}")))
 }
 
 fn m_eval(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {

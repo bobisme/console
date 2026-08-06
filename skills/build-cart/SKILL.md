@@ -72,7 +72,10 @@ low-level sprite/map/music read-write commands pointed at standalone carts.
 
 Input segments are `COUNT:BUTTONS`; buttons are `L R U D A B M`, and an empty
 button field means idle. Inspect the PNG rather than merely checking that it was
-created.
+created. For framebuffer text diagnostics, crop the HUD/dialog/collision area
+with `--screen-text-region` or request `--screen-text-summary`; reserve the full
+`--screen-text` dump for deliberate goldens. Load the command reference for the
+strict region/report contract.
 
 Use `console rpc` when repeated reloads would dominate iteration:
 

@@ -40,14 +40,20 @@ pub mod visual;
 pub const RUN_USAGE: &str = "\
 usage:
   console run <cart|project> [--frames N] [--input SPEC] [--eval-before CODE] [--eval-after CODE]
-                    [--screenshot out.png] [--screen-text] [--seed N]
+                    [--screenshot out.png] [--screen-text] [--screen-text-region X,Y,WIDTH,HEIGHT]
+                    [--screen-text-summary] [--seed N]
                     [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats] [--text-events]
                     [--draw-trace trace.json]
 
 phases:
   --eval-before CODE  after cart top-level + _init, before input/frame 1; result discarded
   --eval-after CODE   after all frames, before captures; result printed as JSON last
-  --eval CODE         compatibility alias for --eval-after";
+  --eval CODE         compatibility alias for --eval-after
+
+screen text:
+  --screen-text                         exact full 192x320 raw palette-glyph dump
+  --screen-text-region X,Y,WIDTH,HEIGHT strict native-pixel crop; implies --screen-text
+  --screen-text-summary                 compact one-line JSON metadata; implies --screen-text";
 
 pub const RPC_USAGE: &str = "usage:\n  console rpc";
 

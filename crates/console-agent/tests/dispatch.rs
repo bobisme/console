@@ -74,6 +74,13 @@ fn full_session_flow_against_demo_cart() {
         json!({"jsonrpc": "2.0", "id": 4, "method": "screen_text", "params": {}}),
     );
     let lines = resp["result"]["lines"].as_array().expect("lines array");
+    assert_eq!(resp["result"]["framebuffer_width"], 192);
+    assert_eq!(resp["result"]["framebuffer_height"], 320);
+    assert_eq!(
+        resp["result"]["region"],
+        json!({"x":0,"y":0,"width":192,"height":320})
+    );
+    assert_eq!(resp["result"]["truncation"]["truncated"], false);
     assert_eq!(lines.len(), 320);
     for line in lines {
         let s = line.as_str().unwrap();
@@ -133,6 +140,91 @@ fn full_session_flow_against_demo_cart() {
     assert_eq!(resp["result"]["halted"], false);
     assert_eq!(resp["result"]["title"], "Micro Dash");
     assert_eq!(resp["result"]["input_log_len"], 10);
+}
+
+#[test]
+fn screen_text_rpc_supports_bounded_regions_and_compact_summaries() {
+    let mut session = Session::new();
+    let cart = "__lua__\nfunction _draw() cls(0) rectfill(2,3,4,4,5) pset(10,10,63) end\n";
+    handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":1,"method":"load_cart","params":{"text":cart}}),
+    );
+    handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":2,"method":"step","params":{"frames":1}}),
+    );
+
+    let cropped = handle(
+        &mut session,
+        json!({
+            "jsonrpc":"2.0","id":3,"method":"screen_text",
+            "params":{"region":{"x":1,"y":2,"width":5,"height":4}}
+        }),
+    );
+    assert_eq!(
+        cropped["result"]["lines"],
+        json!(["00000", "05550", "05550", "00000"])
+    );
+    assert_eq!(cropped["result"]["palette_counts"]["5"], 6);
+    assert_eq!(cropped["result"]["glyph_counts"]["5"], 6);
+    assert_eq!(
+        cropped["result"]["non_background_bounds"],
+        json!({"x":2,"y":3,"width":3,"height":2})
+    );
+    assert_eq!(cropped["result"]["truncation"]["crop_right"], 186);
+
+    let summary = handle(
+        &mut session,
+        json!({
+            "jsonrpc":"2.0","id":4,"method":"screen_text",
+            "params":{"summary":true}
+        }),
+    );
+    assert!(summary["result"].get("lines").is_none());
+    assert_eq!(summary["result"]["palette_counts"]["63"], 1);
+    assert_eq!(summary["result"]["glyph_counts"]["_"], 1);
+    assert_eq!(summary["result"]["truncation"]["cropped_pixels"], 0);
+    assert_eq!(summary["result"]["truncation"]["lines_omitted"], true);
+    assert_eq!(
+        summary["result"]["truncation"]["line_characters_omitted"],
+        192 * 320
+    );
+}
+
+#[test]
+fn screen_text_rpc_rejects_bad_bounds_types_unknowns_and_unbounded_crops() {
+    let mut session = Session::new();
+    handle(
+        &mut session,
+        json!({"jsonrpc":"2.0","id":1,"method":"load_cart","params":{"text":"__lua__\n"}}),
+    );
+
+    let bad_params = [
+        json!({"region":{"x":0,"y":0,"width":0,"height":1}}),
+        json!({"region":{"x":191,"y":0,"width":2,"height":1}}),
+        json!({"region":{"x":0,"y":0,"width":1.5,"height":1}}),
+        json!({"region":{"x":0,"y":0,"width":1,"height":1,"extra":true}}),
+        json!({"summary":"yes"}),
+        json!({"extra":true}),
+        json!({"region":{"x":0,"y":0,"width":192,"height":100}}),
+    ];
+    for (index, params) in bad_params.into_iter().enumerate() {
+        let response = handle(
+            &mut session,
+            json!({"jsonrpc":"2.0","id":index,"method":"screen_text","params":params}),
+        );
+        assert_eq!(response["error"]["code"], -32602, "{response}");
+    }
+
+    let bounded_summary = handle(
+        &mut session,
+        json!({
+            "jsonrpc":"2.0","id":99,"method":"screen_text",
+            "params":{"summary":true,"region":{"x":0,"y":0,"width":192,"height":100}}
+        }),
+    );
+    assert!(bounded_summary.get("error").is_none(), "{bounded_summary}");
 }
 
 #[test]

@@ -227,7 +227,9 @@ and inspect audio without ears (`audio_state`, `audio_events`,
 explain which tagged primitive, sprite, animation, map, or text call produced a
 region without changing the rendered frame. `ecs_query` pages through selected
 scalar fields from a named ECS world without requiring cart-authored debug
-tables. Full method list in SPEC.md.
+tables. Screen-text requests can select a strict native-pixel region or return a
+compact count/bounds summary, avoiding a 192×320 glyph dump when an agent only
+needs a HUD, dialog, or collision area. Full method list in SPEC.md.
 
 For repeatable multi-stage acceptance, use a versioned playtest scenario
 instead of hand-driving an RPC session:

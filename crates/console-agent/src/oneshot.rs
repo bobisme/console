@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::input_spec::{self, Segment};
-use crate::session::Session;
+use crate::session::{MAX_SCREEN_TEXT_REGION_PIXELS, ScreenTextRegion, Session};
 use crate::value::lua_to_json;
 
 /// Parsed `run` subcommand arguments.
@@ -15,6 +15,8 @@ pub struct RunArgs {
     pub screenshot: Option<String>,
     pub screenshot_zoom: u32,
     pub screen_text: bool,
+    pub screen_text_region: Option<ScreenTextRegion>,
+    pub screen_text_summary: bool,
     /// Setup Lua evaluated after cart top-level code and `_init`, before the
     /// first input/frame. Its return value is deliberately discarded.
     pub eval_before: Option<String>,
@@ -38,6 +40,8 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
     let mut screenshot: Option<String> = None;
     let mut screenshot_zoom: u32 = 1;
     let mut screen_text = false;
+    let mut screen_text_region = None;
+    let mut screen_text_summary = false;
     let mut eval_before: Option<String> = None;
     let mut eval_after: Option<String> = None;
     let mut seed: u64 = 0;
@@ -77,6 +81,20 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
                 screenshot_zoom = z;
             }
             "--screen-text" => screen_text = true,
+            "--screen-text-region" => {
+                let value = iter
+                    .next()
+                    .ok_or("--screen-text-region requires X,Y,WIDTH,HEIGHT")?;
+                if screen_text_region.is_some() {
+                    return Err("--screen-text-region may only be specified once".to_string());
+                }
+                screen_text_region = Some(parse_screen_text_region(value)?);
+                screen_text = true;
+            }
+            "--screen-text-summary" => {
+                screen_text_summary = true;
+                screen_text = true;
+            }
             "--eval-before" => {
                 let v = iter.next().ok_or("--eval-before requires a value")?;
                 if eval_before.replace(v.clone()).is_some() {
@@ -125,6 +143,17 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
         }
     }
 
+    if let Some(region) = screen_text_region
+        && !screen_text_summary
+        && !region.is_full()
+        && region.pixel_count() > MAX_SCREEN_TEXT_REGION_PIXELS
+    {
+        return Err(format!(
+            "--screen-text-region contains {} pixels; cropped line output is limited to {MAX_SCREEN_TEXT_REGION_PIXELS} pixels (add --screen-text-summary or select a smaller region)",
+            region.pixel_count()
+        ));
+    }
+
     Ok(RunArgs {
         cart_path: cart_path.ok_or("missing <cart|project> argument")?,
         frames,
@@ -132,6 +161,8 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
         screenshot,
         screenshot_zoom,
         screen_text,
+        screen_text_region,
+        screen_text_summary,
         eval_before,
         eval_after,
         seed,
@@ -142,6 +173,28 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
         text_events,
         draw_trace,
     })
+}
+
+fn parse_screen_text_region(value: &str) -> Result<ScreenTextRegion, String> {
+    let parts = value.split(',').collect::<Vec<_>>();
+    if parts.len() != 4 || parts.iter().any(|part| part.is_empty()) {
+        return Err(format!(
+            "invalid --screen-text-region {value:?}; expected X,Y,WIDTH,HEIGHT"
+        ));
+    }
+    let parse = |part: &str, name: &str| {
+        part.parse::<u32>().map_err(|_| {
+            format!("invalid --screen-text-region {value:?}; {name} must be an unsigned integer")
+        })
+    };
+    ScreenTextRegion {
+        x: parse(parts[0], "X")?,
+        y: parse(parts[1], "Y")?,
+        width: parse(parts[2], "WIDTH")?,
+        height: parse(parts[3], "HEIGHT")?,
+    }
+    .validate()
+    .map_err(|error| error.to_string())
 }
 
 /// Run the oneshot flow, writing `printh` logs / errors to stderr and
@@ -278,10 +331,23 @@ pub fn run(args: &RunArgs) -> i32 {
     }
 
     if args.screen_text {
-        match session.screen_text() {
-            Ok(lines) => {
-                for line in lines {
-                    println!("{line}");
+        let region = args
+            .screen_text_region
+            .unwrap_or_else(ScreenTextRegion::full);
+        match session.screen_text_report(region, !args.screen_text_summary) {
+            Ok(report) => {
+                if args.screen_text_summary {
+                    match serde_json::to_string(&report) {
+                        Ok(json) => println!("{json}"),
+                        Err(error) => {
+                            eprintln!("error: {error}");
+                            return 1;
+                        }
+                    }
+                } else if let Some(lines) = report.lines {
+                    for line in lines {
+                        println!("{line}");
+                    }
                 }
             }
             Err(e) => {
@@ -402,6 +468,9 @@ mod tests {
             "--screenshot-zoom".into(),
             "4".into(),
             "--screen-text".into(),
+            "--screen-text-region".into(),
+            "1,2,3,4".into(),
+            "--screen-text-summary".into(),
             "--eval-before".into(),
             "setup()".into(),
             "--eval-after".into(),
@@ -429,6 +498,13 @@ mod tests {
                 screenshot: Some("out.png".into()),
                 screenshot_zoom: 4,
                 screen_text: true,
+                screen_text_region: Some(ScreenTextRegion {
+                    x: 1,
+                    y: 2,
+                    width: 3,
+                    height: 4,
+                }),
+                screen_text_summary: true,
                 eval_before: Some("setup()".into()),
                 eval_after: Some("1+1".into()),
                 seed: 7,
@@ -504,5 +580,55 @@ mod tests {
         ])
         .unwrap_err();
         assert!(err.contains("--screenshot-zoom"), "{err}");
+    }
+
+    #[test]
+    fn screen_text_region_implies_output_and_is_strict() {
+        let args = parse_run_args(&[
+            "cart.cart".into(),
+            "--screen-text-region".into(),
+            "8,12,24,16".into(),
+        ])
+        .unwrap();
+        assert!(args.screen_text);
+        assert_eq!(
+            args.screen_text_region,
+            Some(ScreenTextRegion {
+                x: 8,
+                y: 12,
+                width: 24,
+                height: 16,
+            })
+        );
+
+        for bad in ["1,2,3", "1,2,0,4", "190,0,3,1", "-1,0,1,1"] {
+            let error = parse_run_args(&[
+                "cart.cart".into(),
+                "--screen-text-region".into(),
+                bad.into(),
+            ])
+            .unwrap_err();
+            assert!(error.contains("screen_text") || error.contains("screen-text"));
+        }
+    }
+
+    #[test]
+    fn oversized_screen_text_crop_requires_summary() {
+        let raw = parse_run_args(&[
+            "cart.cart".into(),
+            "--screen-text-region".into(),
+            "0,0,192,100".into(),
+        ])
+        .unwrap_err();
+        assert!(raw.contains("limited to"), "{raw}");
+
+        let summary = parse_run_args(&[
+            "cart.cart".into(),
+            "--screen-text-region".into(),
+            "0,0,192,100".into(),
+            "--screen-text-summary".into(),
+        ])
+        .unwrap();
+        assert!(summary.screen_text_summary);
     }
 }

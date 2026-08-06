@@ -762,7 +762,8 @@ as regression tests: `(cart, input log) → expected framebuffer hash`.
 
 Oneshot: `console run <cart|project> [--frames N] [--input SPEC]
 [--eval-before CODE] [--eval-after CODE] [--screenshot out.png]
-[--screenshot-zoom N] [--screen-text] [--text-events] [--draw-trace trace.json]
+[--screenshot-zoom N] [--screen-text] [--screen-text-region X,Y,WIDTH,HEIGHT]
+[--screen-text-summary] [--text-events] [--draw-trace trace.json]
 [--seed N]`
 where SPEC is comma-separated `COUNT:BUTTONS`, e.g. `30:,10:R,5:RA,60:` (empty
 buttons = no input).
@@ -785,8 +786,12 @@ one response per line on stdout. Methods:
 - `step {frames=1, input=""}` — advance; input as letter string or int mask
 - `screenshot {path, zoom=1}` — write PNG (RGBA), nearest-neighbor
   integer-upscaled by `zoom`
-- `screen_text {}` — framebuffer as 320 lines of 192 palette characters, using
-  the same 64-character alphabet as `__sprites__`
+- `screen_text {region?,summary?=false}` — strict raw-framebuffer diagnostic;
+  empty params preserve the exact 320 lines of 192 palette characters, while
+  `region:{x,y,width,height}` selects an absolute native-pixel rectangle and
+  `summary:true` omits lines. The report always includes framebuffer and region
+  dimensions, numeric palette-index and glyph counts, absolute non-color-0
+  bounds or `null`, and explicit crop/line-omission metadata.
 - `eval {code}` — run Lua, return result serialized to JSON (tables best-effort, depth-limited)
 - `get_global {name}` — shorthand for eval returning that global
 - `ecs_query {world,with?=[],select?={},limit?=64,after?=0}` — bounded,
@@ -808,6 +813,34 @@ Plus the audio-inspection verbs (`audio_state`, `audio_events`,
 `audio_stats`, `spectrogram {path}`, `wav {path}`) and the read-only cart
 tooling mirrors: `sprite_*`, `map_*` (`map_render`, `map_dump`, `map_lint`)
 and `music_*` (`music_score`, `music_lint`, `music_piano_roll`).
+
+`screen_text` regions use unsigned native pixels, require positive width and
+height, and must fit wholly within `[0,192) x [0,320)`; overflow, fractional
+numbers, missing rectangle fields, and unknown params are `-32602`. Its result
+has this stable shape (the two count objects contain only indices/glyphs present
+in the selected region):
+
+```json
+{
+  "framebuffer_width":192,"framebuffer_height":320,
+  "region":{"x":0,"y":0,"width":192,"height":64},
+  "lines":["..."],
+  "palette_counts":{"0":11840,"7":448},
+  "glyph_counts":{"0":11840,"7":448},
+  "non_background_bounds":{"x":8,"y":6,"width":176,"height":50},
+  "truncation":{"truncated":true,"cropped_pixels":49152,
+    "crop_left":0,"crop_top":0,"crop_right":0,"crop_bottom":256,
+    "lines_omitted":false,"line_count_omitted":0,
+    "line_characters_omitted":0}
+}
+```
+
+`lines` is absent in summary mode. `non_background_bounds` is absolute and is
+`null` when the selected region contains only palette index 0. A cropped raw
+request may emit at most 16,384 glyphs; exact full-frame output is the explicit
+exception. `truncated` is true when the rectangle crops the framebuffer and/or
+summary mode omits its line glyphs, with the independent counts explaining
+which occurred.
 
 Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback in
 `data`, and the console stays alive.
@@ -910,7 +943,13 @@ aggregate aesthetic score. Games choose all colors, regions, and thresholds;
 Console does not infer taste.
 
 Capture fields are strict and typed. `screenshot` and `screen_text` capture the
-current framebuffer. `zoom` is an integer from 1 through 16 (default 1) used by
+current framebuffer. Optional `screen_text_region:{x,y,width,height}` applies
+to `screen_text` and `screen_text_summary`; the latter names a compact JSON
+report artifact with the same shape as summary-mode RPC. A region without one
+of those outputs is invalid. Cropped raw line output is limited to 16,384
+pixels; summary output may cover any valid rectangle, and explicitly requesting
+the historical full-frame `screen_text` remains legal. `zoom` is an integer
+from 1 through 16 (default 1) used by
 `screenshot`. `wav` renders the retained audio between optional integer
 `from_frame` and `to_frame` bounds (defaults: start/end of retained audio).
 `spectrogram` visualizes that same range; `cell` is an integer from 1 through 8

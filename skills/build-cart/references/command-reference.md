@@ -121,6 +121,8 @@ console run <cart|project>
   [--input SPEC]
   [--screenshot out.png] [--screenshot-zoom N]
   [--screen-text]
+  [--screen-text-region X,Y,WIDTH,HEIGHT]
+  [--screen-text-summary]
   [--eval-before CODE]
   [--eval-after CODE]
   [--seed N]
@@ -144,7 +146,9 @@ are idle. An empty spec plus `--frames N` is an idle run.
 | `--input SPEC` | Per-frame button masks. |
 | `--screenshot FILE` | Final PNG after stepping and the post-frame eval. |
 | `--screenshot-zoom N` | Integer nearest-neighbor PNG scale, at least 1; default 1. |
-| `--screen-text` | Print 320 framebuffer rows of 192 palette characters. |
+| `--screen-text` | Print the exact full 320-row × 192-character framebuffer dump. |
+| `--screen-text-region X,Y,WIDTH,HEIGHT` | Print only this strict native-pixel rectangle; implies `--screen-text`. Cropped raw output is capped at 16,384 characters. |
+| `--screen-text-summary` | Emit one compact JSON report instead of line glyphs; implies `--screen-text` and combines with a region. |
 | `--eval-before CODE` | Evaluate after cart top-level + `_init`, before input/frame 1; discard the result. |
 | `--eval-after CODE` | Evaluate after all frames and JSON-serialize the result last on stdout. |
 | `--eval CODE` | Compatibility alias for `--eval-after`; do not combine the spellings. |
@@ -165,6 +169,31 @@ project that fails to compile, a halted runtime, or a failed eval exits 1.
 An unreadable/missing input path exits 2, as does invalid CLI syntax.
 `<project>` may be a directory containing `console.toml` or the manifest path;
 it is compiled and validated in memory without writing `[build].output`.
+
+Prefer a bounded raw crop for local pixel debugging and summary mode for a
+whole-screen inventory:
+
+```bash
+# Top HUD: 192 x 48 exact glyphs.
+console run game.cart --frames 120 --screen-text-region 0,0,192,48
+
+# Dialog panel metadata without its thousands of glyphs.
+console run game.cart --frames 120 \
+  --screen-text-region 16,180,160,96 --screen-text-summary
+
+# Deliberate legacy/full golden only.
+console run game.cart --frames 120 --screen-text
+```
+
+Region coordinates are unsigned native pixels, width/height must be positive,
+and the rectangle must fit wholly inside 192×320. Raw cropped output is capped
+at 16,384 glyphs; summary output may describe any valid region. The one-line
+summary JSON and RPC result share `framebuffer_width`, `framebuffer_height`,
+`region`, `palette_counts`, `glyph_counts`, `non_background_bounds`, and
+`truncation`. Counts cover only the selected region. Non-background means a raw
+palette index other than 0, and its bounds remain absolute screen coordinates.
+`truncation` distinguishes framebuffer pixels outside the region from selected
+line glyphs omitted by summary mode. See `SPEC.md` for the exact fields.
 
 ## `playtest`
 
@@ -211,6 +240,8 @@ Version 1 schema:
       "screenshot":"jump.png",
       "zoom":2,
       "screen_text":"jump.txt",
+      "screen_text_region":{"x":64,"y":96,"width":64,"height":64},
+      "screen_text_summary":"jump-screen.json",
       "text_events":"jump-text.json",
       "draw_trace":"jump-draws.json",
       "wav":"jump.wav",
@@ -241,6 +272,11 @@ Every stage permits an optional unique `name`. `input.frames` must be at least
 relative descendants of `--artifacts`, and cannot traverse `.`/`..`, absolute
 paths, or symlinks. Screenshot zoom is 1–16. Spectrogram cell is 1–8 and its
 range at most 3,600 frames. Audio-stat windows are 1–36,000 frames.
+`screen_text_region` applies one strict native-pixel rectangle to the raw
+`screen_text` artifact and/or compact JSON `screen_text_summary`; it is invalid
+without either output. The same 16,384-glyph crop budget and report contract as
+`run`/RPC apply. Omit the region only when a full raw golden or full-screen
+summary is intentional.
 Nested map captures accept `source: "authored"` (default) or `"live"` and one
 or more output paths: `png`, `dump`, `lint`. Optional `region` uses
 `cx,cy,cw,ch`; omitted regions use that snapshot's nonzero extent. Map zoom is
@@ -598,7 +634,7 @@ One line is one request. Important error codes: `-32700` parse error,
 | `reset` | `{seed?}` | Reload current cart, optionally replacing seed; clear input/audio/event logs while named save states survive. |
 | `step` | `{frames?=1,input?=""}` | Input string or integer mask; return `{frame_count,halted,message}`. |
 | `screenshot` | `{path,zoom?=1}` | Write PNG; zoom integer ≥1; return path/dimensions. |
-| `screen_text` | `{}` | `{lines}`: 320 strings × 192 palette characters, raw draw-space indices. |
+| `screen_text` | `{region?:{x,y,width,height},summary?:false}` | Dimensions, optional raw lines, palette/glyph counts, absolute non-background bounds, and explicit crop/line-omission metadata. Empty params retain the exact 320×192 lines. |
 | `eval` | `{code}` | Execute chunk; `{result}` JSON conversion. |
 | `get_global` | `{name}` | Return one global as `{result}`. |
 | `ecs_query` | `{world,with?=[],select?={},limit?=64,after?=0}` | Read a bounded field projection from one named ECS world in stable creation order. |

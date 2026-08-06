@@ -15,7 +15,7 @@ use serde_json::{Value as Json, json};
 
 use crate::artifact;
 use crate::map;
-use crate::session::Session;
+use crate::session::{MAX_SCREEN_TEXT_REGION_PIXELS, ScreenTextRegion, Session};
 use crate::value::lua_to_json;
 use crate::visual::{self, Rect, RgbaImage};
 
@@ -52,7 +52,9 @@ Scenario format (version 1):
     {\"op\":\"sequence\",\"name\":\"hop\",\"frames\":12,\"buttons\":\"R\",\"every\":3,
       \"crop\":{\"x\":16,\"y\":24,\"w\":96,\"h\":80},\"zoom\":2,
       \"gif\":\"hop.gif\",\"strip\":\"hop-strip.png\",\"board\":\"hop-board.png\"},
-    {\"op\":\"capture\",\"screenshot\":\"scene.png\",\"zoom\":4,\"draw_trace\":\"draw-trace.json\",
+    {\"op\":\"capture\",\"screenshot\":\"scene.png\",\"zoom\":4,
+      \"screen_text_summary\":\"screen.json\",\"screen_text_region\":{\"x\":0,\"y\":0,\"width\":192,\"height\":48},
+      \"draw_trace\":\"draw-trace.json\",
       \"layers\":{\"background\":\"layers/background.png\",\"terrain\":\"layers/terrain.png\"},
       \"map\":{\"source\":\"live\",\"png\":\"map.png\",\"dump\":\"map.txt\"}},
     {\"op\":\"review\",\"board\":\"visual-board.png\",\"report\":\"visual-report.json\",
@@ -174,6 +176,10 @@ pub enum Stage {
         zoom: u32,
         #[serde(default)]
         screen_text: Option<String>,
+        #[serde(default)]
+        screen_text_region: Option<ScreenTextRegion>,
+        #[serde(default)]
+        screen_text_summary: Option<String>,
         #[serde(default)]
         wav: Option<String>,
         #[serde(default)]
@@ -1901,6 +1907,8 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                 screenshot,
                 zoom,
                 screen_text,
+                screen_text_region,
+                screen_text_summary,
                 wav,
                 spectrogram,
                 audio_events,
@@ -1918,6 +1926,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                 let mut outputs = vec![
                     screenshot.as_deref(),
                     screen_text.as_deref(),
+                    screen_text_summary.as_deref(),
                     wav.as_deref(),
                     spectrogram.as_deref(),
                     audio_events.as_deref(),
@@ -1946,6 +1955,28 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                         ));
                     }
                     outputs.extend(map_outputs);
+                }
+                if screen_text_region.is_some()
+                    && screen_text.is_none()
+                    && screen_text_summary.is_none()
+                {
+                    return Err(format!(
+                        "stage {index} screen_text_region requires screen_text or screen_text_summary output"
+                    ));
+                }
+                if let Some(region) = screen_text_region {
+                    let region = region.validate().map_err(|error| {
+                        format!("stage {index} screen_text_region is invalid: {error}")
+                    })?;
+                    if screen_text.is_some()
+                        && !region.is_full()
+                        && region.pixel_count() > MAX_SCREEN_TEXT_REGION_PIXELS
+                    {
+                        return Err(format!(
+                            "stage {index} screen_text_region contains {} pixels; cropped line output is limited to {MAX_SCREEN_TEXT_REGION_PIXELS} pixels (capture only screen_text_summary or select a smaller region)",
+                            region.pixel_count()
+                        ));
+                    }
                 }
                 if outputs.iter().all(Option::is_none) {
                     return Err(format!("stage {index} capture has no outputs"));
@@ -2632,6 +2663,8 @@ fn execute_stage(
             screenshot,
             zoom,
             screen_text,
+            screen_text_region,
+            screen_text_summary,
             wav,
             spectrogram,
             audio_events,
@@ -2656,14 +2689,35 @@ fn execute_stage(
                     .push(write_artifact(root, name, "screenshot", &bytes)?);
             }
             if let Some(name) = screen_text {
-                let mut text = session
-                    .screen_text()
+                let region = screen_text_region
+                    .as_ref()
+                    .copied()
+                    .unwrap_or_else(ScreenTextRegion::full);
+                let lines = session
+                    .screen_text_report(region, true)
                     .map_err(|error| error.to_string())?
-                    .join("\n");
+                    .lines
+                    .expect("playtest raw screen text includes lines");
+                let mut text = lines.join("\n");
                 text.push('\n');
                 report
                     .artifacts
                     .push(write_artifact(root, name, "screen_text", text.as_bytes())?);
+            }
+            if let Some(name) = screen_text_summary {
+                let region = screen_text_region
+                    .as_ref()
+                    .copied()
+                    .unwrap_or_else(ScreenTextRegion::full);
+                let summary = session
+                    .screen_text_report(region, false)
+                    .map_err(|error| error.to_string())?;
+                let mut bytes = serde_json::to_vec_pretty(&summary)
+                    .map_err(|error| format!("serializing screen text summary: {error}"))?;
+                bytes.push(b'\n');
+                report
+                    .artifacts
+                    .push(write_artifact(root, name, "screen_text_summary", &bytes)?);
             }
             if let Some(name) = wav {
                 let (bytes, _, _) = session

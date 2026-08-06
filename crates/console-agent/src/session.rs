@@ -89,6 +89,96 @@ pub struct LayerScreenshotSet {
     pub layers: Vec<LayerScreenshot>,
 }
 
+/// Maximum number of characters emitted by a cropped `screen_text` request.
+/// The exact full framebuffer remains available as an explicit legacy dump;
+/// arbitrary crops are bounded so a misplaced rectangle cannot flood an
+/// agent's context.
+pub const MAX_SCREEN_TEXT_REGION_PIXELS: usize = 16_384;
+
+/// A strict native-framebuffer rectangle. Coordinates in reports are always
+/// absolute screen coordinates, never relative to the selected region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScreenTextRegion {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl ScreenTextRegion {
+    pub const fn full() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            width: SCREEN_W as u32,
+            height: SCREEN_H as u32,
+        }
+    }
+
+    pub fn validate(self) -> Result<Self, SessionError> {
+        if self.width == 0 || self.height == 0 {
+            return Err(SessionError::BadParams(
+                "screen_text region width and height must be at least 1".to_string(),
+            ));
+        }
+        let right = self.x.checked_add(self.width).ok_or_else(|| {
+            SessionError::BadParams("screen_text region x + width overflows".to_string())
+        })?;
+        let bottom = self.y.checked_add(self.height).ok_or_else(|| {
+            SessionError::BadParams("screen_text region y + height overflows".to_string())
+        })?;
+        if right > SCREEN_W as u32 || bottom > SCREEN_H as u32 {
+            return Err(SessionError::BadParams(format!(
+                "screen_text region must fit inside the {SCREEN_W}x{SCREEN_H} framebuffer; got x={}, y={}, width={}, height={}",
+                self.x, self.y, self.width, self.height
+            )));
+        }
+        Ok(self)
+    }
+
+    pub fn pixel_count(self) -> usize {
+        self.width as usize * self.height as usize
+    }
+
+    pub fn is_full(self) -> bool {
+        self == Self::full()
+    }
+}
+
+/// What a bounded framebuffer diagnostic omitted. `cropped_pixels` counts
+/// framebuffer pixels outside `region`; `line_characters_omitted` counts
+/// selected pixels whose glyphs were intentionally suppressed by summary
+/// mode. They are independent so consumers do not have to infer either kind
+/// of truncation from dimensions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ScreenTextTruncation {
+    pub truncated: bool,
+    pub cropped_pixels: usize,
+    pub crop_left: u32,
+    pub crop_top: u32,
+    pub crop_right: u32,
+    pub crop_bottom: u32,
+    pub lines_omitted: bool,
+    pub line_count_omitted: u32,
+    pub line_characters_omitted: usize,
+}
+
+/// Machine-readable framebuffer text diagnostics shared by RPC, one-shot
+/// summary output, and playtest JSON artifacts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ScreenTextReport {
+    pub framebuffer_width: u32,
+    pub framebuffer_height: u32,
+    pub region: ScreenTextRegion,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines: Option<Vec<String>>,
+    pub palette_counts: BTreeMap<u8, usize>,
+    pub glyph_counts: BTreeMap<char, usize>,
+    pub non_background_bounds: Option<ScreenTextRegion>,
+    pub truncation: ScreenTextTruncation,
+}
+
 fn record_text_draws(events: &mut Vec<TextEvent>, frame: u64, draws: Vec<TextDraw>) {
     events.extend(draws.into_iter().map(|draw| TextEvent {
         frame,
@@ -401,17 +491,109 @@ impl Session {
     }
 
     pub fn screen_text(&self) -> Result<Vec<String>, SessionError> {
-        let console = self.console()?;
-        let fb = console.framebuffer();
-        let mut lines = Vec::with_capacity(SCREEN_H);
-        for row in fb.chunks_exact(SCREEN_W) {
-            let mut line = String::with_capacity(SCREEN_W);
-            for &px in row {
-                line.push(color_char(px));
-            }
-            lines.push(line);
+        Ok(self
+            .screen_text_report(ScreenTextRegion::full(), true)?
+            .lines
+            .expect("full screen_text requests include lines"))
+    }
+
+    /// Inspect a strict screen region in raw draw-space palette indices.
+    ///
+    /// Full-frame line output is intentionally exempt from the crop budget:
+    /// callers request that historical, exact diagnostic explicitly. Any
+    /// smaller region that includes lines is capped; summaries have constant
+    /// output size and may cover any valid rectangle.
+    pub fn screen_text_report(
+        &self,
+        region: ScreenTextRegion,
+        include_lines: bool,
+    ) -> Result<ScreenTextReport, SessionError> {
+        let region = region.validate()?;
+        if include_lines
+            && !region.is_full()
+            && region.pixel_count() > MAX_SCREEN_TEXT_REGION_PIXELS
+        {
+            return Err(SessionError::BadParams(format!(
+                "screen_text region contains {} pixels; cropped line output is limited to {MAX_SCREEN_TEXT_REGION_PIXELS} pixels (use summary mode or a smaller region)",
+                region.pixel_count()
+            )));
         }
-        Ok(lines)
+
+        let console = self.console()?;
+        let framebuffer = console.framebuffer();
+        let mut lines = include_lines.then(|| Vec::with_capacity(region.height as usize));
+        let mut palette_counts = BTreeMap::new();
+        let mut glyph_counts = BTreeMap::new();
+        let mut min_x = SCREEN_W as u32;
+        let mut min_y = SCREEN_H as u32;
+        let mut max_x = 0u32;
+        let mut max_y = 0u32;
+        let mut found_non_background = false;
+
+        for y in region.y..region.y + region.height {
+            let mut line = include_lines.then(|| String::with_capacity(region.width as usize));
+            for x in region.x..region.x + region.width {
+                let px = framebuffer[y as usize * SCREEN_W + x as usize] & COLOR_MASK;
+                let glyph = color_char(px);
+                *palette_counts.entry(px).or_insert(0) += 1;
+                *glyph_counts.entry(glyph).or_insert(0) += 1;
+                if let Some(line) = &mut line {
+                    line.push(glyph);
+                }
+                if px != 0 {
+                    found_non_background = true;
+                    min_x = min_x.min(x);
+                    min_y = min_y.min(y);
+                    max_x = max_x.max(x);
+                    max_y = max_y.max(y);
+                }
+            }
+            if let (Some(lines), Some(line)) = (&mut lines, line) {
+                lines.push(line);
+            }
+        }
+
+        let non_background_bounds = if found_non_background {
+            Some(ScreenTextRegion {
+                x: min_x,
+                y: min_y,
+                width: max_x - min_x + 1,
+                height: max_y - min_y + 1,
+            })
+        } else {
+            None
+        };
+        let crop_right = SCREEN_W as u32 - (region.x + region.width);
+        let crop_bottom = SCREEN_H as u32 - (region.y + region.height);
+        let cropped_pixels = FB_LEN - region.pixel_count();
+        let lines_omitted = !include_lines;
+        let line_count_omitted = if lines_omitted { region.height } else { 0 };
+        let line_characters_omitted = if lines_omitted {
+            region.pixel_count()
+        } else {
+            0
+        };
+
+        Ok(ScreenTextReport {
+            framebuffer_width: SCREEN_W as u32,
+            framebuffer_height: SCREEN_H as u32,
+            region,
+            lines,
+            palette_counts,
+            glyph_counts,
+            non_background_bounds,
+            truncation: ScreenTextTruncation {
+                truncated: cropped_pixels != 0 || lines_omitted,
+                cropped_pixels,
+                crop_left: region.x,
+                crop_top: region.y,
+                crop_right,
+                crop_bottom,
+                lines_omitted,
+                line_count_omitted,
+                line_characters_omitted,
+            },
+        })
     }
 
     pub fn eval(&mut self, code: &str) -> Result<console_core::mlua::Value, SessionError> {
@@ -907,6 +1089,128 @@ function _update() if t() * 60 >= 2 then for i = 0, 63 do pal(i, 0, 1) end end e
         session.step(1, 0).unwrap();
         let text = session.screen_text().unwrap();
         assert!(text[0].starts_with("A_"));
+    }
+
+    #[test]
+    fn screen_text_report_has_absolute_bounds_counts_and_omission_metadata() {
+        let mut session = Session::default();
+        session
+            .load_cart(
+                "__lua__\nfunction _draw() cls(0) rectfill(2,3,4,4,5) pset(10,10,63) end\n",
+                0,
+            )
+            .unwrap();
+        session.step(1, 0).unwrap();
+
+        let report = session
+            .screen_text_report(
+                ScreenTextRegion {
+                    x: 1,
+                    y: 2,
+                    width: 5,
+                    height: 4,
+                },
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            report.lines.unwrap(),
+            vec!["00000", "05550", "05550", "00000"]
+        );
+        assert_eq!(report.palette_counts.get(&0), Some(&14));
+        assert_eq!(report.palette_counts.get(&5), Some(&6));
+        assert_eq!(report.glyph_counts.get(&'5'), Some(&6));
+        assert_eq!(
+            report.non_background_bounds,
+            Some(ScreenTextRegion {
+                x: 2,
+                y: 3,
+                width: 3,
+                height: 2,
+            })
+        );
+        assert!(report.truncation.truncated);
+        assert_eq!(report.truncation.crop_left, 1);
+        assert_eq!(report.truncation.crop_top, 2);
+        assert_eq!(report.truncation.crop_right, 186);
+        assert_eq!(report.truncation.crop_bottom, 314);
+        assert!(!report.truncation.lines_omitted);
+
+        let summary = session
+            .screen_text_report(ScreenTextRegion::full(), false)
+            .unwrap();
+        assert!(summary.lines.is_none());
+        assert_eq!(summary.palette_counts.get(&5), Some(&6));
+        assert_eq!(summary.palette_counts.get(&63), Some(&1));
+        assert_eq!(summary.glyph_counts.get(&'_'), Some(&1));
+        assert_eq!(
+            summary.non_background_bounds,
+            Some(ScreenTextRegion {
+                x: 2,
+                y: 3,
+                width: 9,
+                height: 8,
+            })
+        );
+        assert_eq!(summary.truncation.cropped_pixels, 0);
+        assert!(summary.truncation.lines_omitted);
+        assert_eq!(summary.truncation.line_count_omitted, SCREEN_H as u32);
+        assert_eq!(summary.truncation.line_characters_omitted, FB_LEN);
+    }
+
+    #[test]
+    fn cropped_screen_text_line_output_has_a_hard_budget() {
+        let mut session = Session::default();
+        session.load_cart("__lua__\n", 0).unwrap();
+        let error = session
+            .screen_text_report(
+                ScreenTextRegion {
+                    x: 0,
+                    y: 0,
+                    width: SCREEN_W as u32,
+                    height: 100,
+                },
+                true,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("limited to"));
+        assert!(
+            session
+                .screen_text_report(
+                    ScreenTextRegion {
+                        x: 0,
+                        y: 0,
+                        width: SCREEN_W as u32,
+                        height: 100,
+                    },
+                    false,
+                )
+                .is_ok()
+        );
+        assert_eq!(session.screen_text().unwrap().len(), SCREEN_H);
+    }
+
+    #[test]
+    fn summary_size_stays_bounded_with_every_palette_glyph_present() {
+        let mut session = Session::default();
+        session
+            .load_cart(
+                "__lua__\nfunction _draw() cls(0) for i=0,63 do pset(i,0,i) end end\n",
+                0,
+            )
+            .unwrap();
+        session.step(1, 0).unwrap();
+        let report = session
+            .screen_text_report(ScreenTextRegion::full(), false)
+            .unwrap();
+        assert_eq!(report.palette_counts.len(), 64);
+        assert_eq!(report.glyph_counts.len(), 64);
+        let encoded = serde_json::to_vec(&report).unwrap();
+        assert!(
+            encoded.len() < 4_096,
+            "all-color summary must remain agent-safe, got {} bytes",
+            encoded.len()
+        );
     }
 
     #[test]
