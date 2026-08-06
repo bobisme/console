@@ -146,6 +146,13 @@ Fire Breath throat/back mutation, and the two pickup icons. Victory reuses
 `rise`. Title art reuses a live pose at native or `2x` nearest-neighbor scale;
 it does not redraw a smooth, procedural mascot.
 
+The swing pair must preserve the established head scale and at least an
+`18x20` occupied silhouette with substantial torso and hind-leg mass. Motion
+comes from a compact-versus-extended leg read, sprite flipping, the tongue
+angle, and velocity streaks—not by collapsing the frog into a skinny diagonal.
+Persistent eye overlays are anchored to the visible eye per pose and mirror
+with the sprite; they are never positioned from fixed screen-space offsets.
+
 Common insects each use three authored frames: neutral locomotion A/B plus a
 clear attack or dive anticipation. Buzzkill draws both pod cores plus ten
 left/right modules. Phase damage comes from omitted/displaced modules, the
@@ -304,7 +311,7 @@ Review renders show these sockets and rectangles over the native sprite.
 | Frog | feet anchor | `(0,0)` maps to current `(player_x+7, player_y+15)`; frame anchor is `12,23`. |
 | Frog | physics box | `x=-7, y=-15, w=14, h=16`; art may extend outside but contact limbs must agree visually. |
 | Frog | mouth/tongue/fire | `(facing*5,-9)`, matching `player_mouth()`. |
-| Frog | laser eyes | `(-6,-22)` and `(6,-22)`; beam begins at both eyes. |
+| Frog | laser-brace eyes | Facing right: `(+2,-15)` / `(+8,-15)`; facing left: `(-9,-15)` / `(-3,-15)`. The wide mirrored frame and both beam roots share these exact rendered eye centers. |
 | Frog | foot contacts | `(-5,0)` and `(5,0)`; grounded frames keep at least one planted. |
 | Boss | assembly anchor | `(0,0)` maps to current `(e.x+12,e.y+38)`. |
 | Boss | weapon envelope | Phases 1-2: `x=-46, y=-52, w=92, h=58`. Phase 3: `x=-46, y=-52, w=92, h=64`; the lowered claw reaches the new bottom while the surviving right upper wing reaches the top/right edges. |
@@ -350,7 +357,7 @@ define the accepted dynamic weapon and contact bounds. The transient shield and
 defeat blasts are VFX, not replacement pod geometry.
 
 Every frog overlay is `8x8` with anchor `4,4`. Draw blink ID `15` or persistent
-laser-eye ID `47` once at each eye socket; draw victory ID `31` centered at
+laser-eye ID `47` once on the visible side-profile eye; draw victory ID `31` centered at
 `(0,-16)`; draw persistent fire-throat ID `63` centered at `(facing*2,-8)`.
 Pickup IDs `79/95` use their own center anchor `4,4` in world space.
 

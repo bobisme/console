@@ -162,6 +162,12 @@ local function player_mouth()
   return player_x+(face_left and 2 or 12),player_y+6
 end
 
+-- The braced attack frame's two eye centers land at player-local x=9/15
+-- facing right and -2/4 facing left after the wide sprite is mirrored.
+local function player_laser_origin()
+  return player_x+(face_left and -2 or 9),player_y
+end
+
 local function player_center()
   return player_x+7,player_y+8
 end
@@ -738,6 +744,8 @@ local function constrain_rope()
 end
 
 local function laser_attack()
+  -- Preserve the established combat ray and close-range hit envelope. The
+  -- rendered beam starts at the authored eye points and converges on this ray.
   local mx,my=player_mouth()
   local ax,ay=mutation_aim_vector()
   local x,y=mx,my
@@ -2267,13 +2275,24 @@ local function draw_frog_pose(cx,feet,pose,left,hero_scale,flicker)
     end
   end
 
+  local eye_dx,eye_dy=2,-18
+  if anim=="run" or anim=="swing_extend" then
+    eye_dy=-19
+  elseif anim=="rise" then
+    eye_dx,eye_dy=-1,-20
+  elseif anim=="fall" then
+    eye_dx,eye_dy=2,-16
+  end
+  local eye_x=cx+(left and -eye_dx or eye_dx)*scale
+  local eye_y=feet+eye_dy*scale
   local blink=pose=="idle" and frame_now%211>=202 and frame_now%211<=208
-  if mutation=="LASER EYES" and pose~="recoil" then
-    overlay(47,cx-6*scale,feet-22*scale)
-    overlay(47,cx+6*scale,feet-22*scale)
+  if mutation=="LASER EYES" and pose~="recoil" and pose~="hurt" then
+    -- Side-profile art exposes one readable eye. One authored lens belongs on
+    -- that eye; duplicating it across the full sprite made two orbs float over
+    -- the frog whenever the atlas proportions changed.
+    overlay(47,eye_x,eye_y,left)
   elseif blink then
-    overlay(15,cx-6*scale,feet-22*scale)
-    overlay(15,cx+6*scale,feet-22*scale)
+    overlay(15,eye_x,eye_y,left)
   end
   if mutation=="FIRE BREATH" and pose~="mutate" then
     overlay(63,cx+(left and -2 or 2)*scale,feet-8*scale,left)
@@ -2285,18 +2304,25 @@ end
 -- Deterministic art probe for regression tests and external review tooling.
 -- It isolates the authored frog from scenery, reports the exact drawn indices,
 -- and leaves one legacy-ink sentinel proving the palette scope was restored.
-function dev_render_frog_probe(pose,scale,flicker,mutation_name)
+function dev_render_frog_probe(pose,scale,flicker,mutation_name,left)
   local prior_mutation=mutation
   mutation=mutation_name or "NONE"
   reset_draw_state()
   cls(0)
   local feet=(scale or 1)==1 and 40 or 56
-  draw_frog_pose(40,feet,pose or "idle",false,scale or 1,flicker or false)
+  draw_frog_pose(40,feet,pose or "idle",left or false,scale or 1,flicker or false)
   local seen={}
+  local lens_x0,lens_y0,lens_x1,lens_y1=nil,nil,nil,nil
   for y=0,80 do
     for x=0,80 do
       local ink=pget(x,y)
       if ink>0 then seen[ink]=true end
+      if ink==6 or ink==7 then
+        lens_x0=lens_x0 and min(lens_x0,x) or x
+        lens_y0=lens_y0 and min(lens_y0,y) or y
+        lens_x1=lens_x1 and max(lens_x1,x) or x
+        lens_y1=lens_y1 and max(lens_y1,y) or y
+      end
     end
   end
   local colors={}
@@ -2306,7 +2332,8 @@ function dev_render_frog_probe(pose,scale,flicker,mutation_name)
   pset(0,0,6)
   local sentinel=pget(0,0)
   mutation=prior_mutation
-  return {colors=table.concat(colors,","),sentinel=sentinel}
+  local lens=lens_x0 and string.format("%d,%d,%d,%d",lens_x0,lens_y0,lens_x1,lens_y1) or ""
+  return {colors=table.concat(colors,","),sentinel=sentinel,lens=lens}
 end
 
 local function draw_fire_fx()
@@ -2344,9 +2371,8 @@ end
 
 local function draw_laser_fx()
   if laser_timer<=0 then return end
-  local cx=player_x+7
-  local ey=player_y-7
-  local ex0,ex1=cx-6,cx+6
+  local cx,ey=player_laser_origin()
+  local ex0,ex1=cx,cx+6
   local pulse=laser_timer%3
   -- Cyan aura, white core, and a broken fringe read as energy instead of a flat bar.
   line(ex0,ey-2,laser_x2,laser_y2-2,10)
@@ -2369,6 +2395,35 @@ local function draw_laser_fx()
   end
   circ(laser_x2,laser_y2,7+pulse,10)
   circfill(laser_x2,laser_y2,3+pulse,63)
+end
+
+-- Draw the production recoil frame and active beam in isolation. The probe
+-- reports both the authored eye pixels before the effect and the exact beam
+-- roots afterward, so sprite edits cannot silently leave the laser floating.
+function dev_render_laser_probe(left)
+  local prior_x,prior_y=player_x,player_y
+  local prior_face,prior_mutation=face_left,mutation
+  local prior_timer,prior_x2,prior_y2=laser_timer,laser_x2,laser_y2
+  player_x,player_y=33,24
+  face_left=left or false
+  mutation="LASER EYES"
+  laser_timer,laser_x2,laser_y2=3,72,22
+  reset_draw_state()
+  cls(0)
+  draw_frog_pose(40,40,"recoil",face_left,1,false)
+  local cx,ey=player_laser_origin()
+  local ex0,ex1=cx,cx+6
+  local eye0,eye1=pget(ex0,ey),pget(ex1,ey)
+  draw_laser_fx()
+  local root0,root1=pget(ex0,ey),pget(ex1,ey)
+  player_x,player_y=prior_x,prior_y
+  face_left,mutation=prior_face,prior_mutation
+  laser_timer,laser_x2,laser_y2=prior_timer,prior_x2,prior_y2
+  return {
+    eyes=string.format("%d,%d",eye0,eye1),
+    roots=string.format("%d,%d;%d,%d",ex0,ey,ex1,ey),
+    root_inks=string.format("%d,%d",root0,root1)
+  }
 end
 
 local function draw_player()

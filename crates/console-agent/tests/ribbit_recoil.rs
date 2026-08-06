@@ -97,6 +97,25 @@ fn opaque_edge(frame: &[Vec<u8>], edge: &str) -> bool {
     }
 }
 
+fn opaque_bounds(frame: &[Vec<u8>]) -> (usize, usize, usize, usize) {
+    let mut min_x = usize::MAX;
+    let mut min_y = usize::MAX;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    for (y, row) in frame.iter().enumerate() {
+        for (x, color) in row.iter().enumerate() {
+            if *color != 0 {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x + 1);
+                max_y = max_y.max(y + 1);
+            }
+        }
+    }
+    assert_ne!(min_x, usize::MAX, "frame has no opaque pixels");
+    (min_x, min_y, max_x, max_y)
+}
+
 fn composed_opaque_bounds(
     sections: &BTreeMap<String, Vec<Vec<u8>>>,
     placements: &[(&str, i32, i32)],
@@ -1031,6 +1050,20 @@ fn frog_atlas_matches_source_and_obeys_semantic_pixel_contracts() {
             isolated_same_role_pixels(frame) <= 2,
             "@{name} exceeds the two-pixel isolated-accent budget"
         );
+        if name.starts_with("swing_") {
+            let opaque = frame.iter().flatten().filter(|&&color| color != 0).count();
+            let (x0, y0, x1, y1) = opaque_bounds(frame);
+            assert!(
+                opaque >= 280,
+                "@{name} collapsed to {opaque} opaque pixels; swing poses must preserve the frog's chunky body mass"
+            );
+            assert!(
+                x1 - x0 >= 18 && y1 - y0 >= 20,
+                "@{name} opaque bounds {}x{} no longer read as the established full frog silhouette",
+                x1 - x0,
+                y1 - y0
+            );
+        }
         if name == "run_a" || name == "run_b" {
             run_palettes.push(colors);
         }
@@ -1048,6 +1081,22 @@ fn frog_atlas_matches_source_and_obeys_semantic_pixel_contracts() {
     assert_eq!(
         run_palettes[0], run_palettes[1],
         "the run loop must not flicker between material ramps"
+    );
+    let idle = &sections["idle"];
+    let tuck = &sections["swing_tuck"];
+    let changed_pixels = idle
+        .iter()
+        .flatten()
+        .zip(tuck.iter().flatten())
+        .filter(|(standing, suspended)| standing != suspended)
+        .count();
+    assert!(
+        changed_pixels >= 30,
+        "swing_tuck changed only {changed_pixels} pixels from idle; it must be a distinct suspended pose"
+    );
+    assert!(
+        tuck[23].iter().filter(|&&color| color != 0).count() <= 4,
+        "swing_tuck must pull its feet inward instead of retaining idle's planted baseline"
     );
 
     let overlays: [(&str, usize, usize, &[u8]); 6] = [
@@ -1559,6 +1608,49 @@ fn frog_palette_scope_covers_all_render_modes_and_restores_legacy_ink() {
             session.console().unwrap().draw_state().draw_palette()[6],
             14,
             "{name} left the draw palette in the wrong state"
+        );
+    }
+
+    let right = request(
+        &mut session,
+        200,
+        "eval",
+        json!({"code": "return dev_render_frog_probe('idle',1,false,'LASER EYES',false)"}),
+    );
+    let left = request(
+        &mut session,
+        201,
+        "eval",
+        json!({"code": "return dev_render_frog_probe('idle',1,false,'LASER EYES',true)"}),
+    );
+    assert_eq!(
+        right["result"]["lens"], "40,20,42,23",
+        "right-facing Laser Eyes lens drifted off the visible authored eye"
+    );
+    assert_eq!(
+        left["result"]["lens"], "37,20,39,23",
+        "left-facing Laser Eyes lens must mirror onto the visible authored eye"
+    );
+
+    for (id, left) in [(202, false), (203, true)] {
+        let active = request(
+            &mut session,
+            id,
+            "eval",
+            json!({"code": format!("return dev_render_laser_probe({left})")}),
+        );
+        assert_eq!(
+            active["result"]["eyes"], "63,63",
+            "active Laser Eyes roots no longer coincide with authored eye pixels when left={left}"
+        );
+        let expected_roots = if left { "31,24;37,24" } else { "42,24;48,24" };
+        assert_eq!(
+            active["result"]["roots"], expected_roots,
+            "active Laser Eyes roots drifted when left={left}"
+        );
+        assert_eq!(
+            active["result"]["root_inks"], "63,63",
+            "active laser core did not begin on both eye roots when left={left}"
         );
     }
 }

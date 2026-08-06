@@ -160,7 +160,7 @@ review, and provenance artifacts, and reports zero palette error. The span path
 is the deliberate exception for these larger backdrop images under the current
 sheet budget.
 
-Two native-resolution scenarios guard the result:
+Four native-resolution scenarios guard the result:
 
 ```bash
 console playtest carts/ribbit-recoil.cart \
@@ -174,6 +174,10 @@ console playtest carts/ribbit-recoil.cart \
 console playtest carts/ribbit-recoil.cart \
   --scenario carts/ribbit-recoil-readability.playtest.json \
   --artifacts /tmp/ribbit-recoil-readability
+
+console playtest carts/ribbit-recoil.cart \
+  --scenario carts/ribbit-recoil-frog-art.playtest.json \
+  --artifacts /tmp/ribbit-recoil-frog-art
 ```
 
 The first captures all seven districts plus reference comparison boards. The
@@ -186,6 +190,12 @@ frog in five representative districts at native resolution and records a full
 hop arc, making actor silhouette and collision-edge readability explicit review
 gates. The latest strict blind actor-in-environment pass scored `7.8/10`; the
 acceptance threshold was `7.5`.
+
+The fourth scenario isolates the persistent Laser Eyes lens, both grapple-facing
+directions, compact and extended swing states, and both rendered eye roots of the
+live laser recoil in both facings. It keeps atlas edits from silently reintroducing
+floating mutation overlays, detached beams, or a different-looking frog only while
+the tongue is latched.
 
 ## Reproduce and inspect
 
