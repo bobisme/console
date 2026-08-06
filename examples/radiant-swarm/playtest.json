@@ -2,14 +2,14 @@
   "version": 1,
   "seed": 11,
   "stages": [
-    {"op": "assert", "name": "title", "code": "return dev_status().phase", "equals": "title"},
-    {"op": "eval", "name": "dense_setup", "code": "dev_stress()"},
-    {"op": "assert", "name": "playing", "code": "return dev_status().phase", "equals": "play"},
+    {"op": "hook", "name": "title", "hook": "status", "expect": {"op": "equals", "field": "phase", "value": "title"}},
+    {"op": "hook", "name": "dense_setup", "hook": "stress"},
+    {"op": "hook", "name": "playing", "hook": "status", "expect": {"op": "equals", "field": "phase", "value": "play"}},
     {"op": "input", "name": "focus_fire", "frames": 180, "buttons": "A"},
-    {"op": "assert", "name": "dense_entities", "code": "return dev_status().peak_alive >= 250", "equals": true},
-    {"op": "assert", "name": "dense_bullets", "code": "return dev_status().peak_bullets >= 120", "equals": true},
-    {"op": "assert", "name": "formation_language", "code": "return dev_status().formation ~= ''", "equals": true},
-    {"op": "assert", "name": "within_capacity", "code": "return dev_status().dropped_spawns", "equals": 0},
+    {"op": "hook", "name": "dense_entities", "hook": "status", "expect": {"op": "at_least", "field": "peak_alive", "value": 250}},
+    {"op": "hook", "name": "dense_bullets", "hook": "status", "expect": {"op": "at_least", "field": "peak_bullets", "value": 120}},
+    {"op": "hook", "name": "formation_language", "hook": "status", "expect": {"op": "not_equals", "field": "formation", "value": ""}},
+    {"op": "hook", "name": "within_capacity", "hook": "status", "expect": {"op": "equals", "field": "dropped_spawns", "value": 0}},
     {
       "op": "capture",
       "name": "storm_frame",
@@ -18,9 +18,9 @@
       "audio_stats": "storm-audio-stats.json"
     },
     {"op": "input", "name": "nova", "frames": 1, "buttons": "B"},
-    {"op": "assert", "name": "nova_feedback", "code": "return dev_status().nova_flash > 0", "equals": true},
+    {"op": "hook", "name": "nova_feedback", "hook": "status", "expect": {"op": "greater_than", "field": "nova_flash", "value": 0}},
     {"op": "input", "name": "release", "frames": 20, "buttons": ""},
-    {"op": "assert", "name": "bomb_spent", "code": "return dev_status().bombs", "equals": 2},
+    {"op": "hook", "name": "bomb_spent", "hook": "status", "expect": {"op": "equals", "field": "bombs", "value": 2}},
     {
       "op": "sequence",
       "name": "swarm_motion",
@@ -43,12 +43,12 @@
       "audio_stats": "audio-stats.json"
     },
     {"op": "input", "name": "advance_to_boss", "frames": 249, "buttons": ""},
-    {"op": "assert", "name": "choir_arrives", "code": "return dev_status().boss_phase", "equals": 1},
+    {"op": "hook", "name": "choir_arrives", "hook": "status", "expect": {"op": "equals", "field": "boss_phase", "value": 1}},
     {"op": "capture", "name": "choir_phase_one", "screenshot": "choir-phase-one.png", "zoom": 2},
-    {"op": "eval", "name": "force_counterpoint", "code": "dev_damage_boss(90)"},
+    {"op": "hook", "name": "force_counterpoint", "hook": "damage_boss", "args": 90},
     {"op": "input", "name": "enter_counterpoint", "frames": 1, "buttons": ""},
-    {"op": "assert", "name": "counterpoint_phase", "code": "return dev_status().boss_phase", "equals": 2},
-    {"op": "assert", "name": "counterpoint_clears_field", "code": "return dev_status().enemy_bullets", "equals": 0},
+    {"op": "hook", "name": "counterpoint_phase", "hook": "status", "expect": {"op": "equals", "field": "boss_phase", "value": 2}},
+    {"op": "hook", "name": "counterpoint_clears_field", "hook": "status", "expect": {"op": "equals", "field": "enemy_bullets", "value": 0}},
     {"op": "capture", "name": "choir_transition", "screenshot": "choir-transition.png", "zoom": 2}
   ]
 }

@@ -8,6 +8,7 @@ may be newer than this skill.
 
 - [`console` inventory](#console-inventory)
 - [`run`](#run)
+- [`hooks`](#hooks)
 - [`playtest`](#playtest)
 - [`rpc`](#rpc)
 - [`build`](#build)
@@ -30,6 +31,7 @@ may be newer than this skill.
 ```text
 console --help
 console run ...
+console hooks <cart|project> ...
 console playtest ...
 console rpc
 console build <project|console.toml> ...
@@ -123,6 +125,8 @@ console run <cart|project>
   [--screen-text]
   [--screen-text-region X,Y,WIDTH,HEIGHT]
   [--screen-text-summary]
+  [--hook-before NAME[=JSON]]
+  [--hook-after NAME[=JSON]]
   [--eval-before CODE]
   [--eval-after CODE]
   [--seed N]
@@ -150,6 +154,8 @@ are idle. An empty spec plus `--frames N` is an idle run.
 | `--screen-text` | Print the exact full 320-row × 192-character framebuffer dump. |
 | `--screen-text-region X,Y,WIDTH,HEIGHT` | Print only this strict native-pixel rectangle; implies `--screen-text`. Cropped raw output is capped at 16,384 characters. |
 | `--screen-text-summary` | Emit one compact JSON report instead of line glyphs; implies `--screen-text` and combines with a region. |
+| `--hook-before NAME[=JSON]` | Invoke one declared `pre_frame` hook before eval/input/frame 1. |
+| `--hook-after NAME[=JSON]` | Invoke one declared `post_frame` hook after frames and before eval/captures. |
 | `--eval-before CODE` | Evaluate after cart top-level + `_init`, before input/frame 1; discard the result. |
 | `--eval-after CODE` | Evaluate after all frames and JSON-serialize the result last on stdout. |
 | `--eval CODE` | Compatibility alias for `--eval-after`; do not combine the spellings. |
@@ -163,8 +169,9 @@ are idle. An empty spec plus `--frames N` is an idle run.
 | `--ecs-watch JSON` | Define one named bounded ECS query after load and emit its sample after stepping. JSON requires `name` and `world`; accepts `with`, `select`, `limit`, and `entity_delta_limit`. |
 
 Lifecycle order is fixed independently of flag order: load and `_init`, define
-the optional ECS watch, pre-frame eval, input/frame stepping, sample the watch,
-post-frame eval, then all requested captures. The watch JSON line is emitted
+the optional ECS watch, hook-before, pre-frame eval, input/frame stepping,
+hook-after, sample the watch, post-frame eval, then all requested captures.
+The watch JSON line is emitted
 with other diagnostics before the post-frame eval result, which remains last.
 A failing pre-frame eval exits before frames and artifacts. A failing
 post-frame eval is reported after captures from the completed run. `printh`
@@ -173,6 +180,22 @@ project that fails to compile, a halted runtime, or a failed eval exits 1.
 An unreadable/missing input path exits 2, as does invalid CLI syntax.
 `<project>` may be a directory containing `console.toml` or the manifest path;
 it is compiled and validated in memory without writing `[build].output`.
+
+Each hook flag may occur at most once. This intentional bound keeps one-shot
+lifecycle boundaries and stdout order unambiguous; use a playtest or RPC for
+multiple calls. `NAME` supplies nil and `NAME=JSON` supplies one bounded value.
+Each invocation emits `{name,phase,frame_count,result}`; an eval-after value,
+when requested, remains the final stdout record.
+
+## `hooks`
+
+```text
+console hooks <cart|project> [--seed N]
+```
+
+Load the cart through `_init` and print
+`{frame_count:0,hooks:[{name,description,phase},...]}` in registration order.
+Discovery never invokes a callback.
 
 Prefer a bounded raw crop for local pixel debugging and summary mode for a
 whole-screen inventory:
@@ -222,9 +245,9 @@ Version 1 schema:
   "version": 1,
   "seed": 0,
   "stages": [
-    {"op":"eval", "name":"setup", "code":"dev_warp(48,200)"},
+    {"op":"hook", "name":"setup", "hook":"start", "args":{"level":2}},
     {"op":"input", "name":"jump", "frames":12, "buttons":"RA"},
-    {"op":"assert", "code":"return dev_status().grounded", "equals":false},
+    {"op":"hook", "hook":"status", "expect":{"op":"equals","field":"grounded","value":false}},
     {
       "op":"ecs_watch",
       "name":"enemy baseline",
@@ -288,13 +311,17 @@ range at most 3,600 frames. Audio-stat windows are 1–36,000 frames.
 without either output. The same 16,384-glyph crop budget and report contract as
 `run`/RPC apply. Omit the region only when a full raw golden or full-screen
 summary is intentional.
-
 An `ecs_watch` stage always samples `watch`. On its first use, include a
 `define` object with the normal bounded query fields (`world`, optional `with`,
 `select`, `limit`, and `entity_delta_limit`); later stages omit `define` and
 reuse the name. Optional `artifact` writes the same JSON sample beneath
 `--artifacts`. Scenario preflight rejects undefined/redefined watches and
 unbounded query fields before loading the cart.
+`hook` supplies optional bounded JSON `args` and invokes at the hook's declared
+phase. Without `expect`, the report retains the full invocation response. An
+expectation is `{op,field?,value}` where `op` is `equals`, `not_equals`,
+`at_least`, or `greater_than`; `field` selects one top-level result field and
+numeric comparisons require a numeric value/result.
 Nested map captures accept `source: "authored"` (default) or `"live"` and one
 or more output paths: `png`, `dump`, `lint`. Optional `region` uses
 `cx,cy,cw,ch`; omitted regions use that snapshot's nonzero extent. Map zoom is
@@ -660,6 +687,8 @@ One line is one request. Important error codes: `-32700` parse error,
 | `ecs_watch_sample` | `{name}` | Return the current projection and its delta from this watch's prior explicit sample. |
 | `ecs_watch_list` | `{}` | Return definitions, sample counts, last frames, and global budgets. |
 | `ecs_watch_remove` | `{name}` | Remove one definition; return whether it existed. |
+| `dev_hooks` | `{}` | Ordered registered metadata plus `frame_count`. |
+| `dev_hook` | `{name,args?}` | Invoke at the declared phase; return `{name,phase,frame_count,result}`. |
 | `logs` | `{}` | Drain `printh` lines as `{logs}`. |
 | `save_state` | `{name}` | Save a replay checkpoint by name. |
 | `load_state` | `{name}` | Reset/replay it; return frame/halt state. |
@@ -675,7 +704,15 @@ One line is one request. Important error codes: `-32700` parse error,
 
 Saved states are reset-plus-replay, so they reproduce pixels, map mutations,
 audio samples, sequencer events, text events, and enabled draw traces rather
-than serializing opaque VM memory.
+than serializing opaque VM memory. Hook calls are replay events too,
+interleaved with frame steps in their exact original order; reset rebuilds the
+registry and clears recorded calls.
+
+Hook values are nil/null, boolean, finite number, UTF-8 string, dense array, or
+string-key object, bounded to depth 4, 128 values, 64 table entries, 4096
+string bytes, and 64 bytes per nonempty object key. An empty Lua table returns
+as `[]`. A `pre_frame` call is
+rejected after frame 0.
 
 `ecs_query` is the agent-facing ECS inspector. `with` is a dense array of at
 most 16 required component names. `select` maps at most 8 component names to

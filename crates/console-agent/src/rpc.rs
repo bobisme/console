@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::ecs_watch;
+use crate::hooks::{dev_value_to_json, json_to_dev_value, validate_name};
 use crate::map;
 use crate::music;
 use crate::session::{MAX_SESSION_DRAW_EVENTS, ScreenTextRegion, Session, SessionError};
@@ -158,6 +159,8 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "ecs_watch_sample" => m_ecs_watch_sample(session, params),
         "ecs_watch_list" => m_ecs_watch_list(session),
         "ecs_watch_remove" => m_ecs_watch_remove(session, params),
+        "dev_hooks" => m_dev_hooks(session, params),
+        "dev_hook" => m_dev_hook(session, params),
         "logs" => m_logs(session),
         "save_state" => m_save_state(session, params),
         "load_state" => m_load_state(session, params),
@@ -426,6 +429,56 @@ fn m_ecs_watch_list(session: &Session) -> Result<Value, RpcErr> {
 fn m_ecs_watch_remove(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
     let name = watch_name(params, "ecs_watch_remove")?;
     Ok(json!({"name": name, "removed": session.remove_ecs_watch(&name)}))
+}
+
+fn empty_object_params(params: &Value, method: &str) -> Result<(), RpcErr> {
+    match params {
+        Value::Null => Ok(()),
+        Value::Object(object) if object.is_empty() => Ok(()),
+        Value::Object(_) => Err(RpcErr::bad_params(format!(
+            "{method} does not accept params"
+        ))),
+        _ => Err(RpcErr::bad_params(format!(
+            "{method} params must be an object"
+        ))),
+    }
+}
+
+fn m_dev_hooks(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    empty_object_params(params, "dev_hooks")?;
+    let frame_count = session.console()?.frame_count();
+    let hooks = session.dev_hooks()?;
+    Ok(crate::hooks::hook_list_json(frame_count, &hooks))
+}
+
+fn m_dev_hook(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
+    let object = params
+        .as_object()
+        .ok_or_else(|| RpcErr::bad_params("dev_hook params must be an object"))?;
+    for key in object.keys() {
+        if !matches!(key.as_str(), "name" | "args") {
+            return Err(RpcErr::bad_params(format!(
+                "dev_hook has unknown param {key:?}; expected \"name\" or \"args\""
+            )));
+        }
+    }
+    let name = string_param(params, "name")
+        .ok_or_else(|| RpcErr::bad_params("dev_hook requires a \"name\" string param"))?;
+    let name = validate_name(name).map_err(RpcErr::bad_params)?;
+    let args = json_to_dev_value(params.get("args").unwrap_or(&Value::Null))
+        .map_err(RpcErr::bad_params)?;
+    let info = session
+        .dev_hooks()?
+        .into_iter()
+        .find(|hook| hook.name == name)
+        .ok_or_else(|| RpcErr::bad_params(format!("unknown development hook {name:?}")))?;
+    let invocation = session.invoke_dev_hook(&name, info.phase, args)?;
+    Ok(json!({
+        "name": invocation.name,
+        "phase": invocation.phase,
+        "frame_count": invocation.frame_count,
+        "result": dev_value_to_json(&invocation.result),
+    }))
 }
 
 fn m_logs(session: &mut Session) -> Result<Value, RpcErr> {

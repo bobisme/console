@@ -14,7 +14,7 @@
         "entity_delta_limit": 32
       }
     },
-    {"op": "eval", "name": "dense_setup", "code": "dev_stress()"},
+    {"op": "hook", "name": "dense_setup", "hook": "stress"},
     {"op": "ecs_watch", "name": "enemy_wave", "watch": "enemies"},
     {
       "op": "ecs_watch",

@@ -9,9 +9,9 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use console_core::{
-    CHANNEL_COUNT, COLOR_COUNT, COLOR_MASK, ChannelInfo, Console, DrawEvent, DrawTraceFrame, Error,
-    FB_LEN, LAYER_TRANSPARENT, PALETTE, SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W, TextDraw,
-    color_char, input,
+    CHANNEL_COUNT, COLOR_COUNT, COLOR_MASK, ChannelInfo, Console, DevHookInfo, DevHookPhase,
+    DevValue, DrawEvent, DrawTraceFrame, Error, FB_LEN, LAYER_TRANSPARENT, PALETTE,
+    SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W, TextDraw, color_char, input,
 };
 use serde::Serialize;
 
@@ -19,12 +19,31 @@ use crate::audio::{self, AudioEvent, AudioState, Spectrogram, StatsWindow};
 use crate::ecs_watch::{QueryDefinition, WatchDefinition, WatchMetadata, WatchSample, WatchStore};
 use crate::value::lua_to_json;
 
-/// A named save state: enough to recreate the exact console state via
-/// replay (`Console::new(cart_text, seed)` + step every mask in order).
+/// A named save state: enough to recreate the exact console state by
+/// rebuilding the cart/registrations, then replaying steps and hooks in order.
 #[derive(Clone)]
 pub struct SavedState {
     pub seed: u64,
     pub input_log: Vec<u8>,
+    replay_log: Vec<ReplayEvent>,
+}
+
+#[derive(Clone)]
+enum ReplayEvent {
+    Step(u8),
+    DevHook {
+        name: String,
+        phase: DevHookPhase,
+        args: DevValue,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DevHookInvocation {
+    pub name: String,
+    pub phase: DevHookPhase,
+    pub frame_count: u64,
+    pub result: DevValue,
 }
 
 /// The result of a `step` (or the replay inside `load_state`).
@@ -284,6 +303,7 @@ pub struct Session {
     console: Option<Console>,
     seed: u64,
     input_log: Vec<u8>,
+    replay_log: Vec<ReplayEvent>,
     saved_states: BTreeMap<String, SavedState>,
     /// Every sample rendered by every stepped frame since the last
     /// reset/load, in order. `audio_log.len() / SAMPLES_PER_FRAME` is the
@@ -319,6 +339,7 @@ impl Default for Session {
             console: None,
             seed: 0,
             input_log: Vec::new(),
+            replay_log: Vec::new(),
             saved_states: BTreeMap::new(),
             audio_log: Vec::new(),
             audio_events: Vec::new(),
@@ -368,6 +389,7 @@ impl Session {
         self.seed = seed;
         self.console = Some(console);
         self.input_log.clear();
+        self.replay_log.clear();
         self.saved_states.clear();
         self.clear_audio_log();
         self.text_events.clear();
@@ -391,6 +413,7 @@ impl Session {
         self.seed = seed;
         self.console = Some(console);
         self.input_log.clear();
+        self.replay_log.clear();
         self.clear_audio_log();
         self.text_events.clear();
         self.clear_draw_log();
@@ -426,6 +449,7 @@ impl Session {
         let mut halt_message = None;
         for _ in 0..frames {
             self.input_log.push(mask);
+            self.replay_log.push(ReplayEvent::Step(mask));
             let result = console.step(mask);
             let event_frame = if result.is_ok() {
                 console.frame_count()
@@ -640,6 +664,65 @@ impl Session {
             .ecs_query(world, required, select, limit, after)?)
     }
 
+    pub fn dev_hooks(&self) -> Result<Vec<DevHookInfo>, SessionError> {
+        Ok(self.console()?.dev_hooks()?)
+    }
+
+    pub fn invoke_dev_hook(
+        &mut self,
+        name: &str,
+        expected_phase: DevHookPhase,
+        args: DevValue,
+    ) -> Result<DevHookInvocation, SessionError> {
+        let console = self.console.as_mut().ok_or(SessionError::NoCart)?;
+        if let Some(error) = console.halted() {
+            return Err(SessionError::AlreadyHalted(error.message().to_string()));
+        }
+        let info = console
+            .dev_hooks()?
+            .into_iter()
+            .find(|hook| hook.name == name)
+            .ok_or_else(|| SessionError::BadParams(format!("unknown development hook {name:?}")))?;
+        if info.phase != expected_phase {
+            return Err(SessionError::BadParams(format!(
+                "development hook {name:?} has phase {}, not {}",
+                info.phase.as_str(),
+                expected_phase.as_str()
+            )));
+        }
+        if expected_phase == DevHookPhase::PreFrame && console.frame_count() != 0 {
+            return Err(SessionError::BadParams(format!(
+                "pre_frame development hook {name:?} cannot run after frame 0"
+            )));
+        }
+        self.replay_log.push(ReplayEvent::DevHook {
+            name: name.to_string(),
+            phase: expected_phase,
+            args: args.clone(),
+        });
+        let result = console.invoke_dev_hook(name, expected_phase, &args);
+        let frame_count = console.frame_count();
+        record_text_draws(
+            &mut self.text_events,
+            frame_count,
+            console.take_text_draws(),
+        );
+        record_draw_events(
+            &mut self.draw_events,
+            &mut self.draw_events_dropped,
+            &mut self.draw_event_index_frame,
+            &mut self.draw_event_next_index,
+            frame_count,
+            console.take_draw_events(),
+        );
+        Ok(DevHookInvocation {
+            name: name.to_string(),
+            phase: expected_phase,
+            frame_count,
+            result: result?,
+        })
+    }
+
     /// Save a bounded ECS query under a host-side name. Querying once here
     /// validates that the world exists, but does not establish a baseline;
     /// only explicit samples participate in deltas.
@@ -698,16 +781,16 @@ impl Session {
             SavedState {
                 seed: self.seed,
                 input_log: self.input_log.clone(),
+                replay_log: self.replay_log.clone(),
             },
         );
         Ok(())
     }
 
-    /// Recreate the console from the cart text and the saved state's seed,
-    /// then replay its input log frame-by-frame, rebuilding the audio log
-    /// and event log identically to a continuous run (the synth is
-    /// deterministic, so replay reproduces both byte-for-byte). Returns the
-    /// number of frames replayed.
+    /// Recreate the console from the cart text and saved seed, then replay
+    /// hook calls and input frames in their original order. Audio and host
+    /// event logs are rebuilt identically to a continuous run. Returns the
+    /// number of stepped frames replayed.
     pub fn load_state(&mut self, name: &str) -> Result<StepOutcome, SessionError> {
         let text = self.cart_text.clone().ok_or(SessionError::NoCart)?;
         let saved = self
@@ -731,8 +814,28 @@ impl Session {
         let mut prev_pattern = None;
         let mut halt_message = None;
         let mut replayed = 0u64;
-        for &mask in &saved.input_log {
-            let result = console.step(mask);
+        for event in &saved.replay_log {
+            if let ReplayEvent::DevHook { name, phase, args } = event {
+                if let Err(error) = console.invoke_dev_hook(name, *phase, args) {
+                    halt_message = Some(error.message().to_string());
+                    break;
+                }
+                let event_frame = console.frame_count();
+                record_text_draws(&mut text_events, event_frame, console.take_text_draws());
+                record_draw_events(
+                    &mut draw_events,
+                    &mut draw_events_dropped,
+                    &mut draw_event_index_frame,
+                    &mut draw_event_next_index,
+                    event_frame,
+                    console.take_draw_events(),
+                );
+                continue;
+            }
+            let ReplayEvent::Step(mask) = event else {
+                unreachable!()
+            };
+            let result = console.step(*mask);
             let event_frame = if result.is_ok() {
                 console.frame_count()
             } else {
@@ -775,6 +878,7 @@ impl Session {
 
         self.seed = saved.seed;
         self.input_log = saved.input_log;
+        self.replay_log = saved.replay_log;
         self.console = Some(console);
         self.audio_log = audio_log;
         self.audio_events = audio_events;

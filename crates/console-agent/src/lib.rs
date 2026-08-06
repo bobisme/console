@@ -22,6 +22,7 @@
 pub mod artifact;
 pub mod audio;
 pub mod ecs_watch;
+pub mod hooks;
 pub mod input_spec;
 pub mod map;
 pub mod music;
@@ -40,13 +41,16 @@ pub mod visual;
 
 pub const RUN_USAGE: &str = "\
 usage:
-  console run <cart|project> [--frames N] [--input SPEC] [--eval-before CODE] [--eval-after CODE]
+  console run <cart|project> [--frames N] [--input SPEC] [--hook-before NAME[=JSON]] [--hook-after NAME[=JSON]]
+                    [--eval-before CODE] [--eval-after CODE]
                     [--screenshot out.png] [--screen-text] [--screen-text-region X,Y,WIDTH,HEIGHT]
                     [--screen-text-summary] [--seed N]
                     [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats] [--text-events]
                     [--draw-trace trace.json] [--ecs-watch JSON]
 
 phases:
+  --hook-before CALL after cart top-level + _init, before eval/input/frame 1 (at most once)
+  --hook-after CALL  after frames, before post-frame eval/captures (at most once)
   --eval-before CODE  after cart top-level + _init, before input/frame 1; result discarded
   --eval-after CODE   after all frames, before captures; result printed as JSON last
   --eval CODE         compatibility alias for --eval-after
@@ -65,7 +69,11 @@ pub const RPC_USAGE: &str = "usage:\n  console rpc";
 /// inventory so a newly-added leaf cannot silently disappear from discovery.
 pub fn usage() -> String {
     format!(
-        "{RUN_USAGE}\n  console playtest <cart|project> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console rpc\n  {}\n  console pack <cart|project> -o <out.html> [--engine FILE] [--template FILE]\n  console serve <cart|project> [--host HOST] [--port PORT] [--engine FILE] [--template FILE]\n  console palette <{}> ...\n  console sprite <{}> ...\n  console map <{}> ...\n  console music <{}> ...\n  console scene <{}> ...",
+        "{RUN_USAGE}\n  {}\n  console playtest <cart|project> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console rpc\n  {}\n  console pack <cart|project> -o <out.html> [--engine FILE] [--template FILE]\n  console serve <cart|project> [--host HOST] [--port PORT] [--engine FILE] [--template FILE]\n  console palette <{}> ...\n  console sprite <{}> ...\n  console map <{}> ...\n  console music <{}> ...\n  console scene <{}> ...",
+        hooks::USAGE
+            .lines()
+            .nth(1)
+            .unwrap_or("console hooks <cart|project>"),
         project::BUILD_USAGE
             .lines()
             .next()
@@ -103,6 +111,7 @@ pub fn cli_main(args: &[String]) -> i32 {
                 2
             }
         },
+        Some("hooks") => hooks::cli_hooks(&args[2..]),
         Some("playtest") => playtest::cli_playtest(&args[2..]),
         Some("build") => project::cli_build(&args[2..]),
         Some("palette") => palette::cli_palette(&args[2..]),

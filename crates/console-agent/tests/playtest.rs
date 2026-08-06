@@ -139,6 +139,54 @@ fn assertion_failure_is_a_structured_exit_one() {
 }
 
 #[test]
+fn hook_stages_support_declared_phases_and_bounded_expectations() {
+    let dir = scratch("hooks");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    let scenario = dir.join("hooks.json");
+    fs::write(
+        &cart,
+        r#"__lua__
+value=0
+devhook.register("start", {description="setup", phase="pre_frame", run=function(args) value=args end})
+devhook.register("status", {description="inspect", phase="post_frame", run=function(_) return {value=value} end})
+function _update() value=value+1 end
+"#,
+    )
+    .unwrap();
+    fs::write(
+        &scenario,
+        serde_json::to_vec_pretty(&json!({
+            "version":1,
+            "stages":[
+                {"op":"hook","name":"setup","hook":"start","args":9},
+                {"op":"input","frames":1},
+                {"op":"hook","name":"exact","hook":"status","expect":{"op":"equals","field":"value","value":10}},
+                {"op":"hook","name":"threshold","hook":"status","expect":{"op":"at_least","field":"value","value":9}}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = run(&[
+        "playtest",
+        as_str(&cart),
+        "--scenario",
+        as_str(&scenario),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["scenario"]["status"], "passed");
+    assert_eq!(report["stages"][2]["actual"], 10);
+}
+
+#[test]
 fn scenario_captures_bounded_screen_text_and_compact_summary() {
     let dir = scratch("screen-text-region");
     fs::create_dir_all(&dir).unwrap();

@@ -39,6 +39,7 @@ orientation, not the spec.
 | Audio | 6 channels, waveforms: pulse 12.5%/25%, square, triangle, saw, noise, plus 8 cart-defined 32×4-bit wavetables |
 | Script | Lua 5.4 (mlua, vendored), sandboxed — no host `io`/`os`/`debug`/`package`; project builds provide a private static `require` |
 | Entities | deterministic console-native Lua ECS; creation-order queries, deferred structural edits, bounded host inspection |
+| Dev hooks | cart-registered deterministic setup/inspection callbacks with bounded JSON-like arguments and results |
 | Cart | projects compile normal source files into one plain-text `.cart`: Lua + sprites (64-character grid) + tile map + sfx/music (tracker text) |
 
 192×320 is the retained platform resolution, not a transitional or optional
@@ -64,6 +65,10 @@ bounded field projection through the read-only `ecs_query` RPC. The
 multi-file `examples/radiant-swarm` bullet hell is the reference vertical slice.
 Named ECS watches reuse a bounded projection across selected frames and report
 population/component/returned-ID deltas without retaining an unbounded log.
+That cart also demonstrates the `devhook.register` convention: discover hooks
+with `console hooks`, invoke one at a declared pre/post-frame boundary from
+`console run`, RPC, or a playtest, and retain exact hook/step order through
+save-state replay.
 
 ## Repo layout
 
@@ -233,6 +238,9 @@ tables; `ecs_watch_*` saves those selectors and compares explicit samples.
 Screen-text requests can select a strict native-pixel region or return a
 compact count/bounds summary, avoiding a 192×320 glyph dump when an agent only
 needs a HUD, dialog, or collision area. Full method list in SPEC.md.
+Registered cart hooks are discoverable with `dev_hooks` and invoked through the
+protected `dev_hook` host path; unlike arbitrary eval, their metadata, values,
+lifecycle phase, and replay semantics are part of the platform contract.
 
 For repeatable multi-stage acceptance, use a versioned playtest scenario
 instead of hand-driving an RPC session:

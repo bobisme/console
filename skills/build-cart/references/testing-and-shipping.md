@@ -47,28 +47,29 @@ console run game.cart \
   --seed 0 \
   --screenshot /tmp/game-f180.png \
   --screenshot-zoom 2 \
-  --eval-after 'return dev_status()' \
+  --hook-after status \
   --wav /tmp/game.wav \
   --audio-events \
   --audio-stats \
   --text-events
 ```
 
-Use `--eval-before CODE` when a run needs deterministic setup that must exist
-before frame 1, such as `dev_start()`, a warp, or a dense stress state. It runs
-after cart top-level code and `_init`, but before input is latched. Use
-`--eval-after CODE` for the one JSON inspection result after all frames:
+Prefer registered hooks for stable setup and inspection; reserve eval flags
+for temporary exploration. A pre-frame hook runs after cart top-level and
+`_init`, before input is latched. A post-frame hook runs after all frames:
 
 ```bash
 console run game.cart --frames 180 --input '180:A' \
-  --eval-before 'dev_stress()' \
-  --eval-after 'return dev_status()' \
+  --hook-before stress \
+  --hook-after status \
   --screenshot /tmp/stress.png
 ```
 
-Flag order does not change lifecycle order. Screenshots, screen text, audio,
-and event captures are collected after the post-frame eval. The setup return
-value is discarded; only the post-frame result is serialized, last, on stdout.
+Flag order does not change lifecycle order: hook-before, eval-before, frames,
+hook-after, eval-after, then captures/output. A run accepts at most one hook
+per phase so its boundaries and response order stay obvious; use RPC or a
+playtest for longer flows. Hook responses include name, phase, frame, and
+result. If present, eval-after remains the final stdout record.
 `--eval` is an alias for `--eval-after`, but prefer the explicit name in new
 automation.
 
@@ -112,7 +113,7 @@ Send one JSON object per line:
 {"jsonrpc":"2.0","id":3,"method":"save_state","params":{"name":"before_jump"}}
 {"jsonrpc":"2.0","id":4,"method":"step","params":{"frames":1,"input":"A"}}
 {"jsonrpc":"2.0","id":5,"method":"step","params":{"frames":20,"input":"R"}}
-{"jsonrpc":"2.0","id":6,"method":"eval","params":{"code":"return dev_status()"}}
+{"jsonrpc":"2.0","id":6,"method":"dev_hook","params":{"name":"status"}}
 {"jsonrpc":"2.0","id":7,"method":"screenshot","params":{"path":"/tmp/jump.png","zoom":2}}
 {"jsonrpc":"2.0","id":8,"method":"text_events","params":{"from_frame":30}}
 {"jsonrpc":"2.0","id":9,"method":"ecs_query","params":{"world":"arena","with":["enemy","pos"],"select":{"enemy":["kind","hp"],"pos":["x","y"]},"limit":32}}
@@ -129,7 +130,7 @@ through `eval`. Ask only for the component fields needed to test the current
 hypothesis, assert `alive`/`matched`/`returned`, and follow `next_after` while
 `truncated` is true. This keeps inspection bounded even when hundreds of
 bullets are live. Do not step between pages when they must describe the same
-world snapshot. Pair it with a small `dev_status()` for semantic game state
+world snapshot. Pair it with a small registered `status` hook for semantic game state
 such as phase, score, peak entity count, and dropped-spawn count.
 
 When the question is about change over time, define the projection once and
@@ -150,33 +151,33 @@ attack, clear, and cleanup boundaries.
 
 ## Developer hooks
 
-Expose small Lua globals that report or arrange state through the real game
-logic. Keep them deterministic and harmless in normal play:
+Register hooks that report or arrange state through the real game logic. They
+remain inert in normal play and use the protected host invocation path:
 
 ```lua
-function dev_status()
-  return {
-    scene=scene,
-    player={x=player.x,y=player.y,vx=player.vx,vy=player.vy},
-    grounded=player.grounded,
-    collectibles=collectibles,
-    won=won,
-  }
-end
+devhook.register("status", {
+  description="Return semantic gameplay state",
+  phase="post_frame",
+  run=function(_args)
+    return {scene=scene,grounded=player.grounded,won=won}
+  end,
+})
 
-function dev_start()
-  if scene == "title" then start_game() end
-end
-
-function dev_warp(x,y)
-  player.x,player.y=x,y
-  player.vx,player.vy=0,0
-end
+devhook.register("start", {
+  description="Enter play before frame one",
+  phase="pre_frame",
+  run=function(_args) if scene == "title" then start_game() end end,
+})
 ```
 
 Prefer calling shared functions (`start_game`) over mutating half of a state
 transition. Hooks should help reach expensive states, while at least one
 scenario still exercises the player-facing path to them.
+
+List metadata with `console hooks game.cart`. Hook values are one bounded
+JSON-like scalar/table; see the Lua API reference for exact budgets. Save/load
+replays calls in exact order beside steps. Reset rebuilds registrations and
+clears calls.
 
 ## Playtest scenarios
 
@@ -187,12 +188,12 @@ Promote valuable smoke scripts into strict versioned JSON:
   "version": 1,
   "seed": 0,
   "stages": [
-    {"op":"eval","name":"start","code":"dev_start()"},
-    {"op":"assert","code":"return dev_status().scene","equals":"play"},
+    {"op":"hook","name":"start","hook":"start"},
+    {"op":"hook","hook":"status","expect":{"op":"equals","field":"scene","value":"play"}},
     {"op":"input","name":"approach","frames":90,"buttons":"R"},
     {"op":"input","name":"jump","frames":1,"buttons":"RA"},
     {"op":"input","frames":30,"buttons":"R"},
-    {"op":"assert","code":"return dev_status().grounded","equals":false},
+    {"op":"hook","hook":"status","expect":{"op":"equals","field":"grounded","value":false}},
     {
       "op":"capture",
       "name":"jump_apex",
@@ -217,6 +218,13 @@ artifact_dir=$(mktemp -d)
 console playtest game.cart --scenario playtests/game.json \
   --artifacts "$artifact_dir" --format json
 ```
+
+A `hook` stage invokes the callback at its declared phase. Omit `expect` to
+retain the full `{name,phase,frame_count,result}` in the report. Expectations
+select an optional top-level `field` and use `equals`, `not_equals`,
+`at_least`, or `greater_than` with a required `value`; the last two require a
+numeric result. This keeps common semantic assertions declarative without
+exposing arbitrary Lua execution.
 
 Scenario principles:
 

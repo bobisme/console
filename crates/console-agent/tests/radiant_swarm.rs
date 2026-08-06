@@ -3,9 +3,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use console_agent::hooks::dev_value_to_json;
 use console_agent::rpc::handle;
 use console_agent::session::Session;
 use console_agent::value::lua_to_json;
+use console_core::{DevHookPhase, DevValue};
 use serde_json::{Value, json};
 
 fn cart_text() -> String {
@@ -22,10 +24,19 @@ fn eval_json(session: &mut Session, code: &str) -> Value {
     lua_to_json(&value)
 }
 
+fn hook(session: &mut Session, name: &str, phase: DevHookPhase, args: DevValue) -> Value {
+    let result = session.invoke_dev_hook(name, phase, args).unwrap();
+    dev_value_to_json(&result.result)
+}
+
+fn status(session: &mut Session) -> Value {
+    hook(session, "status", DevHookPhase::PostFrame, DevValue::Null)
+}
+
 fn stress(session: &mut Session) -> Value {
-    eval_json(session, "dev_stress()");
+    hook(session, "stress", DevHookPhase::PreFrame, DevValue::Null);
     session.step(180, console_core::input::A).unwrap();
-    eval_json(session, "return dev_status()")
+    status(session)
 }
 
 #[test]
@@ -73,11 +84,9 @@ fn dense_swarm_is_deterministic_and_inspectable() {
     }));
 
     first.step(1, console_core::input::B).unwrap();
-    assert_eq!(eval_json(&mut first, "return dev_status().bombs"), 2);
+    assert_eq!(status(&mut first)["bombs"], 2);
     assert!(
-        eval_json(&mut first, "return dev_status().enemy_bullets")
-            .as_u64()
-            .unwrap()
+        status(&mut first)["enemy_bullets"].as_u64().unwrap()
             < first_status["enemy_bullets"].as_u64().unwrap()
     );
 }
@@ -86,24 +95,39 @@ fn dense_swarm_is_deterministic_and_inspectable() {
 fn boss_can_spawn_and_end_the_run_in_victory() {
     let mut session = Session::new();
     session.load_cart(&cart_text(), 23).unwrap();
-    eval_json(&mut session, "dev_stress()");
+    hook(
+        &mut session,
+        "stress",
+        DevHookPhase::PreFrame,
+        DevValue::Null,
+    );
     session.step(540, 0).unwrap();
 
-    let boss = eval_json(&mut session, "return dev_status()");
+    let boss = status(&mut session);
     assert_eq!(boss["phase"], "play");
     assert!(boss["boss_hp"].as_u64().unwrap() > 0, "{boss}");
     assert_eq!(boss["boss_phase"], 1);
     assert_eq!(boss["dropped_spawns"], 0);
 
-    eval_json(&mut session, "dev_damage_boss(90)");
+    hook(
+        &mut session,
+        "damage_boss",
+        DevHookPhase::PostFrame,
+        DevValue::Integer(90),
+    );
     session.step(1, 0).unwrap();
-    let counterpoint = eval_json(&mut session, "return dev_status()");
+    let counterpoint = status(&mut session);
     assert_eq!(counterpoint["boss_phase"], 2);
     assert!(counterpoint["boss_transition"].as_u64().unwrap() > 0);
     assert_eq!(counterpoint["enemy_bullets"], 0);
 
-    eval_json(&mut session, "dev_damage_boss(9999)");
-    let won = eval_json(&mut session, "return dev_status()");
+    hook(
+        &mut session,
+        "damage_boss",
+        DevHookPhase::PostFrame,
+        DevValue::Integer(9999),
+    );
+    let won = status(&mut session);
     assert_eq!(won["phase"], "victory");
     assert_eq!(won["boss_hp"], 0);
     assert_eq!(won["enemy_bullets"], 0);

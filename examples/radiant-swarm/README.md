@@ -24,9 +24,10 @@ Run or serve the source project directly:
 ```bash
 console run examples/radiant-swarm --frames 300 --input '1:A,299:RA' \
   --screenshot /tmp/radiant.png --screenshot-zoom 2 \
-  --eval-after 'return dev_status()'
+  --hook-after status
 console run examples/radiant-swarm --frames 180 --input '180:A' \
-  --eval-before 'dev_stress()' --eval-after 'return dev_status()'
+  --hook-before stress --hook-after status
+console hooks examples/radiant-swarm
 console serve examples/radiant-swarm
 ```
 
@@ -49,7 +50,7 @@ For population changes, define the projection once and sample selected frames:
 `watch-playtest.json` is the compact regression for enemy-wave arrival, bullet
 growth, and nova despawns.
 
-The `dev_stress()` hook starts an invulnerable deterministic stress pattern;
+The registered `stress` hook starts an invulnerable deterministic stress pattern;
 `playtest.json` uses it for repeatable entity-count, capacity, motion, visual,
-and audio evidence. `dev_status()` also exposes the active formation, boss
+and audio evidence. The `status` hook also exposes the active formation, boss
 phase/transition, graze chain, and short feedback timers for exact assertions.

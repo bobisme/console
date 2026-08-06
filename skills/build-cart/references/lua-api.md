@@ -477,15 +477,47 @@ function _update()
 end
 ```
 
-Expose small developer hooks for playtests without giving the game a second
-logic path:
+### Development hooks
+
+Register small host-facing hooks without giving the game a second logic path:
 
 ```lua
-function dev_status()
-  return {scene=scene, x=player.x, y=player.y, won=won}
-end
+devhook.register("status", {
+  description="Return semantic player and scene state",
+  phase="post_frame",
+  run=function(_args)
+    return {scene=scene,x=player.x,y=player.y,won=won}
+  end,
+})
 
-function dev_warp(x, y)
-  player.x, player.y = x, y
-end
+devhook.register("start", {
+  description="Enter play before frame one",
+  phase="pre_frame",
+  run=function(_args) start_game() end,
+})
 ```
+
+Registration is legal only at cart top-level or inside `_init`, and closes
+before frame 1. The spec table accepts exactly `description`, `phase`, and
+`run`. Names use the 1–64 byte identifier grammar; descriptions are 1–160
+bytes; phases are `pre_frame` or `post_frame`; at most 32 hooks may be
+registered. Duplicates, unknown fields, invalid metadata, and late
+registration halt loading/execution. The public table has only `register`;
+host discovery/invocation remains protected if cart code overwrites `devhook`.
+
+Callbacks receive one argument and return one result. Both are bounded
+JSON-like values: nil, boolean, finite number, UTF-8 string, dense array, or
+string-key object. The limits are depth 4, 128 values, 64 aggregate table
+entries, 4096 aggregate string bytes, and 64 bytes per nonempty key. Do not
+return functions, userdata, coroutines, mixed/sparse tables, cycles, NaN, or
+infinity. An empty Lua table becomes `[]`; include a named field when the
+result must remain an object. Hooks remain inert during normal play and obey
+the ordinary Lua sandbox and deterministic rules. A callback or result-contract
+error halts the console so partially mutated state cannot continue outside the
+replay log.
+
+Use `pre_frame` only for setup that must precede frame 1. Use `post_frame` for
+inspection or deliberate mutation at a completed boundary (frame 0 is a valid
+boundary). Reset rebuilds registration and clears calls. Named save states
+replay hook calls and steps in their original order. Inspect exact host syntax
+in [the command reference](command-reference.md#hooks).

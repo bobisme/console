@@ -103,8 +103,13 @@ for delta completeness and rewind semantics.
   gameplay still consumes only the native runtime APIs.
 - Define reusable timbres in `__instruments__`; let SFX rows name instruments
   and let `__music__` arrange SFX IDs into songs.
-- Put stable developer hooks in the cart when they make deterministic testing
-  easier, such as `dev_status()`, `dev_warp(x,y)`, or `dev_start()`.
+- Register stable developer hooks with `devhook.register` when they make
+  deterministic testing easier. Declare `pre_frame` setup separately from
+  `post_frame` inspection; keep values bounded and route through `console
+  hooks`, run flags, RPC, or declarative playtests instead of ad hoc globals.
+  See [Lua API](references/lua-api.md#development-hooks) for the exact registry
+  contract and [testing and shipping](references/testing-and-shipping.md#developer-hooks)
+  for patterns.
 
 ## Use tools instead of brittle text surgery
 

@@ -114,8 +114,41 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `printh(s)` | log line to host (harness `logs`, browser console). Never draws. |
 | `ecs.world(name, [options])` | create one named deterministic entity world; `options.capacity` defaults to 1024 and is capped at 4096 |
 | `ecs.inspect(name, [options])` | return the same bounded, read-only projection used by the host `ecs_query` RPC; intended for diagnostics rather than game logic |
+| `devhook.register(name, spec)` | register a deterministic host-invokable development hook during cart top-level or `_init`; see below |
 
 All draw coordinates are floats, truncated toward negative infinity (`flr`) before use.
+
+### Development hooks
+
+`devhook.register(name,{description=...,phase=...,run=function(args)...end})`
+registers optional deterministic setup and inspection callbacks. Registration
+is permitted only while executing cart top-level code or `_init`; the registry
+is locked before frame 1. A cart may register at most 32 hooks. Names are 1–64
+bytes and follow the ECS name grammar; descriptions are required 1–160 byte
+strings; `phase` is exactly `pre_frame` or `post_frame`; duplicate names,
+unknown spec fields, late registration, and non-function callbacks are cart
+errors. The public `devhook` table exposes registration only. Host list/invoke
+closures are retained privately, so replacing that global cannot spoof them.
+
+`pre_frame` hooks may run only while `frame_count == 0`, after top-level and
+`_init` but before frame 1. `post_frame` hooks run at a stable completed-frame
+boundary, including frame 0. Hosts validate the expected phase before entering
+the Lua callback. Hooks are inert in ordinary play unless a host explicitly
+invokes one; they ship in the cart and have the same sandbox/determinism rules
+as all other Lua.
+
+Arguments and results are one JSON-like value: nil/null, boolean, finite
+number, UTF-8 string, dense array, or string-keyed object. Mixed-key/sparse
+tables, unsupported Lua types, invalid UTF-8, and non-finite numbers fail.
+Each direction is capped at depth 4, 128 total values, 64 aggregate table
+entries, 4096 aggregate string bytes, and 64 bytes per nonempty object key.
+The host records phase/name-validated dispatch attempts beside frame steps;
+callback errors or invalid results halt the console so partially mutated state
+cannot continue unreplayably. Save/load
+rebuilds the cart and registry, then replays both event kinds in their exact
+original order. Reset rebuilds registrations and drops the recorded calls.
+An empty Lua table is serialized as an empty array; return at least one named
+field when an empty-looking result must remain an object.
 
 ### Entity component system
 
@@ -755,12 +788,15 @@ on every platform and target. No wall clock, no OS entropy, no float
 non-determinism (avoid trig on the Rust side of the render path; Lua floats are
 IEEE 754 doubles everywhere and are fine).
 
-Save states = (cart hash, seed, input log); loading = reset + replay. Replays double
-as regression tests: `(cart, input log) → expected framebuffer hash`.
+Save states retain the seed and ordered step/development-hook replay log;
+loading rebuilds the cart and registrations, then replays that stream. Replays
+double as regression tests:
+`(cart, seed, event log) → expected framebuffer hash`.
 
 ## Agent harness (`console`)
 
 Oneshot: `console run <cart|project> [--frames N] [--input SPEC]
+[--hook-before NAME[=JSON]] [--hook-after NAME[=JSON]]
 [--eval-before CODE] [--eval-after CODE] [--screenshot out.png]
 [--screenshot-zoom N] [--screen-text] [--screen-text-region X,Y,WIDTH,HEIGHT]
 [--screen-text-summary] [--text-events] [--draw-trace trace.json]
@@ -770,9 +806,10 @@ where SPEC is comma-separated `COUNT:BUTTONS`, e.g. `30:,10:R,5:RA,60:` (empty
 buttons = no input).
 
 The run lifecycle is fixed independently of flag order: parse/compile the cart;
-execute its Lua top level and `_init`; run `--eval-before` once; apply the input
-mask and step every requested frame; sample the optional bounded ECS watch;
-run `--eval-after` once; then collect the
+execute its Lua top level and `_init`; invoke `--hook-before` once; run
+`--eval-before` once; apply the input mask and step every requested frame;
+invoke `--hook-after` once; sample the optional bounded ECS watch; run
+`--eval-after` once; then collect the
 final screenshot, framebuffer text, audio, events, and draw trace. The setup
 eval's return value is discarded. The post-frame value is JSON-serialized last
 on stdout, after the watch report and any other requested diagnostic output.
@@ -780,6 +817,12 @@ on stdout, after the watch report and any other requested diagnostic output.
 `with`, `select`, `limit`, and `entity_delta_limit`; duplicate flags are
 rejected. `--eval CODE` remains an
 alias for `--eval-after CODE`, and the two spellings cannot both be supplied.
+A hook call is `NAME` for a nil argument or `NAME=JSON` for one bounded value.
+Each hook flag is deliberately accepted at most once: one-shot runs retain a
+single unambiguous setup/inspection boundary and stdout order; use playtests or
+RPC for ordered multi-hook flows. Every hook result is one JSON line containing
+`name`, `phase`, `frame_count`, and `result`; any eval-after value remains the
+final stdout record.
 A failing pre-frame eval exits before any frame or artifact; a failing
 post-frame eval still permits final artifacts from the completed run.
 
@@ -810,6 +853,9 @@ one response per line on stdout. Methods:
   projection plus numeric, component-count, and returned-ID deltas
 - `ecs_watch_list {}` / `ecs_watch_remove {name}` — inspect bounded watch
   metadata or remove one definition
+- `dev_hooks {}` — ordered immutable hook metadata plus `frame_count`
+- `dev_hook {name,args?}` — invoke at the hook's declared phase; return
+  `{name,phase,frame_count,result}`
 - `logs {}` — drain `printh` output
 - `text_events {from_frame?}` — every `print` call with frame, text, alignment,
   world/screen anchor, screen-space logical bounds, color, visibility, and
@@ -819,7 +865,7 @@ one response per line on stdout. Methods:
 - `draw_events {from_frame?,tag?,clear?}` — bounded draw calls with frame/order,
   operation, semantic tag, world/screen/visible bounds, camera, clip, palette,
   fill, sprite/animation identity, and dropped-event count
-- `save_state {name}` / `load_state {name}` — replay-based
+- `save_state {name}` / `load_state {name}` — replay ordered inputs and hook calls
 - `info {}` — frame count, cart meta, seed, input log length
 
 Plus the audio-inspection verbs (`audio_state`, `audio_events`,
@@ -855,8 +901,10 @@ exception. `truncated` is true when the rectangle crops the framebuffer and/or
 summary mode omits its line glyphs, with the independent counts explaining
 which occurred.
 
-Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback in
-`data`, and the console stays alive.
+Errors (bad cart, Lua error) come back as JSON-RPC errors with the Lua traceback
+in `data`. Ordinary eval errors leave the session available; a development-hook
+callback/result error halts the console because the callback may have partially
+mutated replayed state.
 
 `run`, `playtest`, `pack`, and `serve` accept a standalone `.cart`, a
 `console.toml`, or its project directory. Projects compile and validate in
@@ -882,6 +930,9 @@ are:
   and/or labeled review board;
 - `{"op":"assert","code":"return ...","equals":<json>}` — exact JSON
   comparison of the evaluated value;
+- `{"op":"hook","hook":"status","args":<json>,"expect":{...}}` — invoke
+  at the declared phase; optionally compare the whole result or one top-level
+  field with `equals`, `not_equals`, `at_least`, or `greater_than`;
 - `{"op":"ecs_watch","watch":"bullets","define":{"world":"arena",
   "with":["hostile"]}}` — define and sample a bounded named query; later
   stages omit `define` and send only `watch`, with optional `artifact` JSON;

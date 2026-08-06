@@ -15,6 +15,7 @@ use serde_json::{Value as Json, json};
 
 use crate::artifact;
 use crate::ecs_watch::{self, WatchDefinition};
+use crate::hooks::{dev_value_to_json, json_to_dev_value, validate_name};
 use crate::map;
 use crate::session::{MAX_SCREEN_TEXT_REGION_PIXELS, ScreenTextRegion, Session};
 use crate::value::lua_to_json;
@@ -47,6 +48,8 @@ Options:
 
 Scenario format (version 1):
   {\"version\":1,\"seed\":0,\"stages\":[
+    {\"op\":\"hook\",\"hook\":\"start\"},
+    {\"op\":\"hook\",\"hook\":\"status\",\"expect\":{\"op\":\"equals\",\"field\":\"scene\",\"value\":\"play\"}},
     {\"op\":\"input\",\"frames\":1,\"buttons\":\"A\"},
     {\"op\":\"eval\",\"code\":\"dev_warp(48,449)\"},
     {\"op\":\"assert\",\"code\":\"return dev_status().embers\",\"equals\":1},
@@ -107,6 +110,15 @@ pub enum Stage {
         #[serde(default)]
         name: Option<String>,
         code: String,
+    },
+    Hook {
+        #[serde(default)]
+        name: Option<String>,
+        hook: String,
+        #[serde(default)]
+        args: Json,
+        #[serde(default)]
+        expect: Option<HookExpectation>,
     },
     Input {
         #[serde(default)]
@@ -221,6 +233,42 @@ pub enum Stage {
         #[serde(default = "default_cell")]
         cell: u32,
     },
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HookExpectation {
+    Equals {
+        #[serde(default)]
+        field: Option<String>,
+        value: Json,
+    },
+    NotEquals {
+        #[serde(default)]
+        field: Option<String>,
+        value: Json,
+    },
+    AtLeast {
+        #[serde(default)]
+        field: Option<String>,
+        value: f64,
+    },
+    GreaterThan {
+        #[serde(default)]
+        field: Option<String>,
+        value: f64,
+    },
+}
+
+impl HookExpectation {
+    fn field(&self) -> Option<&str> {
+        match self {
+            Self::Equals { field, .. }
+            | Self::NotEquals { field, .. }
+            | Self::AtLeast { field, .. }
+            | Self::GreaterThan { field, .. } => field.as_deref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -403,6 +451,7 @@ impl Stage {
     fn op(&self) -> &'static str {
         match self {
             Stage::Eval { .. } => "eval",
+            Stage::Hook { .. } => "hook",
             Stage::Input { .. } => "input",
             Stage::Sequence { .. } => "sequence",
             Stage::Assert { .. } => "assert",
@@ -415,6 +464,7 @@ impl Stage {
     fn name(&self) -> Option<&str> {
         match self {
             Stage::Eval { name, .. }
+            | Stage::Hook { name, .. }
             | Stage::Input { name, .. }
             | Stage::Sequence { name, .. }
             | Stage::Assert { name, .. }
@@ -1461,6 +1511,33 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                     }
                 }
             }
+            Stage::Hook {
+                hook, args, expect, ..
+            } => {
+                validate_name(hook).map_err(|error| format!("stage {index}: {error}"))?;
+                json_to_dev_value(args).map_err(|error| format!("stage {index}: {error}"))?;
+                if let Some(expect) = expect {
+                    if let Some(field) = expect.field()
+                        && (field.is_empty() || field.len() > console_core::DEV_HOOK_MAX_KEY_BYTES)
+                    {
+                        return Err(format!(
+                            "stage {index} hook expectation field must be 1-{} bytes",
+                            console_core::DEV_HOOK_MAX_KEY_BYTES
+                        ));
+                    }
+                    match expect {
+                        HookExpectation::AtLeast { value, .. }
+                        | HookExpectation::GreaterThan { value, .. }
+                            if !value.is_finite() =>
+                        {
+                            return Err(format!(
+                                "stage {index} hook expectation value must be finite"
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
             Stage::Input {
                 frames, buttons, ..
             } => {
@@ -2341,6 +2418,60 @@ fn execute_stage(
             let value = session.eval(code).map_err(|error| error.to_string())?;
             report.actual = Some(lua_to_json(&value));
         }
+        Stage::Hook {
+            hook, args, expect, ..
+        } => {
+            let info = session
+                .dev_hooks()
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .find(|info| info.name == *hook)
+                .ok_or_else(|| format!("unknown development hook {hook:?}"))?;
+            let args = json_to_dev_value(args)?;
+            let invocation = session
+                .invoke_dev_hook(hook, info.phase, args)
+                .map_err(|error| error.to_string())?;
+            let result = dev_value_to_json(&invocation.result);
+            if let Some(expect) = expect {
+                let actual = select_hook_value(&result, expect.field())?;
+                let (expected, passed, description) = match expect {
+                    HookExpectation::Equals { value, .. } => {
+                        (value.clone(), actual == value, format!("equal {value}"))
+                    }
+                    HookExpectation::NotEquals { value, .. } => {
+                        (value.clone(), actual != value, format!("not equal {value}"))
+                    }
+                    HookExpectation::AtLeast { value, .. } => (
+                        json!(value),
+                        actual.as_f64().is_some_and(|actual| actual >= *value),
+                        format!("be at least {value}"),
+                    ),
+                    HookExpectation::GreaterThan { value, .. } => (
+                        json!(value),
+                        actual.as_f64().is_some_and(|actual| actual > *value),
+                        format!("be greater than {value}"),
+                    ),
+                };
+                report.expected = Some(expected);
+                report.actual = Some(actual.clone());
+                if !passed {
+                    return Err(format!(
+                        "hook expectation failed: expected result{} to {description}, got {actual}",
+                        expect
+                            .field()
+                            .map(|field| format!(" field {field:?}"))
+                            .unwrap_or_default()
+                    ));
+                }
+            } else {
+                report.actual = Some(json!({
+                    "name": invocation.name,
+                    "phase": invocation.phase,
+                    "frame_count": invocation.frame_count,
+                    "result": result,
+                }));
+            }
+        }
         Stage::Input {
             frames, buttons, ..
         } => {
@@ -2973,6 +3104,16 @@ fn execute_stage(
         }
     }
     Ok(())
+}
+
+fn select_hook_value<'a>(result: &'a Json, field: Option<&str>) -> Result<&'a Json, String> {
+    let Some(field) = field else {
+        return Ok(result);
+    };
+    result
+        .as_object()
+        .and_then(|object| object.get(field))
+        .ok_or_else(|| format!("development hook result has no top-level field {field:?}"))
 }
 
 fn frame_count(session: &Session) -> u64 {

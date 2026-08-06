@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
+use console_core::DevHookPhase;
+
 use crate::ecs_watch::{self, WatchDefinition};
+use crate::hooks::{HookCall, parse_call};
 use crate::input_spec::{self, Segment};
 use crate::session::{MAX_SCREEN_TEXT_REGION_PIXELS, ScreenTextRegion, Session};
 use crate::value::lua_to_json;
@@ -18,6 +21,8 @@ pub struct RunArgs {
     pub screen_text: bool,
     pub screen_text_region: Option<ScreenTextRegion>,
     pub screen_text_summary: bool,
+    pub hook_before: Option<HookCall>,
+    pub hook_after: Option<HookCall>,
     /// Setup Lua evaluated after cart top-level code and `_init`, before the
     /// first input/frame. Its return value is deliberately discarded.
     pub eval_before: Option<String>,
@@ -44,6 +49,8 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
     let mut screen_text = false;
     let mut screen_text_region = None;
     let mut screen_text_summary = false;
+    let mut hook_before = None;
+    let mut hook_after = None;
     let mut eval_before: Option<String> = None;
     let mut eval_after: Option<String> = None;
     let mut seed: u64 = 0;
@@ -97,6 +104,18 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--screen-text-summary" => {
                 screen_text_summary = true;
                 screen_text = true;
+            }
+            "--hook-before" => {
+                let value = iter.next().ok_or("--hook-before requires NAME[=JSON]")?;
+                if hook_before.replace(parse_call(value)?).is_some() {
+                    return Err("--hook-before may only be supplied once".to_string());
+                }
+            }
+            "--hook-after" => {
+                let value = iter.next().ok_or("--hook-after requires NAME[=JSON]")?;
+                if hook_after.replace(parse_call(value)?).is_some() {
+                    return Err("--hook-after may only be supplied once".to_string());
+                }
             }
             "--eval-before" => {
                 let v = iter.next().ok_or("--eval-before requires a value")?;
@@ -175,6 +194,8 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
         screen_text,
         screen_text_region,
         screen_text_summary,
+        hook_before,
+        hook_after,
         eval_before,
         eval_after,
         seed,
@@ -250,6 +271,17 @@ pub fn run(args: &RunArgs) -> i32 {
         return 1;
     }
 
+    let mut hook_results = Vec::new();
+    if let Some(call) = &args.hook_before {
+        match session.invoke_dev_hook(&call.name, DevHookPhase::PreFrame, call.args.clone()) {
+            Ok(result) => hook_results.push(result),
+            Err(error) => {
+                eprintln!("error: pre-frame development hook failed: {error}");
+                return 1;
+            }
+        }
+    }
+
     // `_init` has already run as part of `load_cart`. Setup runs before any
     // input is latched or frame is stepped, irrespective of flag order.
     // Its value is intentionally ignored: the post-frame phase is the single
@@ -282,6 +314,16 @@ pub fn run(args: &RunArgs) -> i32 {
             Err(e) => {
                 halt_message = Some(e.to_string());
                 break;
+            }
+        }
+    }
+
+    if let Some(call) = &args.hook_after {
+        match session.invoke_dev_hook(&call.name, DevHookPhase::PostFrame, call.args.clone()) {
+            Ok(result) => hook_results.push(result),
+            Err(error) => {
+                eprintln!("error: post-frame development hook failed: {error}");
+                return 1;
             }
         }
     }
@@ -468,6 +510,16 @@ pub fn run(args: &RunArgs) -> i32 {
         }
     }
 
+    for result in hook_results {
+        match serde_json::to_string(&result) {
+            Ok(value) => println!("{value}"),
+            Err(error) => {
+                eprintln!("error: {error}");
+                return 1;
+            }
+        }
+    }
+
     if let Some(sample) = watch_result {
         match serde_json::to_string(&sample) {
             Ok(json) => println!("{json}"),
@@ -496,6 +548,8 @@ pub fn run(args: &RunArgs) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     #[test]
@@ -514,6 +568,10 @@ mod tests {
             "--screen-text-region".into(),
             "1,2,3,4".into(),
             "--screen-text-summary".into(),
+            "--hook-before".into(),
+            "start={\"level\":2}".into(),
+            "--hook-after".into(),
+            "status".into(),
             "--eval-before".into(),
             "setup()".into(),
             "--eval-after".into(),
@@ -550,6 +608,17 @@ mod tests {
                     height: 4,
                 }),
                 screen_text_summary: true,
+                hook_before: Some(HookCall {
+                    name: "start".into(),
+                    args: console_core::DevValue::Object(BTreeMap::from([(
+                        "level".into(),
+                        console_core::DevValue::Integer(2),
+                    )])),
+                }),
+                hook_after: Some(HookCall {
+                    name: "status".into(),
+                    args: console_core::DevValue::Null,
+                }),
                 eval_before: Some("setup()".into()),
                 eval_after: Some("1+1".into()),
                 seed: 7,
@@ -637,6 +706,27 @@ mod tests {
             .unwrap_err()
             .contains("post-frame eval")
         );
+    }
+
+    #[test]
+    fn duplicate_hook_phases_and_bad_json_are_rejected_clearly() {
+        let duplicate = parse_run_args(&[
+            "cart.cart".into(),
+            "--hook-before".into(),
+            "start".into(),
+            "--hook-before".into(),
+            "stress".into(),
+        ])
+        .unwrap_err();
+        assert_eq!(duplicate, "--hook-before may only be supplied once");
+
+        let bad_json = parse_run_args(&[
+            "cart.cart".into(),
+            "--hook-after".into(),
+            "status={bad}".into(),
+        ])
+        .unwrap_err();
+        assert!(bad_json.contains("invalid JSON arguments for hook \"status\""));
     }
 
     #[test]

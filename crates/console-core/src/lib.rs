@@ -22,6 +22,7 @@
 mod api;
 mod audio;
 mod cart;
+mod devhooks;
 mod draw_trace;
 mod ecs;
 mod error;
@@ -51,6 +52,11 @@ pub use crate::audio::{
     WAVETABLE_LEN, WAVETABLE_SLOTS, Wavetable, freq_at, parse_note,
 };
 pub use crate::cart::{Cart, PreviewPalette};
+pub use crate::devhooks::{
+    DEV_HOOK_MAX_DEPTH, DEV_HOOK_MAX_DESCRIPTION_BYTES, DEV_HOOK_MAX_HOOKS, DEV_HOOK_MAX_KEY_BYTES,
+    DEV_HOOK_MAX_NAME_BYTES, DEV_HOOK_MAX_NODES, DEV_HOOK_MAX_STRING_BYTES,
+    DEV_HOOK_MAX_TABLE_ENTRIES, DevHookInfo, DevHookPhase, DevValue,
+};
 pub use crate::draw_trace::{
     Bounds as DrawBounds, DrawDetails, DrawEvent, DrawTraceFrame, MAX_DRAW_EVENTS_PER_FRAME,
     PaletteRemap as DrawPaletteRemap,
@@ -113,6 +119,7 @@ pub mod input {
 /// A loaded cart plus its running Lua VM.
 pub struct Console {
     lua: Lua,
+    devhooks: devhooks::Registry,
     ecs_inspector: RegistryKey,
     state: Rc<RefCell<state::State>>,
     /// Snapshot of the framebuffer, refreshed after every step/eval so
@@ -172,10 +179,12 @@ impl Console {
 
         api::sandbox(&lua)?;
         api::register(&lua, &st)?;
+        let devhooks = devhooks::install(&lua)?;
         let ecs_inspector = ecs::install(&lua)?;
 
         let mut console = Console {
             lua,
+            devhooks,
             ecs_inspector,
             state: st,
             fb: Box::new([0u8; FB_LEN]),
@@ -197,6 +206,7 @@ impl Console {
         if let Some(init) = console.func("_init")? {
             init.call::<()>(()).map_err(Error::from)?;
         }
+        devhooks::lock(&console.lua, &console.devhooks)?;
         console.sync_framebuffer();
         Ok(console)
     }
@@ -487,6 +497,41 @@ impl Console {
             limit,
             after,
         )?)
+    }
+
+    /// Ordered, immutable development-hook metadata registered by this cart.
+    pub fn dev_hooks(&self) -> Result<Vec<DevHookInfo>, Error> {
+        devhooks::list(&self.lua, &self.devhooks)
+    }
+
+    /// Invoke one protected cart development hook at its declared boundary.
+    /// Phase validation happens before the cart callback is entered.
+    pub fn invoke_dev_hook(
+        &mut self,
+        name: &str,
+        expected_phase: DevHookPhase,
+        args: &DevValue,
+    ) -> Result<DevValue, Error> {
+        if let Some(error) = &self.halted {
+            return Err(error.clone());
+        }
+        // Unknown hooks and phase mismatches are host request errors. Reject
+        // them before entering the callback and without halting the cart.
+        devhooks::validate_phase(&self.lua, &self.devhooks, name, expected_phase)?;
+        let result =
+            devhooks::invoke_validated(&self.lua, &self.devhooks, name, expected_phase, args);
+        self.sync_framebuffer();
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                // A callback may have mutated state before raising or before
+                // returning an invalid value. Halting prevents an
+                // unreplayable partially-mutated session from continuing.
+                self.audio.fill(0.0);
+                self.halted = Some(error.clone());
+                Err(error)
+            }
+        }
     }
 
     /// Direct access to the VM for hosts that need it.
