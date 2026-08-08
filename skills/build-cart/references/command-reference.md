@@ -130,6 +130,7 @@ console run <cart|project>
   [--eval-before CODE]
   [--eval-after CODE]
   [--seed N]
+  [--save-file FILE]
   [--wav out.wav]
   [--spectrogram out.png]
   [--audio-events]
@@ -160,6 +161,7 @@ are idle. An empty spec plus `--frames N` is an idle run.
 | `--eval-after CODE` | Evaluate after all frames and JSON-serialize the result last on stdout. |
 | `--eval CODE` | Compatibility alias for `--eval-after`; do not combine the spellings. |
 | `--seed N` | Initial deterministic seed; default 0. |
+| `--save-file FILE` | Explicit native JSON sidecar; load before `_init`, atomically flush successful revisions. Omit for an ephemeral run. |
 | `--wav FILE` | Write all retained audio as 16-bit mono PCM WAV. |
 | `--spectrogram FILE` | Write the retained audio as a PNG, default cell 4. |
 | `--audio-events` | Print one JSON sequencer event per line. |
@@ -244,8 +246,10 @@ Version 1 schema:
 {
   "version": 1,
   "seed": 0,
+  "initial_save": {"version":1,"data":{"unlocked":true}},
   "stages": [
     {"op":"hook", "name":"setup", "hook":"start", "args":{"level":2}},
+    {"op":"save_assert", "version":2, "equals":{"unlocked":true}},
     {"op":"input", "name":"jump", "frames":12, "buttons":"RA"},
     {"op":"hook", "hook":"status", "expect":{"op":"equals","field":"grounded","value":false}},
     {
@@ -620,6 +624,7 @@ the command reports source duration and release frames separately.
 console pack <cart|project> -o <out.html>
   [--engine FILE]
   [--template FILE]
+  [--target web|tiptap]
 ```
 
 | Option | Meaning |
@@ -627,6 +632,7 @@ console pack <cart|project> -o <out.html>
 | `-o`, `--out`, `--output` | Required destination. |
 | `--engine FILE` | Override the browser engine embedded in the executable. |
 | `--template FILE` | Override the HTML template embedded in the executable. It must contain `{{TITLE}}`, `{{CART_TEXT}}`, and `{{ENGINE_JS}}`. |
+| `--target web|tiptap` | Persistence host adapter; default `web`. TipTap output uses SDK 2.2 and contains no browser-storage fallback. |
 | `-h`, `--help` | Print full help. |
 
 The packer compiles project inputs in memory, validates the resulting cart, and
@@ -642,6 +648,7 @@ console serve <cart|project>
   [--port PORT]
   [--engine FILE]
   [--template FILE]
+  [--target web|tiptap]
   [--once]
 ```
 
@@ -678,13 +685,14 @@ One line is one request. Important error codes: `-32700` parse error,
 
 | Method | Params | Result / behavior |
 |---|---|---|
-| `load_cart` | `{path, seed?}` or `{text, seed?}` | Load and run `_init`; `{ok,title,seed}`. `text` wins if both are supplied. |
+| `load_cart` | `{path, seed?, save?:{version,data}}` or `{text, seed?, save?:{version,data}}` | Inject optional save before `_init`; `{ok,title,seed}`. `text` wins if both are supplied. |
 | `reset` | `{seed?}` | Reload current cart, optionally replacing seed; clear input/audio/event logs and ECS watch baselines while watch definitions and named save states survive. |
 | `step` | `{frames?=1,input?="",watches?=[]}` | Input string or integer mask; sample named watches after the terminal frame and include them in `watches`. |
 | `screenshot` | `{path,zoom?=1}` | Write PNG; zoom integer ≥1; return path/dimensions. |
 | `screen_text` | `{region?:{x,y,width,height},summary?:false}` | Dimensions, optional raw lines, palette/glyph counts, absolute non-background bounds, and explicit crop/line-omission metadata. Empty params retain the exact 320×192 lines. |
 | `eval` | `{code}` | Execute chunk; `{result}` JSON conversion. |
 | `get_global` | `{name}` | Return one global as `{result}`. |
+| `save_data` | `{}` | `{document,revision,diagnostic}`; document is the parsed full `{data,id,version}` envelope or null. |
 | `ecs_query` | `{world,with?=[],select?={},limit?=64,after?=0}` | Read a bounded field projection from one named ECS world in stable creation order. |
 | `ecs_watch_define` | `{name,world,with?=[],select?={},limit?=64,entity_delta_limit?=64}` | Save one bounded first-page definition; return stable metadata and budgets. |
 | `ecs_watch_sample` | `{name}` | Return the current projection and its delta from this watch's prior explicit sample. |

@@ -17,6 +17,7 @@ OPTIONS:
     -o, --out <FILE>        Output HTML file (required)
         --engine <FILE>     Override the embedded browser engine
         --template <FILE>   Override the embedded HTML template
+        --target <TARGET>   Host adapter: web|tiptap [default: web]
     -h, --help              Print this help
 
 OUTPUT:
@@ -28,11 +29,46 @@ OUTPUT:
 const DEFAULT_ENGINE: &str = include_str!("../../../web/engine.js");
 const DEFAULT_TEMPLATE: &str = include_str!("../../../web/template.html");
 
+const WEB_STORAGE_JS: &str = r#"var browserStorage = {
+  get: function (key) { try { return localStorage.getItem(key); } catch (e) { return null; } },
+  set: function (key, value) { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } },
+  remove: function (key) { try { localStorage.removeItem(key); return true; } catch (e) { return false; } }
+};
+var requireTipTapStorage = false;"#;
+
+const TIPTAP_STORAGE_JS: &str = r#"var browserStorage = null;
+var requireTipTapStorage = true;"#;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PackTarget {
+    #[default]
+    Web,
+    TipTap,
+}
+
+impl PackTarget {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "web" => Ok(Self::Web),
+            "tiptap" => Ok(Self::TipTap),
+            _ => Err(format!("--target must be web or tiptap, got {value:?}")),
+        }
+    }
+
+    fn storage_js(self) -> &'static str {
+        match self {
+            Self::Web => WEB_STORAGE_JS,
+            Self::TipTap => TIPTAP_STORAGE_JS,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BundleOptions {
     pub cart: PathBuf,
     pub engine: Option<PathBuf>,
     pub template: Option<PathBuf>,
+    pub target: PackTarget,
 }
 
 #[derive(Debug)]
@@ -137,6 +173,7 @@ pub fn bundle(options: &BundleOptions) -> Result<Bundle, String> {
             ("TITLE", &html_escape(&title)),
             ("CART_TEXT", &escape_cart_text(&cart_text)),
             ("ENGINE_JS", &engine_js),
+            ("HOST_STORAGE_JS", options.target.storage_js()),
         ],
     )?;
 
@@ -152,6 +189,7 @@ fn parse_args(args: &[String]) -> Result<Option<PackArgs>, String> {
     let mut out = None;
     let mut engine = None;
     let mut template = None;
+    let mut target = PackTarget::Web;
     let mut index = 0;
 
     while index < args.len() {
@@ -176,6 +214,17 @@ fn parse_args(args: &[String]) -> Result<Option<PackArgs>, String> {
             "-o" | "--out" | "--output" => out = Some(value("-o")?),
             "--engine" => engine = Some(value("--engine")?),
             "--template" => template = Some(value("--template")?),
+            "--target" => {
+                let value = if let Some(value) = inline {
+                    value.to_string()
+                } else {
+                    index += 1;
+                    args.get(index)
+                        .cloned()
+                        .ok_or_else(|| "--target requires a value".to_string())?
+                };
+                target = PackTarget::parse(&value)?;
+            }
             other if other.starts_with('-') && other != "-" => {
                 return Err(format!("unknown option `{other}` (try --help)"));
             }
@@ -194,6 +243,7 @@ fn parse_args(args: &[String]) -> Result<Option<PackArgs>, String> {
             cart: cart.ok_or("missing <cart|project> argument (try --help)")?,
             engine,
             template,
+            target,
         },
         out: out.ok_or("missing -o <out.html> (try --help)")?,
     }))
@@ -296,6 +346,7 @@ mod tests {
             "--engine",
             "engine.js",
             "--template=page.html",
+            "--target=tiptap",
         ]
         .map(str::to_owned);
         let parsed = parse_args(&args).unwrap().unwrap();
@@ -305,6 +356,7 @@ mod tests {
             parsed.bundle.engine.as_deref(),
             Some(Path::new("engine.js"))
         );
+        assert_eq!(parsed.bundle.target, PackTarget::TipTap);
         assert_eq!(
             parsed.bundle.template.as_deref(),
             Some(Path::new("page.html"))
@@ -363,11 +415,16 @@ mod tests {
     fn embedded_template_has_the_exact_required_placeholders() {
         let rendered = render(
             DEFAULT_TEMPLATE,
-            &[("TITLE", "T"), ("CART_TEXT", "C"), ("ENGINE_JS", "E")],
+            &[
+                ("TITLE", "T"),
+                ("CART_TEXT", "C"),
+                ("ENGINE_JS", "E"),
+                ("HOST_STORAGE_JS", "H"),
+            ],
         )
         .unwrap();
         assert!(!rendered.contains("{{"));
-        for name in ["TITLE", "CART_TEXT", "ENGINE_JS"] {
+        for name in ["TITLE", "CART_TEXT", "ENGINE_JS", "HOST_STORAGE_JS"] {
             assert_eq!(
                 DEFAULT_TEMPLATE.matches(&format!("{{{{{name}}}}}")).count(),
                 1
@@ -390,5 +447,58 @@ mod tests {
         for unsafe_name in ["reset", "step", "eval", "module", "heap"] {
             assert!(!DEFAULT_TEMPLATE[install..boot].contains(&format!("{unsafe_name}: function")));
         }
+    }
+
+    #[test]
+    fn tiptap_target_contains_no_browser_storage_api_tokens() {
+        let cart =
+            std::env::temp_dir().join(format!("console-pack-tiptap-{}.cart", std::process::id()));
+        std::fs::write(
+            &cart,
+            "__meta__\ntitle=TipTap Save\nsave_id=org.example.tiptap\nsave_version=1\n__lua__\n",
+        )
+        .unwrap();
+        let bundle = bundle(&BundleOptions {
+            cart: cart.clone(),
+            engine: None,
+            template: None,
+            target: PackTarget::TipTap,
+        })
+        .unwrap();
+        let lower = bundle.html.to_ascii_lowercase();
+        for forbidden in [
+            "localstorage",
+            "sessionstorage",
+            "indexeddb",
+            "document.cookie",
+        ] {
+            assert!(
+                !lower.contains(forbidden),
+                "TipTap artifact contains {forbidden}"
+            );
+        }
+        assert!(bundle.html.contains("requireTipTapStorage = true"));
+        assert!(
+            bundle
+                .html
+                .contains("sdk.saveState(document === null ? null : JSON.parse(document))")
+        );
+        let _ = std::fs::remove_file(cart);
+    }
+
+    #[test]
+    fn browser_flushes_last_successful_save_before_reporting_a_batch_crash() {
+        let error_branch = DEFAULT_TEMPLATE
+            .find("if (err) {")
+            .expect("frame loop error branch");
+        let fatal = DEFAULT_TEMPLATE[error_branch..]
+            .find("return fatal(\"Cart crashed:")
+            .expect("frame loop fatal")
+            + error_branch;
+        let flush = DEFAULT_TEMPLATE[error_branch..fatal]
+            .find("flushSave()")
+            .expect("save flush before fatal")
+            + error_branch;
+        assert!(error_branch < flush && flush < fatal);
     }
 }

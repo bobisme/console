@@ -30,6 +30,8 @@ pub struct RunArgs {
     /// compatibility alias for the explicit `--eval-after` flag.
     pub eval_after: Option<String>,
     pub seed: u64,
+    /// Explicit native sidecar backend. Omitted means an ephemeral session.
+    pub save_file: Option<String>,
     pub wav: Option<String>,
     pub spectrogram: Option<String>,
     pub audio_events: bool,
@@ -54,6 +56,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
     let mut eval_before: Option<String> = None;
     let mut eval_after: Option<String> = None;
     let mut seed: u64 = 0;
+    let mut save_file = None;
     let mut wav: Option<String> = None;
     let mut spectrogram: Option<String> = None;
     let mut audio_events = false;
@@ -140,6 +143,12 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
                     .parse()
                     .map_err(|_| format!("invalid --seed value {v:?}"))?;
             }
+            "--save-file" => {
+                let value = iter.next().ok_or("--save-file requires a value")?;
+                if save_file.replace(value.clone()).is_some() {
+                    return Err("--save-file may only be supplied once".to_string());
+                }
+            }
             "--wav" => {
                 let v = iter.next().ok_or("--wav requires a value")?;
                 wav = Some(v.clone());
@@ -199,6 +208,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
         eval_before,
         eval_after,
         seed,
+        save_file,
         wav,
         spectrogram,
         audio_events,
@@ -256,9 +266,27 @@ pub fn run(args: &RunArgs) -> i32 {
         }
     };
 
+    let initial_save = match args.save_file.as_deref() {
+        Some(path) => match crate::persistence::read_sidecar(Path::new(path)) {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("error: {error}");
+                return 1;
+            }
+        },
+        None => None,
+    };
     let mut session = Session::new();
-    if let Err(e) = session.load_cart(&cart_text, args.seed) {
+    if let Err(e) = session.load_cart_with_save(&cart_text, args.seed, initial_save.as_deref()) {
         eprintln!("error: {e}");
+        return 1;
+    }
+    if let Ok(Some(diagnostic)) = session.save_diagnostic() {
+        eprintln!("[save] {diagnostic}");
+    }
+    let mut flushed_save_revision = 0;
+    if let Err(error) = flush_native_save(args, &session, &mut flushed_save_revision) {
+        eprintln!("error: {error}");
         return 1;
     }
     if args.draw_trace.is_some() {
@@ -274,7 +302,13 @@ pub fn run(args: &RunArgs) -> i32 {
     let mut hook_results = Vec::new();
     if let Some(call) = &args.hook_before {
         match session.invoke_dev_hook(&call.name, DevHookPhase::PreFrame, call.args.clone()) {
-            Ok(result) => hook_results.push(result),
+            Ok(result) => {
+                hook_results.push(result);
+                if let Err(error) = flush_native_save(args, &session, &mut flushed_save_revision) {
+                    eprintln!("error: {error}");
+                    return 1;
+                }
+            }
             Err(error) => {
                 eprintln!("error: pre-frame development hook failed: {error}");
                 return 1;
@@ -296,6 +330,10 @@ pub fn run(args: &RunArgs) -> i32 {
             eprintln!("error: pre-frame eval failed: {error}");
             return 1;
         }
+        if let Err(error) = flush_native_save(args, &session, &mut flushed_save_revision) {
+            eprintln!("error: {error}");
+            return 1;
+        }
     }
 
     let total_frames = args
@@ -310,7 +348,12 @@ pub fn run(args: &RunArgs) -> i32 {
                 halt_message = outcome.message;
                 break;
             }
-            Ok(_) => {}
+            Ok(_) => {
+                if let Err(error) = flush_native_save(args, &session, &mut flushed_save_revision) {
+                    eprintln!("error: {error}");
+                    return 1;
+                }
+            }
             Err(e) => {
                 halt_message = Some(e.to_string());
                 break;
@@ -320,7 +363,13 @@ pub fn run(args: &RunArgs) -> i32 {
 
     if let Some(call) = &args.hook_after {
         match session.invoke_dev_hook(&call.name, DevHookPhase::PostFrame, call.args.clone()) {
-            Ok(result) => hook_results.push(result),
+            Ok(result) => {
+                hook_results.push(result);
+                if let Err(error) = flush_native_save(args, &session, &mut flushed_save_revision) {
+                    eprintln!("error: {error}");
+                    return 1;
+                }
+            }
             Err(error) => {
                 eprintln!("error: post-frame development hook failed: {error}");
                 return 1;
@@ -347,7 +396,13 @@ pub fn run(args: &RunArgs) -> i32 {
     let mut eval_result = None;
     if let Some(code) = &args.eval_after {
         match session.eval(code) {
-            Ok(v) => eval_result = Some(lua_to_json(&v)),
+            Ok(v) => {
+                eval_result = Some(lua_to_json(&v));
+                if let Err(error) = flush_native_save(args, &session, &mut flushed_save_revision) {
+                    eprintln!("error: {error}");
+                    return 1;
+                }
+            }
             Err(e) => eval_error = Some(e.to_string()),
         }
     }
@@ -546,6 +601,24 @@ pub fn run(args: &RunArgs) -> i32 {
     0
 }
 
+fn flush_native_save(
+    args: &RunArgs,
+    session: &Session,
+    flushed_revision: &mut u32,
+) -> Result<(), String> {
+    let Some(path) = args.save_file.as_deref() else {
+        return Ok(());
+    };
+    let revision = session.save_revision().map_err(|error| error.to_string())?;
+    if revision == *flushed_revision {
+        return Ok(());
+    }
+    let document = session.save_document().map_err(|error| error.to_string())?;
+    crate::persistence::commit_sidecar(Path::new(path), document.as_deref())?;
+    *flushed_revision = revision;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -578,6 +651,8 @@ mod tests {
             "1+1".into(),
             "--seed".into(),
             "7".into(),
+            "--save-file".into(),
+            "save.json".into(),
             "--wav".into(),
             "out.wav".into(),
             "--spectrogram".into(),
@@ -622,6 +697,7 @@ mod tests {
                 eval_before: Some("setup()".into()),
                 eval_after: Some("1+1".into()),
                 seed: 7,
+                save_file: Some("save.json".into()),
                 wav: Some("out.wav".into()),
                 spectrogram: Some("spec.png".into()),
                 audio_events: true,

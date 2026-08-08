@@ -8,7 +8,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use console_core::input;
+use console_core::{Cart, SaveValue, canonical_save_document, input};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -162,6 +162,7 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "dev_hooks" => m_dev_hooks(session, params),
         "dev_hook" => m_dev_hook(session, params),
         "logs" => m_logs(session),
+        "save_data" => m_save_data(session),
         "save_state" => m_save_state(session, params),
         "load_state" => m_load_state(session, params),
         "info" => m_info(session),
@@ -207,9 +208,37 @@ fn m_load_cart(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
         ));
     };
 
-    session.load_cart(&text, seed)?;
+    let initial_save = initial_save_param(&text, params.get("save"))?;
+    session.load_cart_with_save(&text, seed, initial_save.as_deref())?;
     let console = session.console()?;
     Ok(json!({ "ok": true, "title": console.cart().title(), "seed": console.seed() }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InitialSaveParam {
+    version: u32,
+    data: Value,
+}
+
+fn initial_save_param(text: &str, value: Option<&Value>) -> Result<Option<String>, RpcErr> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let initial: InitialSaveParam = serde_json::from_value(value.clone())
+        .map_err(|error| RpcErr::bad_params(format!("invalid load_cart save: {error}")))?;
+    let cart = Cart::parse(text).map_err(SessionError::Cart)?;
+    let config = cart.save_config().ok_or_else(|| {
+        RpcErr::bad_params("load_cart save requires cart __meta__ save_id and save_version")
+    })?;
+    let data = serde_json::from_value::<SaveValue>(initial.data).map_err(|error| {
+        RpcErr::bad_params(format!(
+            "load_cart save data is not save-compatible: {error}"
+        ))
+    })?;
+    canonical_save_document(config, initial.version, data)
+        .map(Some)
+        .map_err(|error| RpcErr::bad_params(format!("invalid load_cart save: {error}")))
 }
 
 fn m_reset(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
@@ -484,6 +513,22 @@ fn m_dev_hook(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {
 fn m_logs(session: &mut Session) -> Result<Value, RpcErr> {
     let logs = session.logs()?;
     Ok(json!({ "logs": logs }))
+}
+
+fn m_save_data(session: &Session) -> Result<Value, RpcErr> {
+    let document = session
+        .save_document()?
+        .map(|document| {
+            serde_json::from_str::<Value>(&document).map_err(|error| {
+                RpcErr::new(-32603, format!("core returned invalid save JSON: {error}"))
+            })
+        })
+        .transpose()?;
+    Ok(json!({
+        "document": document,
+        "revision": session.save_revision()?,
+        "diagnostic": session.save_diagnostic()?,
+    }))
 }
 
 fn m_save_state(session: &mut Session, params: &Value) -> Result<Value, RpcErr> {

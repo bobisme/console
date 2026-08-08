@@ -12,6 +12,7 @@ use crate::gfx::{
 };
 use crate::gfx_meta::GfxMeta;
 use crate::rng::Pcg32;
+use crate::save::SaveState;
 
 /// Pixel value used only inside diagnostic layer buffers to mean "this tag
 /// did not draw here". Runtime pixels are always masked to 0..=63, so the
@@ -50,6 +51,10 @@ pub struct State {
     /// Synth + sequencer. Never reads the PRNG, so audio can never perturb
     /// framebuffer determinism.
     pub audio: Audio,
+    /// Deterministic cart-visible save document. Hosts supply its initial
+    /// value before `_init` and observe committed revisions after successful
+    /// boundaries; this state itself performs no I/O.
+    pub save: SaveState,
     /// `printh` output, drained by the host.
     pub logs: Vec<String>,
     /// Calls to `print` since the current frame began. Core clears this at the
@@ -73,6 +78,7 @@ impl State {
         gfx_meta: Rc<GfxMeta>,
         seed: u64,
         bank: AudioBank,
+        save: SaveState,
     ) -> State {
         State {
             fb: Box::new([0u8; FB_LEN]),
@@ -85,6 +91,7 @@ impl State {
             frame: 0,
             rng: Pcg32::new(seed),
             audio: Audio::new(bank),
+            save,
             logs: Vec::new(),
             text_draws: Vec::new(),
             draw_trace_enabled: false,
@@ -250,6 +257,7 @@ impl Default for State {
             Rc::new(GfxMeta::default()),
             0,
             AudioBank::default(),
+            SaveState::new(None, None),
         )
     }
 }

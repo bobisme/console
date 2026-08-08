@@ -15,9 +15,9 @@ make it unusual:
     quantize artwork to Apollo64, dump the framebuffer as text, inspect audio
     as data, eval Lua expressions — all without a GPU, a display, or ears.
 
-Both are anchored by a determinism contract: **same cart + same seed + same
-per-frame input ⇒ byte-identical framebuffers and audio samples**, on native
-and on wasm. That's what makes headless development trustworthy — an
+Both are anchored by a determinism contract: **same cart + same initial save +
+same seed + same per-frame input ⇒ byte-identical framebuffers, audio samples,
+and save output**, on native and on wasm. That's what makes headless development trustworthy — an
 agent's screenshot is exactly what a player's screen shows — and what makes
 replays double as regression tests.
 
@@ -40,6 +40,7 @@ orientation, not the spec.
 | Script | Lua 5.4 (mlua, vendored), sandboxed — no host `io`/`os`/`debug`/`package`; project builds provide a private static `require` |
 | Entities | deterministic console-native Lua ECS; creation-order queries, deferred structural edits, bounded host inspection |
 | Dev hooks | cart-registered deterministic setup/inspection callbacks with bounded JSON-like arguments and results |
+| Persistence | opt-in, versioned JSON-like saves; deterministic 8 KiB envelope with native, browser, and TipTap SDK adapters |
 | Cart | projects compile normal source files into one plain-text `.cart`: Lua + sprites (64-character grid) + tile map + sfx/music (tracker text) |
 
 192×320 is the retained platform resolution, not a transitional or optional
@@ -197,6 +198,27 @@ Pack the same cart into a single-file game:
 ```bash
 ./target/release/console pack carts/demo.cart -o dist/demo.html
 ```
+
+Persistent carts declare a stable namespace and current schema in `__meta__`,
+then use `save_load`, `save_store`, and `save_clear` from Lua. Ordinary web
+bundles use local browser storage. TipTap-hosted bundles use the SDK 2.2
+`loadState`/`saveState` adapter and never include a local-storage fallback:
+
+```text
+__meta__
+save_id=org.example.my-game
+save_version=2
+```
+
+```bash
+console run my-game --save-file /tmp/my-game.save.json
+console pack my-game --target tiptap -o dist/my-game.html
+```
+
+The complete serialized envelope is capped at 8 KiB. TipTap loading completes
+before cart `_init`; native runs remain ephemeral unless `--save-file` is
+explicit. See [SPEC.md](SPEC.md) for value, migration, transaction, and host
+adapter details.
 
 Open `dist/demo.html` in any browser (double-click it — `file://` works, no
 server needed). The default engine and HTML shell are embedded in `console`,

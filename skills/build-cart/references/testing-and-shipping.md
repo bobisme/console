@@ -187,12 +187,14 @@ Promote valuable smoke scripts into strict versioned JSON:
 {
   "version": 1,
   "seed": 0,
+  "initial_save": {"version":1,"data":{"high_score":1200}},
   "stages": [
     {"op":"hook","name":"start","hook":"start"},
     {"op":"hook","hook":"status","expect":{"op":"equals","field":"scene","value":"play"}},
     {"op":"input","name":"approach","frames":90,"buttons":"R"},
     {"op":"input","name":"jump","frames":1,"buttons":"RA"},
     {"op":"input","frames":30,"buttons":"R"},
+    {"op":"save_assert","version":2,"equals":{"high_score":1200}},
     {"op":"hook","hook":"status","expect":{"op":"equals","field":"grounded","value":false}},
     {
       "op":"capture",
@@ -205,11 +207,17 @@ Promote valuable smoke scripts into strict versioned JSON:
       "text_events":"jump-text.json",
       "draw_trace":"jump-draws.json",
       "audio_events":"jump-events.json",
-      "audio_stats":"jump-stats.json"
+      "audio_stats":"jump-stats.json",
+      "save":"jump-save.json"
     }
   ]
 }
 ```
+
+`initial_save` is injected before `_init`. `save_assert` compares the exact
+current data and optionally its stored version; capture `save` writes the full
+canonical envelope. These surfaces are deterministic and never consult an
+ambient native sidecar.
 
 Run it:
 

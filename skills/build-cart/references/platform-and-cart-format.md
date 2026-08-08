@@ -236,8 +236,26 @@ ignored. Preserve UTF-8 text and keep carts diff-friendly.
 ### `__meta__`
 
 Use `key=value` lines. Recognized authoring keys include `title`, `author`,
-`version`, and `preview_palette`; other metadata remains available through cart
+`version`, `save_id`, `save_version`, and `preview_palette`; other metadata remains available through cart
 metadata. `console pack` uses `title` for the HTML title.
+
+### Persistent save metadata
+
+Persistence requires a paired stable ID and current schema:
+
+```text
+save_id=org.example.game
+save_version=2
+```
+
+The ID is 1–128 ASCII letters/digits/`._-`, starting alphanumeric; the version
+is a positive `u32`. Keep the ID stable across releases. `save_load()` reports
+the stored version so the cart can migrate old data, while every successful
+`save_store()` writes the current version. The canonical `{data,id,version}`
+JSON envelope has an 8 KiB total cap. Default web bundles use a namespaced
+browser adapter; `pack`/`serve --target tiptap` use TipTap SDK 2.2 only, await
+its asynchronous load before `_init`, and include no local fallback. Native
+`run` is ephemeral unless given `--save-file`.
 
 ### `__lua__`
 

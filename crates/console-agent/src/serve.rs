@@ -5,7 +5,7 @@ use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::pack::{self, Bundle, BundleOptions};
+use crate::pack::{self, Bundle, BundleOptions, PackTarget};
 
 pub const USAGE: &str = r#"console serve — bundle and locally serve a cart or project
 
@@ -20,6 +20,7 @@ OPTIONS:
         --port <PORT>       TCP port; use 0 to choose a free port [default: 8000]
         --engine <FILE>     Override the embedded browser engine
         --template <FILE>   Override the embedded HTML template
+        --target <TARGET>   Host adapter: web|tiptap [default: web]
         --once              Serve one HTTP connection, then exit
     -h, --help              Print this help
 
@@ -106,6 +107,7 @@ fn parse_args(args: &[String]) -> Result<Option<ServeArgs>, String> {
     let mut port = 8000;
     let mut engine = None;
     let mut template = None;
+    let mut target = PackTarget::Web;
     let mut once = false;
     let mut index = 0;
 
@@ -141,6 +143,14 @@ fn parse_args(args: &[String]) -> Result<Option<ServeArgs>, String> {
             "--template" => {
                 template = Some(PathBuf::from(value(&mut index, "--template")?));
             }
+            "--target" => {
+                let raw = value(&mut index, "--target")?;
+                target = match raw.as_str() {
+                    "web" => PackTarget::Web,
+                    "tiptap" => PackTarget::TipTap,
+                    _ => return Err(format!("--target must be web or tiptap, got {raw:?}")),
+                };
+            }
             "--once" => {
                 if inline.is_some() {
                     return Err("--once does not take a value".to_owned());
@@ -168,6 +178,7 @@ fn parse_args(args: &[String]) -> Result<Option<ServeArgs>, String> {
             cart: cart.ok_or("missing <cart|project> argument (try --help)")?,
             engine,
             template,
+            target,
         },
         host,
         port,

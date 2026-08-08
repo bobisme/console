@@ -428,6 +428,8 @@ __meta__
 title=Demo
 author=someone
 version=0
+save_id=org.example.demo
+save_version=1
 preview_palette=48,41,36,38,31,14,11,4,1,2,5,7,63,59,55,52
 
 __lua__
@@ -464,6 +466,64 @@ the mapping before RGB lookup. Source color 0 remains transparent even if its
 preview mapping is nonzero. The metadata itself has no effect on runtime
 drawing, `pal()`, framebuffer or `screen_text` output, nor on raw sprite/map
 dump, lint, poke, or edit operations.
+
+### Deterministic persistence
+
+Persistence is opt-in. `__meta__` must declare both keys or neither:
+
+```text
+save_id=org.example.game
+save_version=3
+```
+
+`save_id` is the stable host namespace: 1–128 ASCII letters, digits, `.`, `_`,
+or `-`, beginning with a letter or digit. Changing it starts a distinct save.
+`save_version` is the current positive `u32` schema written by the cart. It is
+not a compatibility gate: a host may inject an older positive version so Lua
+can migrate it. The serialized host document is canonical compact JSON with
+object keys ordered lexicographically:
+
+```json
+{"data":{"coins":12},"id":"org.example.game","version":2}
+```
+
+The entire UTF-8 document, including envelope, is at most 8,192 bytes. Data
+may be booleans, finite numbers, JavaScript-safe integers
+(`±9007199254740991`), UTF-8 strings, dense arrays, and string-keyed objects.
+There is no JSON null representation. Tables must not be sparse, mixed-keyed,
+or cyclic. Maximum nesting is 16, maximum traversed values is 4,096, and an
+object key is 1–128 UTF-8 bytes. An empty Lua table encodes as an empty array;
+representing an empty object distinctly is therefore not supported.
+
+Lua receives three globals:
+
+- `save_load() -> data, stored_version` returns two nils when no valid save is
+  present. It is available at cart top level and in `_init`.
+- `save_store(value) -> ok, error` validates and atomically replaces the
+  document using the cart's current `save_version`.
+- `save_clear() -> ok, error` removes the document.
+
+A rejected store returns `false, message` and retains the prior document.
+Successful writes become host-visible only when the enclosing boundary—cart
+load/`_init`, one frame, eval, or development hook—also succeeds. If Lua later
+errors in that boundary, its persistence mutation is rolled back. Hosts flush
+each last-successful revision, including a successful frame preceding a later
+failure in the same browser catch-up batch. Invalid, oversized, or wrong-ID
+initial host data is ignored as an empty save and exposed as a persistence
+diagnostic; it does not halt the cart.
+
+Host adapters are explicit:
+
+- `console run ... --save-file FILE` loads the UTF-8 envelope and atomically
+  updates/deletes that sidecar after successful boundaries. Without the flag,
+  the run is ephemeral.
+- The default `console pack`/`serve --target web` adapter uses a
+  `console.save.<save_id>` browser key.
+- `--target tiptap` emits an SDK 2.2 adapter with no browser-storage API or
+  fallback. It registers `onStateError`, awaits asynchronous `loadState`
+  before entering Lua/`_init`, and passes the parsed envelope object (not a
+  quoted JSON string) to `saveState`, keeping TipTap's 8 KiB accounting aligned
+  with the core. A missing SDK degrades to ephemeral storage with a diagnostic.
 
 ### Multi-file project compiler (`console build`)
 
@@ -787,8 +847,9 @@ deterministically from `(cart, seed, input log)` with no special handling.
 
 ## Determinism contract
 
-Same cart + same seed + same per-frame input masks ⇒ byte-identical framebuffers
-on every platform and target. No wall clock, no OS entropy, no float
+Same cart + same initial save + same seed + same per-frame input masks ⇒
+byte-identical framebuffers, audio, and emitted save documents on every
+platform and target. No wall clock, no OS entropy, no float
 non-determinism (avoid trig on the Rust side of the render path; Lua floats are
 IEEE 754 doubles everywhere and are fine).
 
@@ -805,7 +866,7 @@ Oneshot: `console run <cart|project> [--frames N] [--input SPEC]
 [--screenshot-zoom N] [--screen-text] [--screen-text-region X,Y,WIDTH,HEIGHT]
 [--screen-text-summary] [--text-events] [--draw-trace trace.json]
 [--ecs-watch JSON]
-[--seed N]`
+[--seed N] [--save-file FILE]`
 where SPEC is comma-separated `COUNT:BUTTONS`, e.g. `30:,10:R,5:RA,60:` (empty
 buttons = no input).
 
@@ -833,8 +894,11 @@ post-frame eval still permits final artifacts from the completed run.
 RPC: `console rpc` — JSON-RPC 2.0, one request per line on stdin,
 one response per line on stdout. Methods:
 
-- `load_cart {path}` or `{text}` — load + `_init`
+- `load_cart {path}` or `{text}`, with optional `save:{version,data}` — inject
+  save data, then load + `_init`
 - `reset {seed?}` — reload cart state, reseed, and clear input/audio/text logs
+- `save_data {}` — current parsed `{document, revision, diagnostic}`; document
+  is the full envelope or null
 - `step {frames=1, input="", watches?=[]}` — advance; input as letter string
   or int mask, then sample each already-defined watch at the terminal frame
 - `screenshot {path, zoom=1}` — write PNG (RGBA), nearest-neighbor
@@ -934,6 +998,8 @@ are:
   and/or labeled review board;
 - `{"op":"assert","code":"return ...","equals":<json>}` — exact JSON
   comparison of the evaluated value;
+- `{"op":"save_assert","version":2,"equals":<json>}` — compare the exact
+  persisted data and, when supplied, stored schema version;
 - `{"op":"hook","hook":"status","args":<json>,"expect":{...}}` — invoke
   at the declared phase; optionally compare the whole result or one top-level
   field with `equals`, `not_equals`, `at_least`, or `greater_than`;
@@ -946,10 +1012,11 @@ are:
 - `{"op":"capture",...}` — write one or more `screenshot`, `screen_text`,
   `wav`, `spectrogram`, `audio_events`, `audio_stats`, `text_events`, or
   `draw_trace` artifacts, an optional `layers` mapping, plus an optional nested
-  `map` capture.
+  `map` capture; `"save":"path.json"` writes the canonical save envelope.
 
-Every stage may have a unique `name`. A scenario declares `version: 1` and an
-optional seed; `--seed` overrides it. Captures require `--artifacts`, use
+Every stage may have a unique `name`. A scenario declares `version: 1`, an
+optional seed, and optional `initial_save:{version,data}` injected before
+`_init`; `--seed` overrides the seed. Captures require `--artifacts`, use
 relative unique paths beneath that root, and reject absolute paths, `.`/`..`
 components, symlink traversal, and paths that alias after normalization.
 
@@ -1097,7 +1164,8 @@ changed or the console is reset.
 
 ## Single-file HTML (`console pack`)
 
-`console pack <cart|project> -o game.html [--engine <path>] [--template <path>]`
+`console pack <cart|project> -o game.html [--engine <path>] [--template <path>]
+[--target web|tiptap]`
 
 - Engine = emscripten `-sSINGLE_FILE=1 -sMODULARIZE=1` build of `console-web`
   (wasm base64-inlined into JS). The committed engine and template are embedded
@@ -1131,7 +1199,9 @@ changed or the console is reset.
   prebuffer. A frozen, read-only `window.__console` handle exists before async
   engine boot for headless verification. `status()` reports lifecycle
   (`booting`, `ready`, `halted`, or `failed`), fatal text, successful frame
-  count, input mask, pause, and dead state. `screenState()` reports logical,
+  count, input mask, pause, and dead state, plus
+  `persistence:{configured,backend,saveId,saveVersion,revision,error}`.
+  `screenState()` reports logical,
   backing, and CSS dimensions, color count, FNV-1a framebuffer hash, distinct
   and invalid index counts, plus a copied display-palette array.
   `audioState()` reports mode/errors/frames pushed, last/ever-nonzero audio,
@@ -1149,8 +1219,14 @@ changed or the console is reset.
   Missing browser prerequisites fail rather than skip. Failures retain the
   packed HTML, screenshot, diagnostic snapshots, and browser logs under
   `out/browser-check/` (overridable with `CONSOLE_BROWSER_ARTIFACTS`).
-- C ABI (console-web): `con_init(cart_ptr, cart_len) -> i32` (0 ok),
-  `con_step(input_mask)`, `con_width() -> usize` (192),
+- C ABI (console-web): `con_init(cart_ptr, cart_len) -> i32` (0 ok) remains the
+  no-initial-save entry point. `con_init_save(cart_ptr,cart_len,save_ptr,
+  save_len) -> i32` consumes both allocated buffers and injects the UTF-8
+  envelope before `_init`. Persistence output is `con_save_revision() -> u32`,
+  `con_save_len() -> usize`, `con_save() -> *const u8`, and
+  `con_save_error() -> *const u8` (NUL-terminated diagnostic or NULL). Copy
+  `con_save_len()` bytes immediately; the pointer may change after init/step.
+  The remaining ABI is `con_step(input_mask)`, `con_width() -> usize` (192),
   `con_height() -> usize` (320),
   `con_fb() -> *const u8` (`con_width()`×`con_height()` palette indices),
   `con_color_count() -> usize` (64),
@@ -1163,7 +1239,7 @@ changed or the console is reset.
 ## Local browser server (`console serve`)
 
 `console serve <cart|project> [--host 127.0.0.1] [--port 8000] [--engine <path>]
-[--template <path>] [--once]` performs the same in-memory bundle and cart
+[--template <path>] [--target web|tiptap] [--once]` performs the same in-memory bundle and cart
 validation as `console pack`, binds loopback by default, and prints the actual
 URL to stdout. Port 0 requests an OS-selected free port. It serves only `/` and
 `/index.html`, sends `Cache-Control: no-store`, and re-reads/revalidates the
@@ -2195,7 +2271,7 @@ auto-echo onto a free channel.
 
 ## Out of scope for PoC
 
-Multiple carts, save data, interactive sprite/sfx editors, sfx effects
+Multiple carts, interactive sprite/sfx editors, sfx effects
 columns (arpeggio/slide/vibrato), stereo.
 (Runtime anim helpers were on this list; `__gfx_meta__` proved out, so
 `aspr`/`anim_len`/`anim_done` shipped — see "Declared animations" above.)

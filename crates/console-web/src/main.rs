@@ -34,6 +34,8 @@
 //!   refreshed on each `con_dpal()` call.
 //! * `con_error()` points into a `CString` owned by this module. It stays valid
 //!   until the next `con_init` / `con_step`.
+//! * `con_save()` points into a module-owned canonical JSON buffer. Copy
+//!   `con_save_len()` bytes immediately; a later init/step may reallocate it.
 
 use std::alloc::{Layout, alloc, dealloc};
 use std::cell::RefCell;
@@ -60,6 +62,11 @@ thread_local! {
     static DPAL: RefCell<[u8; COLOR_COUNT]> = const { RefCell::new(IDENTITY_PAL) };
     /// Last error (init failure or runtime halt), NUL-terminated.
     static ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
+    /// Current canonical persistence envelope and successful write revision.
+    static SAVE: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static SAVE_REVISION: RefCell<u32> = const { RefCell::new(0) };
+    /// Persistence-only diagnostic, distinct from a cart-halting error.
+    static SAVE_DIAGNOSTIC: RefCell<Option<CString>> = const { RefCell::new(None) };
 }
 
 /// Store (or clear) the message returned by [`con_error`].
@@ -77,6 +84,22 @@ fn drain_logs(con: &mut Console) {
     for line in con.take_logs() {
         println!("{line}");
     }
+}
+
+fn sync_save(con: &Console) {
+    SAVE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        slot.clear();
+        if let Some(document) = con.save_document() {
+            slot.extend_from_slice(document.as_bytes());
+        }
+    });
+    SAVE_REVISION.with(|slot| *slot.borrow_mut() = con.save_revision());
+    let diagnostic = con.save_diagnostic().map(|message| {
+        CString::new(message.replace('\0', " "))
+            .unwrap_or_else(|_| CString::new("save error").unwrap())
+    });
+    SAVE_DIAGNOSTIC.with(|slot| *slot.borrow_mut() = diagnostic);
 }
 
 /// Allocate `len` bytes for the host to write a cart into.
@@ -124,10 +147,43 @@ pub unsafe extern "C" fn con_free(ptr: *mut u8, len: usize) {
 /// [`con_alloc`] (with that same length), and must not be used afterwards.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn con_init(cart_ptr: *mut u8, cart_len: usize) -> i32 {
+    // SAFETY: forwarded unchanged from this function's public contract.
+    unsafe { con_init_save(cart_ptr, cart_len, ptr::null_mut(), 0) }
+}
+
+/// Load a cart with one optional canonical persisted document before `_init`.
+///
+/// Both non-null buffers are consumed and freed. `save_ptr == null` is valid
+/// only when `save_len == 0` and means there is no initial save.
+///
+/// # Safety
+///
+/// Every non-null pointer must come from [`con_alloc`] with the corresponding
+/// length and must not be used afterwards.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn con_init_save(
+    cart_ptr: *mut u8,
+    cart_len: usize,
+    save_ptr: *mut u8,
+    save_len: usize,
+) -> i32 {
     CONSOLE.with(|slot| *slot.borrow_mut() = None);
+    SAVE.with(|slot| slot.borrow_mut().clear());
+    SAVE_REVISION.with(|slot| *slot.borrow_mut() = 0);
+    SAVE_DIAGNOSTIC.with(|slot| *slot.borrow_mut() = None);
 
     if cart_ptr.is_null() {
+        if !save_ptr.is_null() {
+            unsafe { con_free(save_ptr, save_len) };
+        }
         set_error(Some("con_init: null cart pointer"));
+        return -1;
+    }
+    if save_ptr.is_null() && save_len != 0 {
+        // Consume the valid cart allocation even when the second argument is
+        // malformed; callers never retain ownership after entering init.
+        unsafe { con_free(cart_ptr, cart_len) };
+        set_error(Some("con_init_save: null save pointer with nonzero length"));
         return -1;
     }
 
@@ -136,11 +192,24 @@ pub unsafe extern "C" fn con_init(cart_ptr: *mut u8, cart_len: usize) -> i32 {
     // SAFETY: caller guarantees the buffer came from `con_alloc(cart_len)`.
     unsafe { con_free(cart_ptr, cart_len) };
 
-    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let save_bytes = if save_ptr.is_null() {
+        None
+    } else {
+        let bytes = unsafe { std::slice::from_raw_parts(save_ptr, save_len) }.to_vec();
+        unsafe { con_free(save_ptr, save_len) };
+        Some(bytes)
+    };
 
-    match Console::new(&text, 0) {
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let initial_save = save_bytes
+        .as_deref()
+        .map(String::from_utf8_lossy)
+        .map(|value| value.into_owned());
+
+    match Console::new_with_save(&text, 0, initial_save.as_deref()) {
         Ok(mut con) => {
             drain_logs(&mut con);
+            sync_save(&con);
             CONSOLE.with(|slot| *slot.borrow_mut() = Some(con));
             set_error(None);
             0
@@ -166,11 +235,39 @@ pub extern "C" fn con_step(input_mask: u32) {
         };
         let result = con.step((input_mask & 0xff) as u8);
         drain_logs(con);
+        sync_save(con);
         match result {
             Ok(()) => set_error(None),
             Err(e) => set_error(Some(&e.to_string())),
         }
     });
+}
+
+/// Successful `save_store` / `save_clear` count for the current VM.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_save_revision() -> u32 {
+    SAVE_REVISION.with(|slot| *slot.borrow())
+}
+
+/// Byte length of the current canonical save document. Zero means cleared or absent.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_save_len() -> usize {
+    SAVE.with(|slot| slot.borrow().len())
+}
+
+/// Pointer to [`con_save_len`] canonical UTF-8 JSON bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_save() -> *const u8 {
+    SAVE.with(|slot| slot.borrow().as_ptr())
+}
+
+/// NUL-terminated persistence diagnostic, or null. This never means the cart halted.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_save_error() -> *const u8 {
+    SAVE_DIAGNOSTIC.with(|slot| match slot.borrow().as_ref() {
+        Some(message) => message.as_ptr().cast::<u8>(),
+        None => ptr::null(),
+    })
 }
 
 /// Logical framebuffer width in pixels.

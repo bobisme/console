@@ -48,7 +48,10 @@ Why each piece matters:
   async factory, which is what `web/template.html` calls.
 - `ALLOW_MEMORY_GROWTH=1` — the cart buffer and Lua heap are allocated at
   runtime; without growth a large cart can hit the fixed 16 MB default.
-- `EXPORTED_FUNCTIONS` — the `con_*` C ABI (see `SPEC.md`). `_main` must be
+- `EXPORTED_FUNCTIONS` — the `con_*` C ABI (see `SPEC.md`). Persistence adds
+  `_con_init_save`, `_con_save_revision`, `_con_save_len`, `_con_save`, and
+  `_con_save_error`; omitting the required exports makes the shell fail fast
+  instead of silently losing saves. `_main` must be
   listed too: naming the list overrides emcc's default, and this is an
   executable. Leading underscores are the C-symbol convention emcc expects.
   `_con_audio` (PoC v1) is part of that list: omit it and the shell silently
@@ -117,6 +120,16 @@ Then pack the result:
 
 ```bash
 cargo run -p console -- pack carts/demo.cart -o dist/demo.html
+```
+
+Use `--target web` (default) for the browser adapter or `--target tiptap` for
+the TipTap SDK 2.2 adapter. The latter has no browser-storage fallback, awaits
+`loadState` before `_init`, and passes the parsed envelope to `saveState`.
+Verify it in a real browser with:
+
+```bash
+CONSOLE_BROWSER=/path/to/chromium CONSOLE_BIN=target/debug/console \
+  node web/tiptap-persistence-smoke.cjs
 ```
 
 Packed pages expose a frozen read-only diagnostic handle immediately, even

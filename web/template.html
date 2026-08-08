@@ -14,7 +14,8 @@
      too, dumping the whole engine JS into a CSS comment.
        TITLE      -> cart meta title (HTML-escaped)
        ENGINE_JS  -> emscripten SINGLE_FILE+MODULARIZE build (EXPORT_NAME=ConsoleEngine)
-       CART_TEXT  -> raw cart text ("</script" must be escaped by the packer as <\/script) */
+       CART_TEXT  -> raw cart text ("</script" must be escaped by the packer as <\/script)
+       HOST_STORAGE_JS -> target-specific browser settings/storage primitive */
   html, body {
     margin: 0; padding: 0; height: 100%;
     background: #10121c;
@@ -267,11 +268,20 @@ var diagnostic = {
   wasmMemoryGrowthEvents: 0,
   readStatus: null,
   readScreen: null,
-  readAudio: null
+  readAudio: null,
+  persistence: {
+    configured: false,
+    backend: "ephemeral",
+    saveId: null,
+    saveVersion: null,
+    revision: 0,
+    error: null
+  }
 };
 
 function freezeSnapshot(value) {
   if (Array.isArray(value.displayPalette)) Object.freeze(value.displayPalette);
+  if (value.persistence) Object.freeze(value.persistence);
   return Object.freeze(value);
 }
 
@@ -297,6 +307,14 @@ window.__console = Object.freeze({
       inputMask: live.inputMask,
       paused: live.paused,
       dead: live.dead
+      ,persistence: {
+        configured: diagnostic.persistence.configured,
+        backend: diagnostic.persistence.backend,
+        saveId: diagnostic.persistence.saveId,
+        saveVersion: diagnostic.persistence.saveVersion,
+        revision: diagnostic.persistence.revision,
+        error: diagnostic.persistence.error
+      }
     });
   },
   screenState: function () {
@@ -326,6 +344,17 @@ window.__console = Object.freeze({
   var W = 192, H = 320, FPS = 60;
   var BTN = { L: 1, R: 2, U: 4, D: 8, A: 16, B: 32, M: 64 };
   var HAPTIC_NAV_MS = 8, HAPTIC_ACTION_MS = 12;
+
+  // Injected by `console pack --target web|tiptap`. The TipTap target emits
+  // no browser-storage API tokens at all, including for shell preferences.
+  {{HOST_STORAGE_JS}}
+
+  function settingGet(key) {
+    return browserStorage ? browserStorage.get(key) : null;
+  }
+  function settingSet(key, value) {
+    if (browserStorage) browserStorage.set(key, value);
+  }
 
   // Best-effort shell feedback for physical touch controls. The Vibration API
   // has no portable intensity control, so action buttons get a slightly
@@ -363,7 +392,7 @@ window.__console = Object.freeze({
   // "SHARP" (pause-menu toggle) floors to integer scale for pixel-perfect
   // crispness at the cost of margins.
   var pixelPerfect = false;
-  try { pixelPerfect = localStorage.getItem("con-pp") === "1"; } catch (e) { /* private mode */ }
+  pixelPerfect = settingGet("con-pp") === "1";
   function layout() {
     var vw = window.innerWidth, vh = window.innerHeight;
     var deckH = Math.max(108, Math.min(150, Math.round(vh * 0.19)));
@@ -502,7 +531,7 @@ window.__console = Object.freeze({
   }
   mpixel.addEventListener("click", function () {
     pixelPerfect = !pixelPerfect;
-    try { localStorage.setItem("con-pp", pixelPerfect ? "1" : "0"); } catch (e) { /* private mode */ }
+    settingSet("con-pp", pixelPerfect ? "1" : "0");
     pixelLabel();
     layout();
   });
@@ -511,7 +540,7 @@ window.__console = Object.freeze({
   // ---- volume: slider in the pause menu ----
   var volume = 0.6;
   try {
-    var storedVol = parseFloat(localStorage.getItem("con-vol"));
+    var storedVol = parseFloat(settingGet("con-vol"));
     if (storedVol >= 0 && storedVol <= 1) volume = storedVol;
   } catch (e) { /* private mode */ }
   var mvolslider = document.getElementById("mvolslider");
@@ -519,7 +548,7 @@ window.__console = Object.freeze({
   function setVolume(v) {
     volume = Math.max(0, Math.min(1, v));
     if (masterGain) masterGain.gain.value = volume * volume; // perceptual curve
-    try { localStorage.setItem("con-vol", volume.toFixed(3)); } catch (e) { /* private mode */ }
+    settingSet("con-vol", volume.toFixed(3));
     var pct = Math.round(volume * 100);
     mvolslider.value = pct;
     mvollabel.textContent = "VOL " + pct;
@@ -532,6 +561,110 @@ window.__console = Object.freeze({
   mvolslider.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
   setVolume(volume);
 
+  // ---- host persistence capability ---------------------------------------
+  // The cart document itself declares the stable namespace and current
+  // schema. The core validates these values again; this small parser exists
+  // only so the host can load the correct document before `_init` runs.
+  function cartSaveConfig(text) {
+    var lines = text.replace(/\r\n?/g, "\n").split("\n");
+    var inMeta = false, id = null, version = null;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      var section = /^__([A-Za-z0-9_]+)__$/.exec(line);
+      if (section) { inMeta = section[1].toLowerCase() === "meta"; continue; }
+      if (!inMeta || !line || line.indexOf("#") === 0 || line.indexOf("--") === 0) continue;
+      var equal = line.indexOf("=");
+      if (equal < 0) continue;
+      var key = line.slice(0, equal).trim(), value = line.slice(equal + 1).trim();
+      if (key === "save_id") id = value;
+      if (key === "save_version") version = Number(value);
+    }
+    if (id === null && version === null) return null;
+    return { id: id, version: version };
+  }
+
+  function saveFailure(message) {
+    diagnostic.persistence.error = String(message);
+    try { console.warn("console persistence: " + message); } catch (e) { /* optional */ }
+  }
+
+  function encodedSave(value) {
+    if (value === undefined || value === null) return null;
+    var document;
+    try { document = typeof value === "string" ? value : JSON.stringify(value); }
+    catch (e) { saveFailure("loaded state is not JSON: " + e); return null; }
+    var bytes = new TextEncoder().encode(document).length;
+    if (bytes > 8192) {
+      saveFailure("loaded state is " + bytes + " serialized bytes; maximum is 8192");
+      return null;
+    }
+    return document;
+  }
+
+  function persistenceAdapter(config) {
+    diagnostic.persistence.configured = !!config;
+    diagnostic.persistence.saveId = config ? config.id : null;
+    diagnostic.persistence.saveVersion = config ? config.version : null;
+    if (!config) {
+      return { kind: "ephemeral", load: async function () { return null; }, store: function () {} };
+    }
+
+    // A present TipTap host is authoritative. Never mirror/fall back to local
+    // storage, which would split one player's progress across two backends.
+    var sdk = typeof window !== "undefined" ? window.TipTap : null;
+    if (sdk) {
+      diagnostic.persistence.backend = "tiptap";
+      if (typeof sdk.onStateError === "function") {
+        try { sdk.onStateError(function (error) { saveFailure("TipTap state error: " + error); }); }
+        catch (e) { saveFailure("registering TipTap state errors: " + e); }
+      }
+      if (typeof sdk.loadState !== "function" || typeof sdk.saveState !== "function") {
+        saveFailure("TipTap SDK 2.2 saveState/loadState are unavailable");
+        return { kind: "tiptap", load: async function () { return null; }, store: function () {} };
+      }
+      return {
+        kind: "tiptap",
+        load: function () {
+          return new Promise(function (resolve) {
+            try { sdk.loadState(function (value) { resolve(encodedSave(value)); }); }
+            catch (e) { saveFailure("TipTap loadState failed: " + e); resolve(null); }
+          });
+        },
+        store: function (document) {
+          try {
+            // Pass the parsed object, not the JSON string. TipTap's 8 KiB
+            // limit therefore counts the same serialization the core capped,
+            // without another layer of string quoting.
+            sdk.saveState(document === null ? null : JSON.parse(document));
+          } catch (e) { saveFailure("TipTap saveState failed: " + e); }
+        }
+      };
+    }
+
+    if (requireTipTapStorage) {
+      diagnostic.persistence.backend = "ephemeral";
+      saveFailure("TipTap target loaded without the TipTap SDK");
+      return { kind: "ephemeral", load: async function () { return null; }, store: function () {} };
+    }
+
+    if (browserStorage) {
+      diagnostic.persistence.backend = "local";
+      var key = "console.save." + config.id;
+      return {
+        kind: "local",
+        load: async function () { return encodedSave(browserStorage.get(key)); },
+        store: function (document) {
+          var ok = document === null ? browserStorage.remove(key) : browserStorage.set(key, document);
+          if (!ok) saveFailure("browser storage rejected the save");
+        }
+      };
+    }
+
+    diagnostic.persistence.backend = "ephemeral";
+    saveFailure("no persistence backend is available");
+    return { kind: "ephemeral", load: async function () { return null; }, store: function () {} };
+  }
+
   // ---- engine ----
   var Module;
   try {
@@ -541,8 +674,20 @@ window.__console = Object.freeze({
   }
 
   var con_alloc = Module.cwrap("con_alloc", "number", ["number"]);
-  var con_init = Module.cwrap("con_init", "number", ["number", "number"]);
+  if (typeof Module["_con_init_save"] !== "function" ||
+      typeof Module["_con_save_revision"] !== "function" ||
+      typeof Module["_con_save_len"] !== "function" ||
+      typeof Module["_con_save"] !== "function") {
+    return fatal("Engine persistence API missing; rebuild web/engine.js");
+  }
+  var con_init_save = Module.cwrap("con_init_save", "number", ["number", "number", "number", "number"]);
   var con_step = Module.cwrap("con_step", null, ["number"]);
+  var con_save_revision = Module.cwrap("con_save_revision", "number", []);
+  var con_save_len = Module.cwrap("con_save_len", "number", []);
+  var con_save = Module.cwrap("con_save", "number", []);
+  var con_save_error = typeof Module["_con_save_error"] === "function"
+    ? Module.cwrap("con_save_error", "number", [])
+    : null;
   if (typeof Module["_con_width"] !== "function" ||
       typeof Module["_con_height"] !== "function") {
     return fatal("Engine geometry API missing; rebuild web/engine.js");
@@ -577,6 +722,12 @@ window.__console = Object.freeze({
   cartText = cartText.replace(/<\\\//g, "</");
   if (cartText[0] === "\n") cartText = cartText.slice(1);
   var cartBytes = new TextEncoder().encode(cartText);
+  var saveConfig = cartSaveConfig(cartText);
+  var saveBackend = persistenceAdapter(saveConfig);
+  diagnostic.persistence.backend = saveBackend.kind;
+  // TipTap loadState is asynchronous. Await it before entering the core so
+  // cart top-level and `_init` see the loaded document on their first read.
+  var initialSaveDocument = await saveBackend.load();
 
   var dead = false;
   var rafPending = false;
@@ -603,19 +754,47 @@ window.__console = Object.freeze({
       diagnostic.peakWasmMemoryBytes = bytes;
     }
   }
-  function initConsole() {
+  var flushedSaveRevision = 0;
+  function initConsole(saveDocument) {
     var ptr = con_alloc(cartBytes.length); // con_init takes ownership and frees
     Module.HEAPU8.set(cartBytes, ptr);
-    return con_init(ptr, cartBytes.length) === 0;
+    var savePtr = 0, saveLength = 0;
+    if (saveDocument !== null) {
+      var saveBytes = new TextEncoder().encode(saveDocument);
+      saveLength = saveBytes.length;
+      savePtr = con_alloc(saveLength);
+      Module.HEAPU8.set(saveBytes, savePtr);
+    }
+    flushedSaveRevision = 0;
+    return con_init_save(ptr, cartBytes.length, savePtr, saveLength) === 0;
+  }
+  function currentSaveDocument() {
+    var length = con_save_len();
+    if (length === 0) return null;
+    var pointer = con_save();
+    return new TextDecoder().decode(Module.HEAPU8.slice(pointer, pointer + length));
+  }
+  function flushSave() {
+    var revision = con_save_revision();
+    diagnostic.persistence.revision = revision;
+    if (con_save_error) {
+      var errorPointer = con_save_error();
+      if (errorPointer) saveFailure(Module.UTF8ToString(errorPointer));
+    }
+    if (revision === flushedSaveRevision) return;
+    saveBackend.store(currentSaveDocument());
+    flushedSaveRevision = revision;
   }
   function resetConsole() {
     try {
-      if (initConsole()) {
+      var restartSave = currentSaveDocument();
+      if (initConsole(restartSave)) {
         dead = false;
         diagnostic.phase = "ready";
         diagnostic.error = null;
         diagnostic.successfulFrames = 0;
         resetRuntimeTelemetry();
+        flushSave();
         errbox.style.display = "none";
         blit();
         if (!rafPending) {
@@ -632,9 +811,10 @@ window.__console = Object.freeze({
     }
   }
 
-  if (!initConsole()) {
+  if (!initConsole(initialSaveDocument)) {
     return fatal("Cart failed to load:\n" + (currentError() || "unknown error"));
   }
+  flushSave();
   resetRuntimeTelemetry();
 
   var palPtr = con_palette();
@@ -925,11 +1105,16 @@ window.__console = Object.freeze({
       }
       var err = currentError();
       if (err) {
+        // A catch-up batch can contain successful steps before the failing
+        // one. The core exposes the last-successful snapshot, so persist it
+        // before halting instead of losing progress from those earlier steps.
+        if (steps > 0) flushSave();
         dead = true;
         rafPending = false;
         blit();
         return fatal("Cart crashed:\n" + err, "halted");
       }
+      if (steps > 0) flushSave();
       diagnostic.successfulFrames += steps;
       if (steps > 0) blit();
     }

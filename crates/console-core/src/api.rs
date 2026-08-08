@@ -180,6 +180,8 @@ pub fn sandbox(lua: &Lua) -> LuaResult<()> {
 pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
     let g = lua.globals();
 
+    crate::save::register(lua, state)?;
+
     // ---- screen -----------------------------------------------------------
     let st = state.clone();
     g.set(

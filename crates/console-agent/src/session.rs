@@ -24,6 +24,9 @@ use crate::value::lua_to_json;
 #[derive(Clone)]
 pub struct SavedState {
     pub seed: u64,
+    /// Host document supplied before the original cart `_init`. Replays must
+    /// not substitute whatever ambient backend happens to contain later.
+    pub initial_save: Option<String>,
     pub input_log: Vec<u8>,
     replay_log: Vec<ReplayEvent>,
 }
@@ -302,6 +305,7 @@ pub struct Session {
     cart_text: Option<String>,
     console: Option<Console>,
     seed: u64,
+    initial_save: Option<String>,
     input_log: Vec<u8>,
     replay_log: Vec<ReplayEvent>,
     saved_states: BTreeMap<String, SavedState>,
@@ -338,6 +342,7 @@ impl Default for Session {
             cart_text: None,
             console: None,
             seed: 0,
+            initial_save: None,
             input_log: Vec::new(),
             replay_log: Vec::new(),
             saved_states: BTreeMap::new(),
@@ -381,12 +386,25 @@ impl Session {
     /// previous cart, since a save state's replay only makes sense against
     /// the cart it was recorded on.
     pub fn load_cart(&mut self, text: &str, seed: u64) -> Result<(), SessionError> {
-        let mut console = Console::new(text, seed)?;
+        self.load_cart_with_save(text, seed, None)
+    }
+
+    /// Load a cart with an explicit persistence document injected before
+    /// top-level Lua and `_init`. Agent sessions never consult ambient host
+    /// storage; callers opt into this deterministic input explicitly.
+    pub fn load_cart_with_save(
+        &mut self,
+        text: &str,
+        seed: u64,
+        initial_save: Option<&str>,
+    ) -> Result<(), SessionError> {
+        let mut console = Console::new_with_save(text, seed, initial_save)?;
         console.set_draw_tracing(self.draw_tracing);
         console.set_layer_capture(self.layer_capture);
         let init_draws = console.take_text_draws();
         self.cart_text = Some(text.to_string());
         self.seed = seed;
+        self.initial_save = initial_save.map(str::to_string);
         self.console = Some(console);
         self.input_log.clear();
         self.replay_log.clear();
@@ -406,11 +424,15 @@ impl Session {
     pub fn reset(&mut self, seed: Option<u64>) -> Result<(), SessionError> {
         let text = self.cart_text.clone().ok_or(SessionError::NoCart)?;
         let seed = seed.unwrap_or(self.seed);
-        let mut console = Console::new(&text, seed)?;
+        // Reset behaves like restarting a physical console: committed cart
+        // persistence survives, while all volatile runtime state is rebuilt.
+        let initial_save = self.console()?.save_document();
+        let mut console = Console::new_with_save(&text, seed, initial_save.as_deref())?;
         console.set_draw_tracing(self.draw_tracing);
         console.set_layer_capture(self.layer_capture);
         let init_draws = console.take_text_draws();
         self.seed = seed;
+        self.initial_save = initial_save;
         self.console = Some(console);
         self.input_log.clear();
         self.replay_log.clear();
@@ -428,6 +450,19 @@ impl Session {
 
     pub fn console(&self) -> Result<&Console, SessionError> {
         self.console.as_ref().ok_or(SessionError::NoCart)
+    }
+
+    /// Canonical current host document, copied for a backend or assertion.
+    pub fn save_document(&self) -> Result<Option<String>, SessionError> {
+        Ok(self.console()?.save_document())
+    }
+
+    pub fn save_revision(&self) -> Result<u32, SessionError> {
+        Ok(self.console()?.save_revision())
+    }
+
+    pub fn save_diagnostic(&self) -> Result<Option<String>, SessionError> {
+        Ok(self.console()?.save_diagnostic())
     }
 
     /// Step `frames` times with the same input `mask` applied each frame.
@@ -780,6 +815,7 @@ impl Session {
             name.to_string(),
             SavedState {
                 seed: self.seed,
+                initial_save: self.initial_save.clone(),
                 input_log: self.input_log.clone(),
                 replay_log: self.replay_log.clone(),
             },
@@ -799,7 +835,7 @@ impl Session {
             .cloned()
             .ok_or_else(|| SessionError::BadParams(format!("no saved state named {name:?}")))?;
 
-        let mut console = Console::new(&text, saved.seed)?;
+        let mut console = Console::new_with_save(&text, saved.seed, saved.initial_save.as_deref())?;
         console.set_draw_tracing(self.draw_tracing);
         console.set_layer_capture(self.layer_capture);
         let mut audio_log = Vec::new();
@@ -877,6 +913,7 @@ impl Session {
         }
 
         self.seed = saved.seed;
+        self.initial_save = saved.initial_save;
         self.input_log = saved.input_log;
         self.replay_log = saved.replay_log;
         self.console = Some(console);

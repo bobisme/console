@@ -30,6 +30,7 @@ mod font;
 mod gfx;
 mod gfx_meta;
 mod rng;
+mod save;
 mod state;
 
 use std::cell::RefCell;
@@ -75,6 +76,10 @@ pub use crate::gfx::{
 };
 pub use crate::gfx_meta::{AnimDef, FrameSpec, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
+pub use crate::save::{
+    MAX_SAVE_BYTES, MAX_SAVE_DEPTH, MAX_SAVE_KEY_BYTES, MAX_SAVE_NODES, SAVE_MAX_SAFE_INTEGER,
+    SaveConfig, SaveValue, canonical_save_document,
+};
 pub use crate::state::{LAYER_TRANSPARENT, MAX_CAPTURED_LAYERS};
 /// Re-exported so hosts (`console`, `console-web`) can talk to the VM
 /// without pinning their own, possibly different, mlua version.
@@ -133,6 +138,12 @@ pub struct Console {
     cart: Cart,
     seed: u64,
     halted: Option<Error>,
+    /// Host-visible persistence is a last-successful-boundary snapshot. Lua
+    /// may call save_store and then error in the same frame; that staged value
+    /// must never escape to a backend.
+    save_document: Option<String>,
+    save_revision: u32,
+    save_diagnostic: Option<String>,
 }
 
 /// One isolated diagnostic layer from the most recently rendered frame.
@@ -155,12 +166,35 @@ impl Console {
     /// Parse `cart_text`, build the sandboxed VM, run the cart's top-level
     /// chunk and then `_init()` if it exists.
     pub fn new(cart_text: &str, seed: u64) -> Result<Console, Error> {
+        Self::new_with_save(cart_text, seed, None)
+    }
+
+    /// Build a console with one host-supplied persisted save document.
+    ///
+    /// The document is ordinary deterministic input and is installed before
+    /// cart top-level code and `_init`. Invalid, oversized, or mismatched
+    /// documents are ignored and exposed through [`Console::save_diagnostic`]
+    /// rather than halting gameplay.
+    pub fn new_with_save(
+        cart_text: &str,
+        seed: u64,
+        initial_save: Option<&str>,
+    ) -> Result<Console, Error> {
         let cart = Cart::parse(cart_text)?;
-        Console::from_cart(cart, seed)
+        Console::from_cart_with_save(cart, seed, initial_save)
     }
 
     /// Same as [`Console::new`] with an already-parsed cart.
     pub fn from_cart(cart: Cart, seed: u64) -> Result<Console, Error> {
+        Self::from_cart_with_save(cart, seed, None)
+    }
+
+    /// Same as [`Console::new_with_save`] with an already-parsed cart.
+    pub fn from_cart_with_save(
+        cart: Cart,
+        seed: u64,
+        initial_save: Option<&str>,
+    ) -> Result<Console, Error> {
         // Only the pure standard libraries; `io`/`os`/`debug`/`package` are
         // never loaded in the first place, and `sandbox` clears the base
         // library's loaders on top of that.
@@ -175,6 +209,7 @@ impl Console {
             Rc::new(cart.gfx_meta().clone()),
             seed,
             cart.audio().clone(),
+            save::SaveState::new(cart.save_config().cloned(), initial_save),
         )));
 
         api::sandbox(&lua)?;
@@ -193,6 +228,9 @@ impl Console {
             cart,
             seed,
             halted: None,
+            save_document: None,
+            save_revision: 0,
+            save_diagnostic: None,
         };
 
         let source = console.cart.lua().to_string();
@@ -208,6 +246,7 @@ impl Console {
         }
         devhooks::lock(&console.lua, &console.devhooks)?;
         console.sync_framebuffer();
+        console.sync_save_output();
         Ok(console)
     }
 
@@ -232,6 +271,7 @@ impl Console {
             s.input = input & input::MASK;
         }
 
+        let save_checkpoint = self.state.borrow().save.clone();
         let result = self.run_frame();
         self.sync_framebuffer();
         match result {
@@ -244,10 +284,13 @@ impl Console {
                 self.audio.copy_from_slice(s.audio.frame());
                 s.audio.advance();
                 drop(s);
+                self.sync_save_output();
                 Ok(())
             }
             Err(e) => {
-                self.state.borrow_mut().audio.silence();
+                let mut state = self.state.borrow_mut();
+                state.save = save_checkpoint;
+                state.audio.silence();
                 self.audio.fill(0.0);
                 self.halted = Some(e.clone());
                 Err(e)
@@ -350,6 +393,24 @@ impl Console {
     /// The parsed cart (meta, Lua source, sprites).
     pub fn cart(&self) -> &Cart {
         &self.cart
+    }
+
+    /// Current canonical persisted document, or `None` when the cart has not
+    /// stored data (or explicitly cleared it).
+    pub fn save_document(&self) -> Option<String> {
+        self.save_document.clone()
+    }
+
+    /// Monotonic count of successful `save_store` / `save_clear` calls in
+    /// this VM. Hosts use it to flush only newly committed values.
+    pub fn save_revision(&self) -> u32 {
+        self.save_revision
+    }
+
+    /// Last initial-document or cart serialization diagnostic. It is bounded
+    /// and informational: persistence failures never halt or branch gameplay.
+    pub fn save_diagnostic(&self) -> Option<String> {
+        self.save_diagnostic.clone()
     }
 
     /// A read-only snapshot of the live 128x64 tile map.
@@ -460,6 +521,7 @@ impl Console {
     /// `eval`). Does not clear a halt and does not advance the frame counter,
     /// but does refresh the framebuffer snapshot in case the code drew.
     pub fn eval(&mut self, code: &str) -> Result<Value, Error> {
+        let save_checkpoint = self.state.borrow().save.clone();
         let result = self
             .lua
             .load(code)
@@ -467,6 +529,11 @@ impl Console {
             .eval::<Value>()
             .map_err(Error::from);
         self.sync_framebuffer();
+        if result.is_ok() {
+            self.sync_save_output();
+        } else {
+            self.state.borrow_mut().save = save_checkpoint;
+        }
         result
     }
 
@@ -518,16 +585,21 @@ impl Console {
         // Unknown hooks and phase mismatches are host request errors. Reject
         // them before entering the callback and without halting the cart.
         devhooks::validate_phase(&self.lua, &self.devhooks, name, expected_phase)?;
+        let save_checkpoint = self.state.borrow().save.clone();
         let result =
             devhooks::invoke_validated(&self.lua, &self.devhooks, name, expected_phase, args);
         self.sync_framebuffer();
         match result {
-            Ok(value) => Ok(value),
+            Ok(value) => {
+                self.sync_save_output();
+                Ok(value)
+            }
             Err(error) => {
                 // A callback may have mutated state before raising or before
                 // returning an invalid value. Halting prevents an
                 // unreplayable partially-mutated session from continuing.
                 self.audio.fill(0.0);
+                self.state.borrow_mut().save = save_checkpoint;
                 self.halted = Some(error.clone());
                 Err(error)
             }
@@ -563,6 +635,13 @@ impl Console {
         if let Some(shifts) = rshift {
             gfx::apply_rshift(&mut self.fb, &shifts);
         }
+    }
+
+    fn sync_save_output(&mut self) {
+        let state = self.state.borrow();
+        self.save_document = state.save.document();
+        self.save_revision = state.save.revision();
+        self.save_diagnostic = state.save.diagnostic().map(str::to_string);
     }
 }
 

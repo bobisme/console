@@ -9,7 +9,10 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
 
-use console_core::{COLOR_MASK, LayerCaptureFrame, SCREEN_H, SCREEN_W, TileMap, input};
+use console_core::{
+    COLOR_MASK, Cart, LayerCaptureFrame, SCREEN_H, SCREEN_W, SaveValue, TileMap,
+    canonical_save_document, input,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
@@ -47,12 +50,13 @@ Options:
   -h, --help         Print this help
 
 Scenario format (version 1):
-  {\"version\":1,\"seed\":0,\"stages\":[
+  {\"version\":1,\"seed\":0,\"initial_save\":{\"version\":1,\"data\":{\"unlocked\":true}},\"stages\":[
     {\"op\":\"hook\",\"hook\":\"start\"},
     {\"op\":\"hook\",\"hook\":\"status\",\"expect\":{\"op\":\"equals\",\"field\":\"scene\",\"value\":\"play\"}},
     {\"op\":\"input\",\"frames\":1,\"buttons\":\"A\"},
     {\"op\":\"eval\",\"code\":\"dev_warp(48,449)\"},
     {\"op\":\"assert\",\"code\":\"return dev_status().embers\",\"equals\":1},
+    {\"op\":\"save_assert\",\"version\":2,\"equals\":{\"unlocked\":true}},
     {\"op\":\"ecs_watch\",\"watch\":\"enemies\",\"define\":{\"world\":\"arena\",\"with\":[\"enemy\"],\"limit\":64}},
     {\"op\":\"ecs_watch\",\"watch\":\"enemies\"},
     {\"op\":\"sequence\",\"name\":\"hop\",\"frames\":12,\"buttons\":\"R\",\"every\":3,
@@ -100,7 +104,16 @@ pub struct Scenario {
     pub version: u32,
     #[serde(default)]
     pub seed: u64,
+    #[serde(default)]
+    pub initial_save: Option<InitialSave>,
     pub stages: Vec<Stage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InitialSave {
+    pub version: u32,
+    pub data: Json,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,6 +167,13 @@ pub enum Stage {
         #[serde(default)]
         name: Option<String>,
         code: String,
+        equals: Json,
+    },
+    SaveAssert {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        version: Option<u32>,
         equals: Json,
     },
     /// Define (when `define` is present) and sample one named bounded ECS
@@ -218,6 +238,8 @@ pub enum Stage {
         text_events: Option<String>,
         #[serde(default)]
         draw_trace: Option<String>,
+        #[serde(default)]
+        save: Option<String>,
         /// Explicit semantic tag -> artifact path mapping. The reserved key
         /// `__untagged__` selects draws made without `draw_tag()`.
         #[serde(default)]
@@ -455,6 +477,7 @@ impl Stage {
             Stage::Input { .. } => "input",
             Stage::Sequence { .. } => "sequence",
             Stage::Assert { .. } => "assert",
+            Stage::SaveAssert { .. } => "save_assert",
             Stage::EcsWatch { .. } => "ecs_watch",
             Stage::Review { .. } => "review",
             Stage::Capture { .. } => "capture",
@@ -468,6 +491,7 @@ impl Stage {
             | Stage::Input { name, .. }
             | Stage::Sequence { name, .. }
             | Stage::Assert { name, .. }
+            | Stage::SaveAssert { name, .. }
             | Stage::EcsWatch { name, .. }
             | Stage::Review { name, .. }
             | Stage::Capture { name, .. } => name.as_deref(),
@@ -1349,6 +1373,22 @@ pub fn run_scenario(
     let mut review = ReviewCollector::from_stage(review_stage, review_reference);
 
     let cart_text = crate::project::load_cart_text(cart_path).map_err(|error| error.to_string())?;
+    let parsed_cart = Cart::parse(&cart_text).map_err(|error| error.to_string())?;
+    let initial_save = scenario
+        .initial_save
+        .as_ref()
+        .map(|initial| {
+            let config = parsed_cart
+                .save_config()
+                .ok_or("scenario initial_save requires cart __meta__ save_id and save_version")?;
+            let data =
+                serde_json::from_value::<SaveValue>(initial.data.clone()).map_err(|error| {
+                    format!("scenario initial_save data is not save-compatible: {error}")
+                })?;
+            canonical_save_document(config, initial.version, data)
+                .map_err(|error| format!("scenario initial_save is invalid: {error}"))
+        })
+        .transpose()?;
     let seed = seed_override.unwrap_or(scenario.seed);
     let mut session = Session::new();
     if scenario.stages.iter().any(|stage| {
@@ -1372,7 +1412,7 @@ pub fn run_scenario(
         session.set_layer_capture(true);
     }
     session
-        .load_cart(&cart_text, seed)
+        .load_cart_with_save(&cart_text, seed, initial_save.as_deref())
         .map_err(|error| format!("loading {}: {error}", cart_path.display()))?;
 
     let artifact_root = match artifacts {
@@ -1459,6 +1499,14 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
     }
     if scenario.stages.is_empty() {
         return Err("scenario has no stages".to_string());
+    }
+    if let Some(initial) = &scenario.initial_save {
+        if initial.version == 0 {
+            return Err("scenario initial_save version must be a positive u32 integer".into());
+        }
+        serde_json::from_value::<SaveValue>(initial.data.clone()).map_err(|error| {
+            format!("scenario initial_save data is not save-compatible: {error}")
+        })?;
     }
     let mut names = BTreeSet::new();
     let mut paths = BTreeSet::new();
@@ -2064,6 +2112,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                 audio_stats,
                 text_events,
                 draw_trace,
+                save,
                 layers,
                 map,
                 from_frame,
@@ -2082,6 +2131,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                     audio_stats.as_deref(),
                     text_events.as_deref(),
                     draw_trace.as_deref(),
+                    save.as_deref(),
                 ];
                 for (tag, output) in layers {
                     if tag != "__untagged__" && tag.len() > 64 {
@@ -2175,6 +2225,18 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                         ));
                     }
                 }
+            }
+            Stage::SaveAssert {
+                version, equals, ..
+            } => {
+                if *version == Some(0) {
+                    return Err(format!(
+                        "stage {index} save_assert version must be a positive u32 integer"
+                    ));
+                }
+                serde_json::from_value::<SaveValue>(equals.clone()).map_err(|error| {
+                    format!("stage {index} save_assert value is not save-compatible: {error}")
+                })?;
             }
             _ => {}
         }
@@ -2730,6 +2792,34 @@ fn execute_stage(
                 ));
             }
         }
+        Stage::SaveAssert {
+            version, equals, ..
+        } => {
+            let actual = current_save_json(session)?;
+            let actual_data = actual
+                .as_ref()
+                .and_then(|value| value.get("data"))
+                .cloned()
+                .unwrap_or(Json::Null);
+            let actual_version = actual
+                .as_ref()
+                .and_then(|value| value.get("version"))
+                .and_then(Json::as_u64);
+            report.expected = Some(json!({"data": equals, "version": version}));
+            report.actual = Some(actual.clone().unwrap_or(Json::Null));
+            let version_matches =
+                version.is_none_or(|expected| actual_version == Some(u64::from(expected)));
+            if actual_data != *equals || !version_matches {
+                return Err(format!(
+                    "save assertion failed: expected data {}{}; got {}",
+                    equals,
+                    version
+                        .map(|value| format!(" at version {value}"))
+                        .unwrap_or_default(),
+                    actual.map_or_else(|| "no save".into(), |value| value.to_string())
+                ));
+            }
+        }
         Stage::Review {
             board,
             report: report_path,
@@ -2903,6 +2993,7 @@ fn execute_stage(
             audio_stats,
             text_events,
             draw_trace,
+            save,
             layers,
             map,
             from_frame,
@@ -3017,6 +3108,15 @@ fn execute_stage(
                     .artifacts
                     .push(write_artifact(root, name, "draw_trace", &bytes)?);
             }
+            if let Some(name) = save {
+                let value = current_save_json(session)?.unwrap_or(Json::Null);
+                let mut bytes = serde_json::to_vec_pretty(&value)
+                    .map_err(|error| format!("serializing save artifact: {error}"))?;
+                bytes.push(b'\n');
+                report
+                    .artifacts
+                    .push(write_artifact(root, name, "save", &bytes)?);
+            }
             if !layers.is_empty() {
                 // Resolve and encode the complete requested set before any
                 // layer is written. A misspelled tag cannot leave a partial,
@@ -3104,6 +3204,17 @@ fn execute_stage(
         }
     }
     Ok(())
+}
+
+fn current_save_json(session: &Session) -> Result<Option<Json>, String> {
+    session
+        .save_document()
+        .map_err(|error| error.to_string())?
+        .map(|document| {
+            serde_json::from_str(&document)
+                .map_err(|error| format!("core returned an invalid save document: {error}"))
+        })
+        .transpose()
 }
 
 fn select_hook_value<'a>(result: &'a Json, field: Option<&str>) -> Result<&'a Json, String> {

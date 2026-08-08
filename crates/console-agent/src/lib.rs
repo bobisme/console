@@ -29,6 +29,7 @@ pub mod music;
 pub mod oneshot;
 pub mod pack;
 pub mod palette;
+pub mod persistence;
 pub mod playtest;
 pub mod project;
 pub mod rpc;
@@ -44,7 +45,7 @@ usage:
   console run <cart|project> [--frames N] [--input SPEC] [--hook-before NAME[=JSON]] [--hook-after NAME[=JSON]]
                     [--eval-before CODE] [--eval-after CODE]
                     [--screenshot out.png] [--screen-text] [--screen-text-region X,Y,WIDTH,HEIGHT]
-                    [--screen-text-summary] [--seed N]
+                    [--screen-text-summary] [--seed N] [--save-file FILE]
                     [--wav out.wav] [--spectrogram out.png] [--audio-events] [--audio-stats] [--text-events]
                     [--draw-trace trace.json] [--ecs-watch JSON]
 

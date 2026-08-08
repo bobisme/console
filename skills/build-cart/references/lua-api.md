@@ -7,6 +7,7 @@ sandbox. Function arguments in square brackets are optional.
 ## Contents
 
 - [Runtime and callbacks](#runtime-and-callbacks)
+- [Persistent save data](#persistent-save-data)
 - [Entity component system](#entity-component-system)
 - [Drawing primitives](#drawing-primitives)
 - [Sprites and declared animations](#sprites-and-declared-animations)
@@ -43,6 +44,34 @@ message and traceback.
 
 All numeric draw coordinates are floored. Colors are floored and masked to the
 low six bits (`0..63`). Optional booleans use Lua truthiness.
+
+## Persistent save data
+
+Declare both `save_id` and `save_version` in `__meta__`, then load before
+choosing initial game state:
+
+```lua
+local save,stored_version=save_load()
+save=save or {high_score=0,unlocks={}}
+if stored_version and stored_version<2 then
+  save.unlocked_hard_mode=false
+end
+
+local ok,err=save_store(save) -- writes current cart save_version
+if not ok then printh("save rejected: "..err) end
+-- save_clear() -> ok,error
+```
+
+`save_load()` returns `data, stored_version`, or `nil,nil`. Values may contain
+booleans, finite/JavaScript-safe numbers, UTF-8 strings, dense arrays, and
+string-keyed objects; not nil, sparse/mixed tables, functions, userdata,
+threads, cycles, or non-finite numbers. An empty table becomes an empty array.
+The complete deterministic JSON envelope is capped at 8,192 UTF-8 bytes, with
+depth 16, 4,096 values, and 128-byte object keys. `save_store(value)` and
+`save_clear()` return `false,message` without changing the prior save when
+rejected. A Lua error later in the same `_init`, frame, eval, or hook also
+rolls the write back. See [platform and cart format](platform-and-cart-format.md#persistent-save-metadata)
+for host adapters and migration rules.
 
 ## Entity component system
 

@@ -10,6 +10,7 @@ use crate::gfx::{
     parse_color_char,
 };
 use crate::gfx_meta::GfxMeta;
+use crate::save::SaveConfig;
 
 /// Tooling-only source-index to display-index mapping for static art previews.
 ///
@@ -51,6 +52,7 @@ pub struct Cart {
     audio: AudioBank,
     gfx_meta: GfxMeta,
     preview_palette: PreviewPalette,
+    save_config: Option<SaveConfig>,
     /// Raw text of every section, keyed by section name (without the `__`
     /// markers), including unknown ones so tools can round-trip them.
     sections: BTreeMap<String, String>,
@@ -92,6 +94,7 @@ impl Cart {
             None => BTreeMap::new(),
         };
         let preview_palette = parse_preview_palette(meta.get("preview_palette"))?;
+        let save_config = SaveConfig::from_meta(&meta)?;
 
         let sprites = match sections.get("sprites") {
             Some(text) => parse_sprites(text)?,
@@ -119,6 +122,7 @@ impl Cart {
             audio,
             gfx_meta,
             preview_palette,
+            save_config,
             sections,
         })
     }
@@ -199,6 +203,11 @@ impl Cart {
     /// themselves. The running console does not consume this value.
     pub fn preview_palette(&self) -> &PreviewPalette {
         &self.preview_palette
+    }
+
+    /// Stable persistence identity and current schema declared in `__meta__`.
+    pub fn save_config(&self) -> Option<&SaveConfig> {
+        self.save_config.as_ref()
     }
 
     /// All `key=value` pairs from `__meta__`.
