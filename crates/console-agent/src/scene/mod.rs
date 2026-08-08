@@ -234,7 +234,7 @@ pub(crate) struct AtlasReport {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct PackedTileReport {
-    pub id: u8,
+    pub id: console_core::TileId,
     pub atlas_cell: [u32; 2],
     pub class: String,
     pub names: Vec<String>,
@@ -290,13 +290,13 @@ pub(crate) struct LintReport {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SemanticSplit {
     pub classes: Vec<String>,
-    pub tile_ids: Vec<u8>,
+    pub tile_ids: Vec<console_core::TileId>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct AdjacencyReport {
-    pub a: u8,
-    pub b: u8,
+    pub a: console_core::TileId,
+    pub b: console_core::TileId,
     pub direction: &'static str,
     pub legal: bool,
 }

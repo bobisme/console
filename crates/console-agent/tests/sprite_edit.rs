@@ -32,7 +32,7 @@ fn args(v: &[&str]) -> Vec<String> {
 }
 
 /// Build a minimal cart: `__lua__` + optional `__gfx_meta__` + `__sprites__`
-/// with the given row lines (each may be shorter than 128 chars; missing
+/// with the given row lines (each may be shorter than 256 chars; missing
 /// suffix and missing trailing rows both default to zero, per
 /// `console_core::cart::parse_sprites`).
 fn cart(gfx_meta: &str, sprite_rows: &[&str]) -> String {
@@ -53,12 +53,12 @@ fn cart(gfx_meta: &str, sprite_rows: &[&str]) -> String {
     s
 }
 
-/// A 128-char sheet row with `segments` (byte offset, hex text) overlaid on
+/// A 256-char sheet row with `segments` (byte offset, hex text) overlaid on
 /// an all-zero background — the shape every expected "changed row" takes,
 /// since `transform.rs` always re-encodes a changed row at full sheet
 /// width.
-fn row128(segments: &[(usize, &str)]) -> String {
-    let mut chars = vec!['0'; 128];
+fn row256(segments: &[(usize, &str)]) -> String {
+    let mut chars = vec!['0'; 256];
     for (offset, text) in segments {
         for (i, c) in text.chars().enumerate() {
             chars[offset + i] = c;
@@ -68,7 +68,7 @@ fn row128(segments: &[(usize, &str)]) -> String {
 }
 
 fn zero_row() -> String {
-    "0".repeat(128)
+    "0".repeat(256)
 }
 
 // ---------------------------------------------------------------------
@@ -101,7 +101,7 @@ fn shift_fill_moves_pixel_and_clears_vacated() {
         .unwrap();
     assert_eq!(
         row0,
-        row128(&[(1, "a")]),
+        row256(&[(1, "a")]),
         "pixel moved from x=0 to x=1, vacated x=0 cleared"
     );
 }
@@ -131,7 +131,7 @@ fn shift_dx_alone_defaults_dy_to_zero() {
         .unwrap();
     assert_eq!(
         row0,
-        row128(&[(1, "a")]),
+        row256(&[(1, "a")]),
         "dy defaults to 0, pixel only moves in x"
     );
 }
@@ -159,7 +159,7 @@ fn shift_dy_alone_defaults_dx_to_zero() {
     let after_lines: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
     assert_eq!(
         after_lines[3],
-        row128(&[(0, "11111111")]),
+        row256(&[(0, "11111111")]),
         "row3 <- src(row1), no x shift"
     );
 }
@@ -201,7 +201,7 @@ fn shift_wrap_handles_negative_delta() {
         .lines()
         .next()
         .unwrap();
-    assert_eq!(row0, row128(&[(7, "a")]), "wraps around to x=7");
+    assert_eq!(row0, row256(&[(7, "a")]), "wraps around to x=7");
 }
 
 #[test]
@@ -253,13 +253,13 @@ fn shift_vertical_fill_only_rewrites_rows_that_actually_changed() {
     );
     // Rows 1..7 do change.
     let expected = [
-        row128(&[]),                // row1 <- src(row -1) OOB -> 0
-        row128(&[]),                // row2 <- src(row 0) = "00000000"
-        row128(&[(0, "11111111")]), // row3 <- src(row1)
-        row128(&[(0, "22222222")]), // row4 <- src(row2)
-        row128(&[(0, "33333333")]), // row5 <- src(row3)
-        row128(&[(0, "44444444")]), // row6 <- src(row4)
-        row128(&[(0, "55555555")]), // row7 <- src(row5)
+        row256(&[]),                // row1 <- src(row -1) OOB -> 0
+        row256(&[]),                // row2 <- src(row 0) = "00000000"
+        row256(&[(0, "11111111")]), // row3 <- src(row1)
+        row256(&[(0, "22222222")]), // row4 <- src(row2)
+        row256(&[(0, "33333333")]), // row5 <- src(row3)
+        row256(&[(0, "44444444")]), // row6 <- src(row4)
+        row256(&[(0, "55555555")]), // row7 <- src(row5)
     ];
     for (i, exp) in expected.iter().enumerate() {
         let y = i + 1;
@@ -287,7 +287,7 @@ fn flip_horizontal_reverses_columns() {
 
     let out = read(&path);
     for line in out.split("__sprites__\n").nth(1).unwrap().lines() {
-        assert_eq!(line, row128(&[(0, "76543210")]));
+        assert_eq!(line, row256(&[(0, "76543210")]));
     }
 }
 
@@ -316,7 +316,7 @@ fn flip_vertical_reverses_rows() {
             .unwrap()
             .to_string()
             .repeat(8);
-        assert_eq!(*row, row128(&[(0, &expected_digit)]), "row {y}");
+        assert_eq!(*row, row256(&[(0, &expected_digit)]), "row {y}");
     }
 }
 
@@ -354,8 +354,8 @@ fn rotate_cw_8x8_moves_corners() {
         .collect();
     assert_eq!(changed, vec![0, 7], "only row0 and row7 actually change");
     // After cw: new TL=old BL=4, new TR=old TL=1, new BR=old TR=2, new BL=old BR=3.
-    assert_eq!(after[0], row128(&[(0, "4"), (7, "1")]));
-    assert_eq!(after[7], row128(&[(0, "3"), (7, "2")]));
+    assert_eq!(after[0], row256(&[(0, "4"), (7, "1")]));
+    assert_eq!(after[7], row256(&[(0, "3"), (7, "2")]));
 }
 
 #[test]
@@ -389,8 +389,8 @@ fn rotate_ccw_8x8_moves_corners() {
         .collect();
     assert_eq!(changed, vec![0, 7]);
     // After ccw: new TL=old TR=2, new TR=old BR=3, new BR=old BL=4, new BL=old TL=1.
-    assert_eq!(after[0], row128(&[(0, "2"), (7, "3")]));
-    assert_eq!(after[7], row128(&[(0, "1"), (7, "4")]));
+    assert_eq!(after[0], row256(&[(0, "2"), (7, "3")]));
+    assert_eq!(after[7], row256(&[(0, "1"), (7, "4")]));
 }
 
 #[test]
@@ -425,8 +425,8 @@ fn rotate_16x16_on_a_2x2_tile_sprite() {
         vec![8, 23],
         "only row 8 and row 23 actually change"
     );
-    assert_eq!(after[8], row128(&[(0, "4"), (15, "1")]));
-    assert_eq!(after[23], row128(&[(0, "3"), (15, "2")]));
+    assert_eq!(after[8], row256(&[(0, "4"), (15, "1")]));
+    assert_eq!(after[23], row256(&[(0, "3"), (15, "2")]));
 }
 
 #[test]
@@ -469,7 +469,7 @@ fn copy_rect_to_sprite_non_overlapping() {
             .unwrap()
             .to_string()
             .repeat(8);
-        assert_eq!(*row, row128(&[(0, &digit), (16, &digit)]), "row {y}");
+        assert_eq!(*row, row256(&[(0, &digit), (16, &digit)]), "row {y}");
     }
 }
 
@@ -496,7 +496,7 @@ fn copy_overlapping_regions_behave_as_if_through_a_temp_buffer() {
     let new_rows: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
     assert_eq!(new_rows.len(), 8);
     for row in &new_rows {
-        assert_eq!(*row, row128(&[(0, "01234567"), (8, "0123456789abcdef")]));
+        assert_eq!(*row, row256(&[(0, "01234567"), (8, "0123456789abcdef")]));
     }
 }
 
@@ -592,7 +592,7 @@ fn only_the_changed_sprite_row_is_touched_everything_else_is_byte_identical() {
     let row0_idx = before.iter().position(|l| *l == "a0000000").unwrap();
     for (i, (b, a)) in before.iter().zip(after.iter()).enumerate() {
         if i == row0_idx {
-            assert_eq!(*a, row128(&[(1, "a")]), "the one changed row");
+            assert_eq!(*a, row256(&[(1, "a")]), "the one changed row");
         } else {
             assert_eq!(a, b, "line {i} must be byte-identical: {b:?} vs {a:?}");
         }
@@ -652,7 +652,7 @@ fn shift_appends_missing_rows_with_zero_fillers_for_the_gap() {
     );
     assert_eq!(
         sprite_lines[3],
-        row128(&[(0, "a")]),
+        row256(&[(0, "a")]),
         "row3 receives the shifted pixel"
     );
 }
@@ -687,7 +687,7 @@ fn dry_run_prints_the_expected_line_number_and_content_to_stdout() {
     // Sprite row 0 is line 4 (1-based): __lua__, fn, blank, __gfx_meta__...
     // recompute precisely instead of hard-coding.
     let expected_lineno = text.lines().position(|l| l == "a0000000").unwrap() + 1;
-    let expected_content = row128(&[(1, "a")]);
+    let expected_content = row256(&[(1, "a")]);
 
     let bin = env!("CARGO_BIN_EXE_console");
     let output = std::process::Command::new(bin)
@@ -739,7 +739,7 @@ fn unknown_target_errors_without_modifying_file() {
 
 #[test]
 fn frame_off_sheet_errors_without_modifying_file() {
-    let text = cart("sprite full rect=0,0 size=16x16", &["00000000"]);
+    let text = cart("sprite full rect=0,0 size=32x32", &["00000000"]);
     let path = temp_cart("err-frame-off-sheet", &text);
     let before = read(&path);
 

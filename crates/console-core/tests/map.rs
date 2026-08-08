@@ -2,7 +2,7 @@
 //!
 //! The contract these tests pin down:
 //!
-//! * `__map__` is a hex grid, two digits per cell, that pads with tile 0 and
+//! * `__map__` is a marked hex grid, three digits per cell, that pads with tile 0 and
 //!   rejects (rather than truncates) anything that runs off the 128x64 map;
 //! * **tile 0 is the empty cell** — `map()` skips it instead of drawing
 //!   sprite 0, so an unset cell costs nothing and shows nothing;
@@ -13,7 +13,7 @@
 //!   works, so nothing that predates the map changes;
 //! * `mset` is ordinary console state and replays deterministically.
 
-use console_core::{Cart, Console, Error, FB_LEN, MAP_H, MAP_W, SCREEN_W};
+use console_core::{Cart, Console, Error, FB_LEN, MAP_FORMAT_MARKER, MAP_H, MAP_W, SCREEN_W};
 
 /// Sprite sheet for these tests: solid 8x8 tiles of one colour each.
 ///
@@ -27,7 +27,7 @@ use console_core::{Cart, Console, Error, FB_LEN, MAP_H, MAP_W, SCREEN_W};
 /// | 1      | 1      |
 /// | 2      | 2      |
 /// | 3      | 3      |
-/// | 17     | 4      |
+/// | 33     | 4      |
 fn sheet() -> String {
     let mut s = String::new();
     for _ in 0..8 {
@@ -42,13 +42,13 @@ fn sheet() -> String {
 /// A cart with the sheet above, the given `__map__` body and `draw` as `_draw`.
 fn cart_text(map: &str, draw: &str) -> String {
     format!(
-        "__lua__\nfunction _draw()\n{draw}\nend\n\n__sprites__\n{}\n__map__\n{map}\n",
+        "__lua__\nfunction _draw()\n{draw}\nend\n\n__sprites__\n{}\n__map__\n{MAP_FORMAT_MARKER}\n{map}\n",
         sheet()
     )
 }
 
 /// A 2x2 corner of map: tile 1, tile 2 / empty, tile 3.
-const CORNER: &str = "0102\n0003";
+const CORNER: &str = "001002\n000003";
 
 fn run(map: &str, draw: &str) -> Console {
     let mut con = Console::new(&cart_text(map, draw), 0).expect("cart should load");
@@ -77,20 +77,21 @@ fn mget(con: &mut Console, cx: i32, cy: i32) -> i64 {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn parses_a_hex_grid_two_digits_per_cell() {
-    let cart = Cart::parse("__lua__\nx=1\n\n__map__\n0102ff\n1000\n").unwrap();
+fn parses_a_hex_grid_three_digits_per_cell() {
+    let cart =
+        Cart::parse("__lua__\nx=1\n\n__map__\n# map-format=hex3\n0010023ff\n010000\n").unwrap();
     let m = cart.map();
     assert_eq!(m[0], 1);
     assert_eq!(m[1], 2);
-    assert_eq!(m[2], 255, "ff is the top tile id");
-    assert_eq!(m[MAP_W], 16, "10 is sixteen, not one-zero");
+    assert_eq!(m[2], 1023, "3ff is the top tile id");
+    assert_eq!(m[MAP_W], 16, "010 is sixteen, not separate cells");
     assert_eq!(m[MAP_W + 1], 0);
     assert_eq!(m.len(), MAP_W * MAP_H);
 }
 
 #[test]
 fn short_rows_pad_and_missing_rows_are_tile_zero() {
-    let cart = Cart::parse("__lua__\nx=1\n\n__map__\n01\n0203\n").unwrap();
+    let cart = Cart::parse("__lua__\nx=1\n\n__map__\n# map-format=hex3\n001\n002003\n").unwrap();
     let m = cart.map();
     assert_eq!(m[0], 1);
     // The rest of row 0 pads with tile 0...
@@ -103,11 +104,12 @@ fn short_rows_pad_and_missing_rows_are_tile_zero() {
 #[test]
 fn comments_and_blank_lines_do_not_consume_rows() {
     let text = "__lua__\nx=1\n\n__map__\n\
+                # map-format=hex3\n\
                 # the ground floor\n\
-                0101\n\
+                001001\n\
                 \n\
                 # upper deck\n\
-                0202\n";
+                002002\n";
     let cart = Cart::parse(text).unwrap();
     let m = cart.map();
     assert_eq!(&m[0..2], &[1, 1]);
@@ -117,17 +119,21 @@ fn comments_and_blank_lines_do_not_consume_rows() {
 
 #[test]
 fn crlf_and_trailing_whitespace_are_tolerated() {
-    let cart = Cart::parse("__lua__\r\nx=1\r\n\r\n__map__\r\n0102  \r\n").unwrap();
+    let cart =
+        Cart::parse("__lua__\r\nx=1\r\n\r\n__map__\r\n# map-format=hex3\r\n001002  \r\n").unwrap();
     assert_eq!(&cart.map()[0..2], &[1, 2]);
 }
 
 #[test]
 fn an_overlong_row_is_rejected_and_names_the_line() {
-    let row = "01".repeat(MAP_W + 1);
-    let err = Cart::parse(&format!("__lua__\nx=1\n\n__map__\n0000\n{row}\n")).unwrap_err();
+    let row = "001".repeat(MAP_W + 1);
+    let err = Cart::parse(&format!(
+        "__lua__\nx=1\n\n__map__\n{MAP_FORMAT_MARKER}\n000000\n{row}\n"
+    ))
+    .unwrap_err();
     assert!(matches!(err, Error::Cart(_)));
     let msg = err.to_string();
-    assert!(msg.contains("__map__ line 2"), "{msg}");
+    assert!(msg.contains("__map__ line 3"), "{msg}");
     assert!(msg.contains("128"), "{msg}");
 }
 
@@ -135,12 +141,15 @@ fn an_overlong_row_is_rejected_and_names_the_line() {
 fn too_many_rows_are_rejected_and_name_the_line() {
     let mut body = String::new();
     for _ in 0..MAP_H + 1 {
-        body.push_str("01\n");
+        body.push_str("001\n");
     }
-    let err = Cart::parse(&format!("__lua__\nx=1\n\n__map__\n{body}")).unwrap_err();
+    let err = Cart::parse(&format!(
+        "__lua__\nx=1\n\n__map__\n{MAP_FORMAT_MARKER}\n{body}"
+    ))
+    .unwrap_err();
     let msg = err.to_string();
     assert!(
-        msg.contains(&format!("__map__ line {}", MAP_H + 1)),
+        msg.contains(&format!("__map__ line {}", MAP_H + 2)),
         "{msg}"
     );
     assert!(msg.contains("64"), "{msg}");
@@ -148,26 +157,47 @@ fn too_many_rows_are_rejected_and_name_the_line() {
 
 #[test]
 fn exactly_the_full_map_is_accepted() {
-    let row = "01".repeat(MAP_W);
+    let row = "001".repeat(MAP_W);
     let body = format!("{row}\n").repeat(MAP_H);
-    let cart = Cart::parse(&format!("__lua__\nx=1\n\n__map__\n{body}")).unwrap();
+    let cart = Cart::parse(&format!(
+        "__lua__\nx=1\n\n__map__\n{MAP_FORMAT_MARKER}\n{body}"
+    ))
+    .unwrap();
     assert!(cart.map().iter().all(|&t| t == 1));
 }
 
 #[test]
-fn an_odd_length_row_is_rejected() {
-    let err = Cart::parse("__lua__\nx=1\n\n__map__\n010\n").unwrap_err();
+fn a_non_triplet_length_row_is_rejected() {
+    let err = Cart::parse("__lua__\nx=1\n\n__map__\n# map-format=hex3\n0010\n").unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("__map__ line 1"), "{msg}");
-    assert!(msg.contains("2 hex digits"), "{msg}");
+    assert!(msg.contains("__map__ line 2"), "{msg}");
+    assert!(msg.contains("3 hex digits"), "{msg}");
 }
 
 #[test]
 fn a_non_hex_digit_is_rejected() {
-    let err = Cart::parse("__lua__\nx=1\n\n__map__\n0102\n01zz\n").unwrap_err();
+    let err =
+        Cart::parse("__lua__\nx=1\n\n__map__\n# map-format=hex3\n001002\n001zz2\n").unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("__map__ line 2"), "{msg}");
+    assert!(msg.contains("__map__ line 3"), "{msg}");
     assert!(msg.contains("hex digit"), "{msg}");
+}
+
+#[test]
+fn legacy_two_digit_rows_fail_with_a_migration_hint() {
+    let err = Cart::parse("__lua__\nx=1\n\n__map__\n0102ff\n").unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("legacy two-hex-digit"), "{msg}");
+    assert!(msg.contains("01 -> 001"), "{msg}");
+    assert!(msg.contains(MAP_FORMAT_MARKER), "{msg}");
+}
+
+#[test]
+fn a_tile_id_above_the_1024_entry_atlas_is_rejected() {
+    let err = Cart::parse("__lua__\nx=1\n\n__map__\n# map-format=hex3\n400\n").unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("cell 0"), "{msg}");
+    assert!(msg.contains("000-3ff"), "{msg}");
 }
 
 // ---------------------------------------------------------------------------
@@ -302,7 +332,7 @@ fn a_full_screen_map_covers_every_pixel() {
     // 24x40 tiles is the whole 192x320 portrait screen.
     let mut body = String::new();
     for _ in 0..40 {
-        body.push_str(&"01".repeat(24));
+        body.push_str(&"001".repeat(24));
         body.push('\n');
     }
     let con = run(&body, "cls(9) map()");
@@ -439,8 +469,8 @@ fn mget_reads_authored_cells_and_zero_off_the_map() {
 #[test]
 fn mset_round_trips_and_ignores_cells_off_the_map() {
     let mut con = run(CORNER, "cls(0)");
-    con.eval("mset(10, 20, 255) mset(0, 0, 0)").unwrap();
-    assert_eq!(mget(&mut con, 10, 20), 255);
+    con.eval("mset(10, 20, 1023) mset(0, 0, 0)").unwrap();
+    assert_eq!(mget(&mut con, 10, 20), 1023);
     assert_eq!(
         mget(&mut con, 0, 0),
         0,
@@ -463,11 +493,23 @@ fn mset_round_trips_and_ignores_cells_off_the_map() {
 }
 
 #[test]
+fn mset_rejects_ids_that_would_silently_wrap() {
+    for value in ["1024", "-1", "0/0", "math.huge"] {
+        let mut con = run(CORNER, "cls(0)");
+        let error = con.eval(&format!("mset(0,0,{value})")).unwrap_err();
+        assert!(
+            error.to_string().contains("tile id must be 0-1023"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn mset_is_visible_in_the_next_map_draw() {
     let mut con = Console::new(
         &cart_text(
             CORNER,
-            "cls(9)\nif t() > 0 then mset(0, 1, 17) end\nmap(0, 0, 0, 0, 2, 2)",
+            "cls(9)\nif t() > 0 then mset(0, 1, 33) end\nmap(0, 0, 0, 0, 2, 2)",
         ),
         0,
     )
@@ -476,12 +518,12 @@ fn mset_is_visible_in_the_next_map_draw() {
     con.step(0).unwrap();
     assert_eq!(px(&con, 0, 8), 9, "cell (0,1) starts empty");
 
-    // Frame 2 sets the cell before drawing: tile 17 is the colour-4 sprite in
+    // Frame 2 sets the cell before drawing: tile 33 is the colour-4 sprite in
     // the second sheet row band.
     con.step(0).unwrap();
     assert_eq!(px(&con, 0, 8), 4);
     assert_eq!(px(&con, 7, 15), 4);
-    assert_eq!(mget(&mut con, 0, 1), 17);
+    assert_eq!(mget(&mut con, 0, 1), 33);
 }
 
 #[test]

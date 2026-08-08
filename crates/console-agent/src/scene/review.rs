@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use console_core::{MAP_W, PALETTE};
+use console_core::{MAP_W, PALETTE, SHEET_TILES, TileId};
 
 use super::GeneratedFile;
 use super::compiler::{PackedTile, ReviewInput};
@@ -73,15 +73,15 @@ fn atlas_review(input: &ReviewInput<'_>) -> Result<RgbaImage, String> {
         fill_rect(&mut canvas, PAD, py, enlarged.width, 1, [gr, gg, gb, 255]);
     }
     for tile in input.packed {
-        let absolute_x = u32::from(tile.id) % 16;
-        let absolute_y = u32::from(tile.id) / 16;
+        let absolute_x = u32::from(tile.id) % SHEET_TILES as u32;
+        let absolute_y = u32::from(tile.id) / SHEET_TILES as u32;
         let local_x = absolute_x - input.atlas_origin[0];
         let local_y = absolute_y - input.atlas_origin[1];
         visual::draw_text(
             &mut canvas,
             PAD + local_x * 8 * zoom + 2,
             HEADER + local_y * 8 * zoom + 2,
-            &format!("{:02X}", tile.id),
+            &format!("{:03X}", tile.id),
         );
     }
     Ok(canvas)
@@ -89,7 +89,7 @@ fn atlas_review(input: &ReviewInput<'_>) -> Result<RgbaImage, String> {
 
 fn live_shape(
     input: &ReviewInput<'_>,
-    by_id: &BTreeMap<u8, &PackedTile>,
+    by_id: &BTreeMap<TileId, &PackedTile>,
 ) -> Result<RgbaImage, String> {
     let cell = 8;
     let label = format!(
@@ -136,7 +136,7 @@ fn repeat_review(input: &ReviewInput<'_>) -> Result<RgbaImage, String> {
         let row = index as u32 / columns;
         let x0 = PAD + col * panel_w;
         let y0 = HEADER + row * panel_h;
-        visual::draw_text(&mut image, x0, y0, &format!("{:02X}", tile.id));
+        visual::draw_text(&mut image, x0, y0, &format!("{:03X}", tile.id));
         for repeat_y in 0..3 {
             for repeat_x in 0..3 {
                 draw_tile(&mut image, tile, x0 + repeat_x * 8, y0 + 14 + repeat_y * 8);
@@ -147,7 +147,7 @@ fn repeat_review(input: &ReviewInput<'_>) -> Result<RgbaImage, String> {
 }
 
 fn adjacency_review(input: &ReviewInput<'_>) -> Result<RgbaImage, String> {
-    let mut ids = vec![0u8];
+    let mut ids = vec![0 as TileId];
     ids.extend(input.packed.iter().map(|tile| tile.id));
     ids.sort_unstable();
     ids.dedup();
@@ -186,7 +186,7 @@ fn adjacency_review(input: &ReviewInput<'_>) -> Result<RgbaImage, String> {
 
 fn native_map_review(
     input: &ReviewInput<'_>,
-    by_id: &BTreeMap<u8, &PackedTile>,
+    by_id: &BTreeMap<TileId, &PackedTile>,
 ) -> Result<RgbaImage, String> {
     let map = render_native_map(input, by_id)?;
     with_header(
@@ -200,7 +200,7 @@ fn native_map_review(
 
 fn collision_review(
     input: &ReviewInput<'_>,
-    by_id: &BTreeMap<u8, &PackedTile>,
+    by_id: &BTreeMap<TileId, &PackedTile>,
 ) -> Result<RgbaImage, String> {
     let mut map = render_native_map(input, by_id)?;
     for y in 0..input.used_height {
@@ -277,7 +277,7 @@ fn lossy_heatmap(input: &ReviewInput<'_>) -> Result<Option<RgbaImage>, String> {
 
 fn render_native_map(
     input: &ReviewInput<'_>,
-    by_id: &BTreeMap<u8, &PackedTile>,
+    by_id: &BTreeMap<TileId, &PackedTile>,
 ) -> Result<RgbaImage, String> {
     let mut image = visual::blank(input.used_width * 8, input.used_height * 8)?;
     for y in 0..input.used_height {
@@ -326,7 +326,11 @@ fn draw_tile(image: &mut RgbaImage, tile: &PackedTile, x: u32, y: u32) {
     }
 }
 
-fn class_color(id: u8, by_id: &BTreeMap<u8, &PackedTile>, input: &ReviewInput<'_>) -> [u8; 4] {
+fn class_color(
+    id: TileId,
+    by_id: &BTreeMap<TileId, &PackedTile>,
+    input: &ReviewInput<'_>,
+) -> [u8; 4] {
     let Some(tile) = by_id.get(&id) else {
         let [r, g, b] = PALETTE[48];
         return [r, g, b, 255];

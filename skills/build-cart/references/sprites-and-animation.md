@@ -34,18 +34,18 @@ shape, a clear facing/action cue, and luminance separation from likely scenery.
 
 ## Plan the sheet
 
-The sheet is 16×16 addressable tiles. Sketch an allocation table before adding
+The sheet is 32×32 addressable tiles (1024 IDs). Sketch an allocation table before adding
 large animations. Group related frames in rectangles so `frames=` indices or
 `frames_rect` can address them predictably.
 
 One useful convention:
 
 ```text
-tile rows 0-3    player and core animation
-tile rows 4-6    enemies and hazards
-tile rows 7-10   terrain families and metatile parts
-tile rows 11-12  pickups, props, UI
-tile rows 13-15  effects, variants, reserve
+tile rows 0-7    player and core animation
+tile rows 8-13   enemies and hazards
+tile rows 14-21  terrain families and metatile parts
+tile rows 22-25  pickups, props, UI
+tile rows 26-31  effects, variants, reserve
 ```
 
 This is only a convention; existing carts may use another layout. Before
@@ -175,7 +175,7 @@ console sprite poke game.cart player --frame 0 --stdin \
 ```
 
 `poke` validates exact dimensions and palette characters. Prefer it over
-counting characters inside a 128-column `__sprites__` row.
+counting characters inside a 256-column `__sprites__` row.
 
 Use transforms for mechanical work:
 
@@ -322,5 +322,5 @@ against its background, camera motion, effects, or nearby UI.
 | Wrong colors in tools | Add/fix `preview_palette`; remember it does not affect runtime. |
 | Wrong colors at runtime | Inspect draw/display `pal` state and reset it between scenes. |
 | Frame resolves elsewhere | Check `frames_rect`, explicit `tx:ty`, and the resolved `sprite_id` in lint. |
-| Sheet corruption | Overlapping allocations or manual 128-column edits. Use named targets and poke/edit tools. |
+| Sheet corruption | Overlapping allocations or manual 256-column edits. Use named targets and poke/edit tools. |
 | Looks good enlarged, unreadable on phone | Simplify silhouette, increase major feature size, and test packed 1× presentation. |

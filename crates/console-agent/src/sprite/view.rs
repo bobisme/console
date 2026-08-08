@@ -29,7 +29,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use console_core::{
-    AnimDef, COLOR_MASK, Cart, FrameSpec, PALETTE, PreviewPalette, SHEET_W, SpriteDef,
+    AnimDef, COLOR_MASK, Cart, FrameSpec, PALETTE, PreviewPalette, SHEET_TILES, SHEET_W, SpriteDef,
+    TILE_COUNT, TILE_ID_MAX, TileId,
 };
 use serde_json::{Value, json};
 
@@ -499,7 +500,7 @@ pub fn ghost(cart: &Cart, anim: &str, opts: &OverlayOpts) -> Result<Image, Strin
 pub fn atlas(cart: &Cart, zoom: u32, grid: bool) -> Result<AtlasResult, String> {
     let zoom = check_zoom(zoom)?;
     let meta = cart.gfx_meta();
-    let mut owners: BTreeMap<u8, Vec<(String, String)>> = BTreeMap::new();
+    let mut owners: BTreeMap<TileId, Vec<(String, String)>> = BTreeMap::new();
     let mut sprites = Vec::new();
     let mut animations = Vec::new();
     let mut blank_allocations = Vec::new();
@@ -586,9 +587,9 @@ pub fn atlas(cart: &Cart, zoom: u32, grid: bool) -> Result<AtlasResult, String> 
         }));
     }
 
-    let used_tiles: Vec<u8> = owners.keys().copied().collect();
-    let used_set: BTreeSet<u8> = used_tiles.iter().copied().collect();
-    let unused_tiles: Vec<u8> = (0..=u8::MAX)
+    let used_tiles: Vec<TileId> = owners.keys().copied().collect();
+    let used_set: BTreeSet<TileId> = used_tiles.iter().copied().collect();
+    let unused_tiles: Vec<TileId> = (0..=TILE_ID_MAX)
         .filter(|tile| !used_set.contains(tile))
         .collect();
     let mut overlaps = Vec::new();
@@ -617,8 +618,9 @@ pub fn atlas(cart: &Cart, zoom: u32, grid: bool) -> Result<AtlasResult, String> 
     }
 
     let extra = u32::from(grid);
-    let mut canvas = Canvas::new(128 * zoom + extra, 128 * zoom + extra, zoom);
-    let sheet = read_rect(cart, (0, 0, 128, 128));
+    let sheet_w = SHEET_W as u32;
+    let mut canvas = Canvas::new(sheet_w * zoom + extra, sheet_w * zoom + extra, zoom);
+    let sheet = read_rect(cart, (0, 0, sheet_w, sheet_w));
     draw_frame(&mut canvas, &sheet, (0, 0), zoom, cart.preview_palette());
     for tile in &unused_tiles {
         canvas.blend_fill(atlas_tile_cell(*tile, zoom), [4, 7, 12], 0.58);
@@ -635,8 +637,8 @@ pub fn atlas(cart: &Cart, zoom: u32, grid: bool) -> Result<AtlasResult, String> 
             Rect {
                 x: 0,
                 y: 0,
-                w: 128 * zoom,
-                h: 128 * zoom,
+                w: sheet_w * zoom,
+                h: sheet_w * zoom,
             },
             zoom,
         );
@@ -651,12 +653,12 @@ pub fn atlas(cart: &Cart, zoom: u32, grid: bool) -> Result<AtlasResult, String> 
         outline(&mut canvas, cell, PALETTE[atlas_outline_color(index)]);
         draw_anchor(&mut canvas, cell, sprite.anchor, zoom);
     }
-    for tile in 0..=u8::MAX {
+    for tile in 0..=TILE_ID_MAX {
         draw_atlas_tile_id(&mut canvas, tile, zoom);
     }
 
     let report = json!({
-        "sheet": {"tiles_w":16, "tiles_h":16, "tile_count":256},
+        "sheet": {"tiles_w":SHEET_TILES, "tiles_h":SHEET_TILES, "tile_count":TILE_COUNT},
         "sprites": sprites,
         "animations": animations,
         "overlaps": overlaps,
@@ -671,7 +673,7 @@ pub fn atlas(cart: &Cart, zoom: u32, grid: bool) -> Result<AtlasResult, String> 
 }
 
 fn mark_atlas_rect(
-    owners: &mut BTreeMap<u8, Vec<(String, String)>>,
+    owners: &mut BTreeMap<TileId, Vec<(String, String)>>,
     tx: u8,
     ty: u8,
     w: u8,
@@ -687,9 +689,13 @@ fn mark_atlas_rect(
     }
 }
 
-fn atlas_tile_ids(tx: u8, ty: u8, w: u8, h: u8) -> Vec<u8> {
+fn atlas_tile_ids(tx: u8, ty: u8, w: u8, h: u8) -> Vec<TileId> {
     (0..h)
-        .flat_map(|dy| (0..w).map(move |dx| (ty + dy) * 16 + tx + dx))
+        .flat_map(|dy| {
+            (0..w).map(move |dx| {
+                TileId::from(ty + dy) * SHEET_TILES as TileId + TileId::from(tx + dx)
+            })
+        })
         .collect()
 }
 
@@ -697,10 +703,11 @@ fn tile_rect_json(tx: u8, ty: u8, w: u8, h: u8) -> Value {
     json!({"tx":tx, "ty":ty, "w":w, "h":h})
 }
 
-fn atlas_tile_cell(tile: u8, zoom: u32) -> Rect {
+fn atlas_tile_cell(tile: TileId, zoom: u32) -> Rect {
+    let per_row = SHEET_TILES as TileId;
     Rect {
-        x: u32::from(tile % 16) * 8 * zoom,
-        y: u32::from(tile / 16) * 8 * zoom,
+        x: u32::from(tile % per_row) * 8 * zoom,
+        y: u32::from(tile / per_row) * 8 * zoom,
         w: 8 * zoom,
         h: 8 * zoom,
     }
@@ -725,9 +732,9 @@ fn outline(canvas: &mut Canvas, rect: Rect, color: [u8; 3]) {
     }
 }
 
-fn draw_atlas_tile_id(canvas: &mut Canvas, tile: u8, zoom: u32) {
+fn draw_atlas_tile_id(canvas: &mut Canvas, tile: TileId, zoom: u32) {
     let cell = atlas_tile_cell(tile, zoom);
-    let scale = (zoom / 2).max(1);
+    let scale = (zoom / 3).max(1);
     let x = cell.x + scale;
     let y = cell.y + scale;
     let ink = if luminance(canvas.get(cell.x + cell.w / 2, cell.y + cell.h / 2)) < 128.0 {
@@ -735,7 +742,16 @@ fn draw_atlas_tile_id(canvas: &mut Canvas, tile: u8, zoom: u32) {
     } else {
         INK_DARK
     };
-    for (digit, dx) in [(tile >> 4, 0), (tile & 0x0f, 4 * scale)] {
+    let advance = if cell.w < 12 * scale {
+        2 * scale
+    } else {
+        4 * scale
+    };
+    for (digit, dx) in [
+        (((tile >> 8) & 0x0f) as u8, 0),
+        (((tile >> 4) & 0x0f) as u8, advance),
+        ((tile & 0x0f) as u8, 2 * advance),
+    ] {
         for (row, bits) in GLYPHS[usize::from(digit)].iter().enumerate() {
             for bit in 0..3u32 {
                 if bits & (1 << (2 - bit)) != 0 {
@@ -1212,7 +1228,7 @@ fn lint_anim_gated(
 /// `sprite dump` — print `target`'s resolved region as palette text, top
 /// to bottom, exactly the cart's own `__sprites__` alphabet (one character
 /// per pixel), preceded by a `#`-comment header naming the
-/// region's pixel-space coordinates on the 128x128 sheet. Frame resolution
+/// region's pixel-space coordinates on the 256x256 sheet. Frame resolution
 /// matches `sprite edit`, `sprite poke`, and `sprite render`: animation
 /// targets index their declared frame list (including `frames_rect` and
 /// explicit `tx:ty` entries), while plain sprite targets retain raw

@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use console_core::{MAP_H, MAP_LEN, MAP_W, PALETTE};
+use console_core::{
+    MAP_FORMAT_MARKER, MAP_H, MAP_LEN, MAP_W, PALETTE, SHEET_TILES, TileId, TileMap,
+};
 use serde::Serialize;
 
 use super::{
@@ -63,7 +65,7 @@ pub(super) struct LayerData {
 
 #[derive(Debug, Clone)]
 pub(super) struct PackedTile {
-    pub id: u8,
+    pub id: TileId,
     pub key: TileKey,
     names: Vec<String>,
     sources: Vec<String>,
@@ -74,12 +76,12 @@ pub(super) struct PackedTile {
 struct Metatile {
     width: u32,
     height: u32,
-    cells: Vec<Option<u8>>,
+    cells: Vec<Option<TileId>>,
 }
 
 struct PackResult {
     packed: Vec<PackedTile>,
-    key_ids: BTreeMap<TileKey, u8>,
+    key_ids: BTreeMap<TileKey, TileId>,
     atlas_indices: Vec<u8>,
     capacity: usize,
 }
@@ -88,7 +90,7 @@ pub(super) struct ReviewInput<'a> {
     pub atlas_origin: [u32; 2],
     pub atlas_size: [u32; 2],
     pub atlas_indices: &'a [u8],
-    pub map: &'a [u8; MAP_LEN],
+    pub map: &'a TileMap,
     pub used_width: u32,
     pub used_height: u32,
     pub packed: &'a [PackedTile],
@@ -138,7 +140,7 @@ pub(super) fn compile(manifest_path: &Path) -> Result<SceneBuild, String> {
         .collect::<BTreeMap<_, _>>();
     let metatiles = collect_metatiles(&manifest, &named_ids)?;
 
-    let mut map = [0u8; MAP_LEN];
+    let mut map = [0 as TileId; MAP_LEN];
     place_base_layers(&layers, &key_ids, &mut map)?;
     let placed_keys = layers
         .iter()
@@ -332,13 +334,13 @@ fn validate_manifest(manifest: &SceneManifest) -> Result<(), String> {
     let bottom = y.checked_add(h);
     if w == 0
         || h == 0
-        || x >= 16
-        || y >= 16
-        || right.is_none_or(|right| right > 16)
-        || bottom.is_none_or(|bottom| bottom > 16)
+        || x >= SHEET_TILES as u32
+        || y >= SHEET_TILES as u32
+        || right.is_none_or(|right| right > SHEET_TILES as u32)
+        || bottom.is_none_or(|bottom| bottom > SHEET_TILES as u32)
     {
         return Err(format!(
-            "atlas reservation origin={x},{y} size={w}x{h} falls outside the 16x16 sheet"
+            "atlas reservation origin={x},{y} size={w}x{h} falls outside the {SHEET_TILES}x{SHEET_TILES} sheet"
         ));
     }
     if manifest.atlas.mapping == PaletteMapping::Quantize {
@@ -768,11 +770,11 @@ fn validate_edge(edge: &str, tile: &str) -> Result<(), String> {
     validate_name(edge, &format!("tile {tile:?} edge"))
 }
 
-fn reservation_ids(manifest: &SceneManifest) -> Vec<u8> {
+fn reservation_ids(manifest: &SceneManifest) -> Vec<TileId> {
     let mut ids = Vec::new();
     for y in manifest.atlas.origin[1]..manifest.atlas.origin[1] + manifest.atlas.size[1] {
         for x in manifest.atlas.origin[0]..manifest.atlas.origin[0] + manifest.atlas.size[0] {
-            let id = (y * 16 + x) as u8;
+            let id = (y * SHEET_TILES as u32 + x) as TileId;
             if id != 0 {
                 ids.push(id);
             }
@@ -824,8 +826,8 @@ fn pack_tiles(
     let mut packed = Vec::with_capacity(candidates.len());
     let mut key_ids = BTreeMap::new();
     for ((key, candidate), id) in candidates.into_iter().zip(ids) {
-        let absolute_x = u32::from(id) % 16;
-        let absolute_y = u32::from(id) / 16;
+        let absolute_x = u32::from(id) % SHEET_TILES as u32;
+        let absolute_y = u32::from(id) / SHEET_TILES as u32;
         let local_x = (absolute_x - manifest.atlas.origin[0]) * TILE;
         let local_y = (absolute_y - manifest.atlas.origin[1]) * TILE;
         for y in 0..TILE {
@@ -863,7 +865,7 @@ fn pack_tiles(
 
 fn collect_metatiles(
     manifest: &SceneManifest,
-    named: &BTreeMap<String, u8>,
+    named: &BTreeMap<String, TileId>,
 ) -> Result<BTreeMap<String, Metatile>, String> {
     let mut out = BTreeMap::new();
     for config in &manifest.metatiles {
@@ -930,8 +932,8 @@ fn parse_inline_rows(rows: &[String], label: &str) -> Result<Grid, String> {
 
 fn place_base_layers(
     layers: &[LayerData],
-    ids: &BTreeMap<TileKey, u8>,
-    map: &mut [u8; MAP_LEN],
+    ids: &BTreeMap<TileKey, TileId>,
+    map: &mut TileMap,
 ) -> Result<(), String> {
     for layer in layers.iter().filter(|layer| layer.role == LayerRole::Play) {
         validate_map_rect(
@@ -975,9 +977,9 @@ fn validate_map_rect(origin: [u32; 2], width: u32, height: u32, label: &str) -> 
 fn apply_play_grid(
     root: &Path,
     manifest: &SceneManifest,
-    named: &BTreeMap<String, u8>,
+    named: &BTreeMap<String, TileId>,
     packed: &[PackedTile],
-    map: &mut [u8; MAP_LEN],
+    map: &mut TileMap,
     used_named: &mut BTreeSet<String>,
     inputs: &mut BTreeSet<PathBuf>,
 ) -> Result<(usize, usize, Option<Grid>), String> {
@@ -1052,7 +1054,7 @@ fn apply_play_grid(
 
 fn validate_families(
     manifest: &SceneManifest,
-    named: &BTreeMap<String, u8>,
+    named: &BTreeMap<String, TileId>,
     packed: &[PackedTile],
 ) -> Result<(), String> {
     let class_by_id = packed
@@ -1116,8 +1118,8 @@ fn validate_family_tile(
     family: &str,
     class: &str,
     tile: &str,
-    named: &BTreeMap<String, u8>,
-    class_by_id: &BTreeMap<u8, &str>,
+    named: &BTreeMap<String, TileId>,
+    class_by_id: &BTreeMap<TileId, &str>,
 ) -> Result<(), String> {
     let id = named
         .get(tile)
@@ -1185,9 +1187,9 @@ fn stable_hash(seed: u64, x: u32, y: u32, name: &str) -> u64 {
 fn apply_stamps(
     manifest: &SceneManifest,
     metatiles: &BTreeMap<String, Metatile>,
-    map: &mut [u8; MAP_LEN],
+    map: &mut TileMap,
     used_named: &mut BTreeSet<String>,
-    named: &BTreeMap<String, u8>,
+    named: &BTreeMap<String, TileId>,
 ) -> Result<(), String> {
     let names_by_id = named
         .iter()
@@ -1216,8 +1218,8 @@ fn apply_stamps(
 
 fn apply_overrides(
     manifest: &SceneManifest,
-    named: &BTreeMap<String, u8>,
-    map: &mut [u8; MAP_LEN],
+    named: &BTreeMap<String, TileId>,
+    map: &mut TileMap,
     used_named: &mut BTreeSet<String>,
 ) -> Result<(), String> {
     let mut cells = BTreeSet::new();
@@ -1304,11 +1306,11 @@ fn validate_objects(manifest: &SceneManifest) -> Result<Vec<ObjectReport>, Strin
 #[allow(clippy::too_many_arguments)]
 fn lint_scene(
     manifest: &SceneManifest,
-    map: &[u8; MAP_LEN],
+    map: &TileMap,
     used_width: u32,
     used_height: u32,
     packed: &[PackedTile],
-    named: &BTreeMap<String, u8>,
+    named: &BTreeMap<String, TileId>,
     used_named: &BTreeSet<String>,
     variant_grid: Option<&Grid>,
 ) -> LintReport {
@@ -1325,7 +1327,7 @@ fn lint_scene(
             ));
         }
     }
-    let mut pixel_classes = BTreeMap::<[u8; 64], BTreeMap<String, u8>>::new();
+    let mut pixel_classes = BTreeMap::<[u8; 64], BTreeMap<String, TileId>>::new();
     for tile in packed {
         pixel_classes
             .entry(tile.key.pixels)
@@ -1448,7 +1450,7 @@ fn max_variant_run(grid: &Grid) -> u32 {
     max_run
 }
 
-fn used_extent(map: &[u8; MAP_LEN]) -> (u32, u32) {
+fn used_extent(map: &TileMap) -> (u32, u32) {
     let mut width = 1;
     let mut height = 1;
     for y in 0..MAP_H {
@@ -1475,11 +1477,11 @@ fn render_atlas_png(indices: &[u8], width: u32, height: u32) -> Vec<u8> {
     encode_png_rgba(&rgba, width, height)
 }
 
-fn render_map(map: &[u8; MAP_LEN], width: u32, height: u32) -> String {
-    let mut text = String::new();
+fn render_map(map: &TileMap, width: u32, height: u32) -> String {
+    let mut text = format!("{MAP_FORMAT_MARKER}\n");
     for y in 0..height {
         for x in 0..width {
-            text.push_str(&format!("{:02x}", map[y as usize * MAP_W + x as usize]));
+            text.push_str(&format!("{:03x}", map[y as usize * MAP_W + x as usize]));
         }
         text.push('\n');
     }
@@ -1514,7 +1516,10 @@ fn render_classes_lua(classes: &BTreeMap<String, ClassConfig>, packed: &[PackedT
     text
 }
 
-fn render_layers_lua(layers: &[LayerData], ids: &BTreeMap<TileKey, u8>) -> Result<String, String> {
+fn render_layers_lua(
+    layers: &[LayerData],
+    ids: &BTreeMap<TileKey, TileId>,
+) -> Result<String, String> {
     let mut text =
         String::from("-- generated by console scene compile; do not edit\nlocal M = {layers={}}\n");
     for layer in layers.iter().filter(|layer| {
@@ -1574,7 +1579,10 @@ fn render_objects_lua(objects: &[ObjectReport]) -> String {
 fn packed_report(tile: &PackedTile) -> PackedTileReport {
     PackedTileReport {
         id: tile.id,
-        atlas_cell: [u32::from(tile.id) % 16, u32::from(tile.id) / 16],
+        atlas_cell: [
+            u32::from(tile.id) % SHEET_TILES as u32,
+            u32::from(tile.id) / SHEET_TILES as u32,
+        ],
         class: tile.key.class.clone(),
         names: tile.names.clone(),
         sources: tile.sources.clone(),

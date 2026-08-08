@@ -6,7 +6,7 @@ use std::rc::Rc;
 use mlua::{Lua, Result as LuaResult, Table, Value, Variadic};
 
 use crate::draw_trace::{Bounds, DrawDetails, DrawSpec, ScreenBounds, clamp_i32};
-use crate::gfx::{self, MAP_H, MAP_W, col, fl};
+use crate::gfx::{self, MAP_H, MAP_W, SPRITES_PER_ROW, TILE_ID_MAX, TileId, col, fl};
 use crate::gfx_meta::{AnimDef, GfxMeta, SpriteDef};
 use crate::state::State;
 
@@ -94,12 +94,37 @@ fn cell(cx: f64, cy: f64) -> Option<usize> {
     Some(y as usize * MAP_W + x as usize)
 }
 
-/// Floor a Lua float to a tile id, masked into 0..=255 (the sprite-sheet range
-/// wraps, mirroring how [`col`] masks colours).
-fn tile(v: f64) -> u8 {
+/// Floor a Lua float to a tile ID and reject values outside the sprite sheet.
+/// Tile IDs are storage addresses, not colors: silently wrapping one would
+/// point at unrelated art and corrupt the live map.
+fn tile(v: f64, who: &str) -> LuaResult<TileId> {
     let f = v.floor();
-    let i = if f.is_nan() { 0i64 } else { f as i64 };
-    (i & 0xff) as u8
+    if !f.is_finite() || f < 0.0 || f > f64::from(TILE_ID_MAX) {
+        return Err(mlua::Error::RuntimeError(format!(
+            "{who}: tile id must be 0-{TILE_ID_MAX}, got {v}"
+        )));
+    }
+    Ok(f as TileId)
+}
+
+fn flag_byte(v: f64) -> LuaResult<u8> {
+    let f = v.floor();
+    if !f.is_finite() || !(0.0..=255.0).contains(&f) {
+        return Err(mlua::Error::RuntimeError(format!(
+            "fset: flag byte must be 0-255, got {v}"
+        )));
+    }
+    Ok(f as u8)
+}
+
+fn flag_bit(v: f64, who: &str) -> LuaResult<u8> {
+    let f = v.floor();
+    if !f.is_finite() || !(0.0..=7.0).contains(&f) {
+        return Err(mlua::Error::RuntimeError(format!(
+            "{who}: flag bit must be 0-7, got {v}"
+        )));
+    }
+    Ok(f as u8)
 }
 
 /// Console frames of playback for an anim whose origin is `t0`.
@@ -344,8 +369,8 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
             let size = (fl(w.unwrap_or(1.0)), fl(h.unwrap_or(1.0)));
             let flip = (truthy(fx.as_ref()), truthy(fy.as_ref()));
             let mut s = st.borrow_mut();
-            let sheet_x = if n >= 0 { (n % 16) * 8 } else { 0 };
-            let sheet_y = if n >= 0 { (n / 16) * 8 } else { 0 };
+            let sheet_x = if n >= 0 { (n % SPRITES_PER_ROW) * 8 } else { 0 };
+            let sheet_y = if n >= 0 { (n / SPRITES_PER_ROW) * 8 } else { 0 };
             s.record_draw(DrawSpec {
                 op: "spr",
                 bounds: Bounds::xywh(x, y, scaled(size.0, 8), scaled(size.1, 8)),
@@ -512,7 +537,47 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         })?,
     )?;
 
-    // ---- tile map -----------------------------------------------------------
+    // ---- sprite flags and tile map ------------------------------------------
+    // `fget(n, [bit])`: the full authored/runtime flag byte, or one bit.
+    let st = state.clone();
+    g.set(
+        "fget",
+        lua.create_function(move |_, (n, bit): (f64, Option<f64>)| {
+            let tile = usize::from(tile(n, "fget")?);
+            let flags = st.borrow().gfx_flags[tile];
+            match bit {
+                Some(bit) => Ok(Value::Boolean(flags & (1 << flag_bit(bit, "fget")?) != 0)),
+                None => Ok(Value::Integer(i64::from(flags))),
+            }
+        })?,
+    )?;
+
+    // `fset(n, flags)` replaces all eight bits. `fset(n, bit, value)` updates
+    // one bit. Both forms reject invalid addresses instead of wrapping to an
+    // unrelated tile in the larger atlas.
+    let st = state.clone();
+    g.set(
+        "fset",
+        lua.create_function(
+            move |_, (n, flag_or_bit, value): (f64, f64, Option<Value>)| {
+                let tile = usize::from(tile(n, "fset")?);
+                let mut s = st.borrow_mut();
+                if let Some(value) = value {
+                    let bit = flag_bit(flag_or_bit, "fset")?;
+                    let mask = 1u8 << bit;
+                    if truthy(Some(&value)) {
+                        s.gfx_flags[tile] |= mask;
+                    } else {
+                        s.gfx_flags[tile] &= !mask;
+                    }
+                } else {
+                    s.gfx_flags[tile] = flag_byte(flag_or_bit)?;
+                }
+                Ok(())
+            },
+        )?,
+    )?;
+
     // `map([cel_x=0], [cel_y=0], [sx=0], [sy=0], [cel_w=MAP_W], [cel_h=MAP_H])`:
     // blit a block of map cells. Bare `map()` draws the whole map at (0, 0).
     // Every cell goes through the same low-level blit as `spr`, so the camera,
@@ -581,7 +646,7 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
         "mset",
         lua.create_function(move |_, (cx, cy, v): (f64, f64, Option<f64>)| {
             if let Some(i) = cell(cx, cy) {
-                st.borrow_mut().map[i] = tile(v.unwrap_or(0.0));
+                st.borrow_mut().map[i] = tile(v.unwrap_or(0.0), "mset")?;
             }
             Ok(())
         })?,

@@ -9,8 +9,8 @@
 //!   sheet: tile1 = solid color 3, tile2 = solid color 5, tile3 = BLANK
 //!          (referenced by the map but never drawn -- the lint "typo" case)
 //!
-//!   map row0: 01 01 00 02   (cells (0,0)=1 (1,0)=1 (2,0)=0 (3,0)=2)
-//!   map row1: 03 00 00 00   (cell  (0,1)=3, rest implicit/explicit 0)
+//!   map row0: 001 001 000 002 (cells (0,0)=1 (1,0)=1 (2,0)=0 (3,0)=2)
+//!   map row1: 003 000 000 000 (cell  (0,1)=3, rest implicit/explicit 0)
 //! ```
 //!
 //! So the used extent is `cx=0 cy=0 cw=4 ch=2`, tile 1 appears twice, tiles
@@ -19,7 +19,7 @@
 use console_agent::map::view::{self, MapRenderOpts};
 use console_agent::rpc::handle;
 use console_agent::session::Session;
-use console_core::{Cart, PALETTE};
+use console_core::{Cart, MAP_FORMAT_MARKER, PALETTE};
 use serde_json::{Value, json};
 
 /// A 128-char sheet row with `segments` (byte offset, hex text) overlaid on
@@ -45,7 +45,7 @@ fn fixture_cart() -> String {
         s.push_str(&sheet_row);
         s.push('\n');
     }
-    s.push_str("__map__\n01010002\n03\n");
+    s.push_str("__map__\n# map-format=hex3\n001001000002\n003\n");
     s
 }
 
@@ -145,7 +145,7 @@ fn render_uses_preview_palette_while_map_dump_stays_raw() {
     );
     assert_eq!(
         view::dump(&cart, (0, 0, 4, 1)).unwrap(),
-        "# cx=0 cy=0 cw=4 ch=1\n01010002\n"
+        "# map-format=hex3\n# cx=0 cy=0 cw=4 ch=1\n001001000002\n"
     );
 }
 
@@ -241,9 +241,10 @@ fn dump_prints_header_and_hex_rows() {
     let cart = cart();
     let out = view::dump(&cart, (0, 0, 4, 2)).unwrap();
     let mut lines = out.lines();
+    assert_eq!(lines.next().unwrap(), MAP_FORMAT_MARKER);
     assert_eq!(lines.next().unwrap(), "# cx=0 cy=0 cw=4 ch=2");
-    assert_eq!(lines.next().unwrap(), "01010002");
-    assert_eq!(lines.next().unwrap(), "03000000");
+    assert_eq!(lines.next().unwrap(), "001001000002");
+    assert_eq!(lines.next().unwrap(), "003000000000");
     assert!(lines.next().is_none());
 }
 
@@ -253,7 +254,7 @@ fn dump_default_region_matches_used_extent() {
     let region = console_agent::map::parse_region(None, cart.map()).unwrap();
     assert_eq!(region, (0, 0, 4, 2));
     let out = view::dump(&cart, region).unwrap();
-    assert!(out.starts_with("# cx=0 cy=0 cw=4 ch=2\n"));
+    assert!(out.starts_with("# map-format=hex3\n# cx=0 cy=0 cw=4 ch=2\n"));
 }
 
 #[test]
@@ -261,8 +262,9 @@ fn dump_a_sub_region() {
     let cart = cart();
     let out = view::dump(&cart, (3, 0, 1, 1)).unwrap();
     let mut lines = out.lines();
+    assert_eq!(lines.next().unwrap(), MAP_FORMAT_MARKER);
     assert_eq!(lines.next().unwrap(), "# cx=3 cy=0 cw=1 ch=1");
-    assert_eq!(lines.next().unwrap(), "02");
+    assert_eq!(lines.next().unwrap(), "002");
 }
 
 // ---------------------------------------------------------------------------
@@ -380,7 +382,7 @@ fn rpc_map_verbs_are_read_only_mirrors() {
         resp["result"]["text"]
             .as_str()
             .unwrap()
-            .starts_with("# cx=0 cy=0 cw=4 ch=2\n")
+            .starts_with("# map-format=hex3\n# cx=0 cy=0 cw=4 ch=2\n")
     );
 
     let resp = call(&mut session, "map_lint", json!({}));
@@ -415,8 +417,8 @@ fn rpc_map_verbs_select_authored_or_live_runtime_state() {
         json!({"source": "authored", "region": "0,0,5,1"}),
     );
     assert_eq!(
-        authored["result"]["text"].as_str().unwrap().lines().nth(1),
-        Some("0101000200")
+        authored["result"]["text"].as_str().unwrap().lines().nth(2),
+        Some("001001000002000")
     );
 
     let defaulted = call(&mut session, "map_dump", json!({"region": "0,0,5,1"}));
@@ -428,8 +430,8 @@ fn rpc_map_verbs_select_authored_or_live_runtime_state() {
         json!({"source": "live", "region": "0,0,5,1"}),
     );
     assert_eq!(
-        live["result"]["text"].as_str().unwrap().lines().nth(1),
-        Some("0201000201")
+        live["result"]["text"].as_str().unwrap().lines().nth(2),
+        Some("002001000002001")
     );
 
     let live_lint = call(&mut session, "map_lint", json!({"source": "live"}));

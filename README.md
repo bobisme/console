@@ -33,7 +33,7 @@ orientation, not the spec.
 | | |
 |---|---|
 | Display | 192×320 logical pixels (3:5 portrait), 60 fps fixed timestep |
-| Art | 8×8 tile unit; 128×128 sprite sheet; 24×40 visible tile cells |
+| Art | 8×8 tile unit; 256×256 sprite sheet (32×32, 1024 tile IDs); 24×40 visible tile cells |
 | Palette | fixed 64-color Apollo64 palette, one byte-sized index per pixel |
 | Input | 7 buttons: d-pad, A, B, menu |
 | Audio | 6 channels, waveforms: pulse 12.5%/25%, square, triangle, saw, noise, plus 8 cart-defined 32×4-bit wavetables |
@@ -47,13 +47,13 @@ orientation, not the spec.
 high-resolution mode. Carts should compose for the full canvas. The 8×8 sprite
 is a storage and map unit rather than a target size for every object: prominent
 actors and interactables will usually read better on a phone when assembled as
-16–24px forms. The current 128×128 sprite sheet remains an intentional,
+16–24px forms. The 256×256 sprite sheet remains an intentional,
 independent capacity limit; changing asset storage is a separate platform
 decision from changing the display.
 
 Draw state (`camera`, `clip`, `pal`, `palt`, `fillp`, `mosaic`, `rshift`)
 persists across frames like PICO-8's, and there's a runtime-mutable tile map
-(`map()`, `mget`, `mset`) plus scaled blits (`sspr`) as part of the core
+(`map()`, `mget`, `mset`) with per-tile flags (`fget`, `fset`) plus scaled blits (`sspr`) as part of the core
 drawing API. Animations are declared once in the cart's `__gfx_meta__` and
 played by `aspr(name, x, y, [t0])`, which is stateless (the frame is a pure
 function of the frame counter) and draws from the sprite's declared anchor —

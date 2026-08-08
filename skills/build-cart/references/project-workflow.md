@@ -50,8 +50,8 @@ stale bundle after an invalid edit.
   opt-in lossy conversions.
 - Alternatively, `[sections].sprites` points at a lossless raw sheet body.
   Never combine it with `[[sprites]]`.
-- `[sections]` also points at headerless bodies for map, graphics metadata,
-  instruments, SFX, music, or custom sections.
+- `[sections]` also points at headerless bodies for the hex3 map, row-major
+  sprite flags, graphics metadata, instruments, SFX, music, or custom sections.
 - Alternatively, `[audio].bundle = "audio/game.cmusic"` expands one versioned,
   directly playable native audio bundle into instruments, SFX, and music. Do
   not combine it with the three audio keys under `[sections]`.
@@ -102,6 +102,11 @@ is ignored and has not been generated yet.
   `.cmusic` file and register it as `[audio].bundle`.
 - Preserve the raw sheet through `[sections].sprites`, or export/redraw
   tile-aligned PNG regions and register explicit placements.
+- Rewrite old 16-wide tile IDs as `(old_id // 16) * 32 + (old_id % 16)`, encode
+  maps as three hex digits per cell, and add `# map-format=hex3`. Prefixing a
+  zero is only sufficient for IDs from the old first row.
+- Preserve per-tile behavior in `[sections].gfx_flags`; the body is a 32x32
+  row-major grid of two-digit flag bytes consumed by `fget`/`fset`.
 - Preserve animation declarations in the graphics-metadata body.
 - Build, then compare old and new carts under identical seeds and inputs.
 - Add deterministic state assertions, screenshots, and audio evidence.

@@ -6,9 +6,10 @@
 //!     picks, drawn from the sprite's declared anchor,
 //!   * an unknown anim name halts the cart instead of drawing nothing.
 
-use console_core::{Cart, Console, Error, GfxMeta, SCREEN_W};
+use console_core::{Cart, Console, Error, GfxMeta, SCREEN_W, SPRITES_PER_ROW};
 
-/// A 128x128 sheet where every pixel's colour depends on both its tile and its
+/// A compact authored corner of the 256x256 sheet where every pixel's colour
+/// depends on both its tile and its
 /// position inside that tile, so a wrong frame, a wrong anchor offset or a
 /// missed flip all show up as different pixels.
 fn sheet_text() -> String {
@@ -40,7 +41,7 @@ fn sprite_id(meta: &GfxMeta, name: &str, pos: usize) -> u32 {
     let anim = meta.anim(name).unwrap();
     let sprite = meta.sprite(&anim.sprite).unwrap();
     let (sx, sy, _, _) = anim.resolve_frame(sprite, pos).unwrap();
-    (sy / 8) * 16 + (sx / 8)
+    (sy / 8) * SPRITES_PER_ROW as u32 + (sx / 8)
 }
 
 /// Run a cart for `frames` steps and hand back its framebuffer.

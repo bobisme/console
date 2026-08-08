@@ -23,6 +23,7 @@ const CANONICAL_SECTIONS: &[&str] = &[
     "lua",
     "sprites",
     "map",
+    "gfx_flags",
     "gfx_meta",
     "instruments",
     "sfx",
@@ -177,6 +178,8 @@ pub struct SpriteAssetReport {
     pub tile: [u32; 2],
     pub size_tiles: [u32; 2],
     pub size_pixels: [u32; 2],
+    /// Exact row-major tile IDs occupied by this named asset.
+    pub tile_ids: Vec<console_core::TileId>,
     pub anchor: [i32; 2],
     pub mapping: String,
     pub alpha_threshold: u8,

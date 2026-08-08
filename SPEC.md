@@ -93,9 +93,11 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `aspr(name, x, y, [t0=0], [flip_x=false], [flip_y=false])` | draw the `__gfx_meta__` anim `name` ("sprite.label"), frame selected by `frame_count - t0`. `(x, y)` is the sprite's declared **anchor**, not its top-left. Unknown name = error |
 | `anim_len(name)` | number of frames the anim declares |
 | `anim_done(name, [t0=0])` | true once a **one-shot** anim has held its last frame for its full duration; always false for a `loop` anim |
+| `fget(n, [bit])` | get tile `n`'s complete 8-bit flag byte, or boolean bit 0–7 when `bit` is supplied |
+| `fset(n, flags)` / `fset(n, bit, value)` | replace tile `n`'s flag byte, or set/clear one bit; runtime state only |
 | `map([cel_x=0], [cel_y=0], [sx=0], [sy=0], [cel_w=128], [cel_h=64])` | draw a cel_w×cel_h block of map cells from cell (cel_x, cel_y) to (sx, sy); **tile 0 is skipped**. `map()` draws the whole map at 0,0 |
 | `mget(cx, cy)` | tile id at map cell (cx, cy); off the map reads 0 |
-| `mset(cx, cy, [v=0])` | write a tile id (0–255, masked); off the map is a no-op |
+| `mset(cx, cy, [v=0])` | write a tile id (0–1023; out of range is an error); off the map is a no-op |
 | `text_size(s)` | return logical `(width, height)` for the built-in 4×6 font; widest line × line count |
 | `print(s, x, y, [c=12], [align="left"])` | draw text with built-in 4×6 font; `align` is `left`, `center`, or `right` and anchors each line at x (ASCII 32–126; lowercase may render as uppercase) |
 | `draw_tag([name])` | label subsequent opt-in draw diagnostics with a semantic layer/system name (64 UTF-8 bytes maximum); no argument clears the label and nothing is drawn |
@@ -300,7 +302,7 @@ Sampling is nearest-neighbor with the source stepped in u32.16 fixed point
 (`step = (sw << 16) / dw`), so the pixel loop is integer-only and
 bit-identical on every target. At `dw == sw, dh == sh` the step is exactly 1.0
 and the result is byte-identical to the equivalent `spr()`, flips included.
-Source pixels outside the 128×128 sheet are skipped, never wrapped.
+Source pixels outside the 256×256 sheet are skipped, never wrapped.
 
 ### Declared animations: `aspr`, `anim_len`, `anim_done`
 
@@ -436,22 +438,27 @@ __lua__
 -- Lua 5.4 source until next section header
 
 __sprites__
-128 lines × 128 palette characters, one character per pixel. Index alphabet:
+Up to 256 lines × up to 256 palette characters, one character per pixel. Index alphabet:
 `0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_`.
-Sprite sheet is 128×128 px = 16×16 sprites of 8×8 px.
-Sprite n occupies pixels (n%16*8, n//16*8)..+8. Missing/short section = all zeros.
+Sprite sheet is 256×256 px = 32×32 sprites of 8×8 px, IDs 0–1023.
+Sprite n occupies pixels (n%32*8, n//32*8)..+8. Missing/short section = all zeros.
+Over-wide or over-tall data is rejected instead of truncated.
 
 The 8×8 sprite is the addressable art unit, not a maximum actor size. A cart
 can compose larger figures from adjacent tiles or declare multi-tile sprites
 through `__gfx_meta__`; 16–24px primary actors are a useful phone-readability
 baseline, not a runtime requirement. Display resolution and asset capacity are
 independent: retaining the 192×320 framebuffer does not change the current
-128×128 sheet or its 256 tile IDs. Any future sheet/banking expansion requires
-a separate spec revision.
+256×256 sheet or its 1024 tile IDs.
 
 __map__
-Up to 64 lines × up to 128 cells, **2 hex chars per cell** = a tile id 00-ff
-indexing the sprite sheet. Map is a fixed 128×64 cells of 8×8 px.
+The first non-comment convention line is `# map-format=hex3`, followed by up
+to 64 lines × up to 128 cells. Each cell is **3 hex chars** = tile ID
+`000`–`3ff` indexing the sprite sheet. Map is a fixed 128×64 cells of 8×8 px.
+
+__gfx_flags__
+Up to 32 lines × up to 32 flag bytes. Each byte is exactly 2 hex chars and
+corresponds row-major to the 32×32 sprite atlas. Short/missing data zero-fills.
 ```
 
 `preview_palette` is optional tooling metadata for carts whose sprite sheet
@@ -581,12 +588,13 @@ max_colors = 6
 
 [sections]
 map = "map.txt"
+gfx_flags = "gfx-flags.txt"
 gfx_meta = "gfx-meta.txt"
 design_notes = "notes.txt"        # unknown cart sections remain allowed
 ```
 
 Each PNG must be a nonzero multiple of 8 pixels in both dimensions and fit at
-its explicit `tile` coordinate on the 16 by 16 tile sheet. The compiler never
+its explicit `tile` coordinate on the 32 by 32 tile sheet. The compiler never
 resizes or dithers. Asset names and occupied tile rectangles must be unique;
 placement is never inferred from manifest or filesystem order. Reordering the
 `[[sprites]]` tables therefore produces the same cart.
@@ -606,7 +614,7 @@ declarations before an optional authored `[sections].gfx_meta` body, so authored
 animations may refer to generated sprites. Duplicate authored/generated names
 are rejected by final cart validation. The `sprite_assets` report records each
 canonical PNG source, placement, dimensions, anchor, conversion policy, color
-budget and resulting palette indices.
+budget, resulting palette indices, and exact row-major `tile_ids` (0–1023).
 
 `[audio].bundle` is an alternative to three raw audio section sources. Its file
 starts with `console-music 1`, followed by any of `__instruments__`, `__sfx__`,
@@ -680,7 +688,7 @@ line rather than changing the generated cart structure.
 
 Compilation normalizes CRLF/lone-CR to LF, removes trailing line endings from
 each input, and emits exactly one final LF per section. Sections use the
-canonical order `meta`, `lua`, `sprites`, `map`, `gfx_meta`, `instruments`,
+canonical order `meta`, `lua`, `sprites`, `map`, `gfx_flags`, `gfx_meta`, `instruments`,
 `sfx`, `music`, followed by unknown sections sorted by name. The complete output
 must parse as a `Cart` before it can replace the destination. Replacement uses
 a temporary file beside the output plus an atomic rename, so a failed build
@@ -830,9 +838,11 @@ I/O failures exit 1.
 alphabet: `#` starts a comment line, blank lines and comments do not consume a row, and rows shorter
 than 128 cells pad with tile 0 (missing rows are all tile 0). Unlike
 `__sprites__` it **rejects** rather than truncates: a row longer than 128 cells,
-a row with an odd number of digits, more than 64 rows, or a non-hex digit is an
+a row whose length is not divisible by three, a tile above `3ff`, more than 64 rows, or a non-hex digit is an
 `Error::Cart` naming the section-relative line — losing terrain silently is much
-worse than failing to load.
+worse than failing to load. Nonempty map data requires the exact
+`# map-format=hex3` marker first. Legacy two-digit maps fail with a migration
+hint instead of being ambiguously reinterpreted.
 
 **Tile 0 is the empty cell.** `map()` skips those cells entirely rather than
 drawing sprite 0, which is the same convention that reserves sprite 0 as blank
@@ -844,6 +854,14 @@ The map is **runtime-mutable**: `mset` writes to the console's live copy (the
 parsed cart keeps the authored one), mutations persist across frames like any
 other console state, and because they are driven only by cart code they replay
 deterministically from `(cart, seed, input log)` with no special handling.
+
+`__gfx_flags__` initializes one independent 8-bit property byte per tile ID.
+`fget(n)` returns that byte; `fget(n, bit)` returns a boolean. `fset(n, flags)`
+replaces it and `fset(n, bit, value)` changes one bit. IDs outside 0–1023, bits
+outside 0–7, and bytes outside 0–255 are hard Lua errors, never wrapped. Like
+the map, a running console mutates its own copy; creating/resetting the console
+restores authored flag values. Flags have no implicit rendering or collision
+meaning—the cart assigns semantics such as solid, hazard, or collectible.
 
 ## Determinism contract
 
@@ -1370,14 +1388,14 @@ sprite <name> rect=<tx>,<ty> size=<w>x<h> [anchor=<px>,<py>]
 anim <sprite>.<label> frames=<f0,f1,...> fps=<1-60> [loop] [frames_rect=<tx>,<ty>]
 ```
 
-- `name`: `[a-z0-9_]+`, unique. `rect` in tile coords (0–15), `size` in
-  tiles (1×1 up to 16×16). `anchor` in pixels relative to the sprite's
+- `name`: `[a-z0-9_]+`, unique. `rect` in tile coords (0–31), `size` in
+  tiles (1×1 up to 32×32). `anchor` in pixels relative to the sprite's
   top-left; default = bottom-center `(w*8/2, h*8-1)` (ground contact).
 - Anim names are namespaced by sprite (`player.walk`). Each entry `f` in
   `frames=` is one of:
   - an index `i` — addresses the rect displaced `i` sprite-widths to the
     right of the frame-0 origin, wrapping to the next row band:
-    `tx' = (tx + i*w) % 16`, `ty' = ty + ((tx + i*w) / 16) * h`. The origin
+    `tx' = (tx + i*w) % 32`, `ty' = ty + ((tx + i*w) / 32) * h`. The origin
     `(tx, ty)` is the sprite's own `rect` by default.
   - an explicit tile coordinate `tx:ty` — the sprite's `WxH` rect anchored
     directly at tile `(tx, ty)` on the sheet, no wrap math, no relation to
@@ -1391,7 +1409,7 @@ anim <sprite>.<label> frames=<f0,f1,...> fps=<1-60> [loop] [frames_rect=<tx>,<ty
     displacement/wrap rule, same `WxH` as the sprite. Explicit `tx:ty`
     entries ignore it. This is what lets two anims of one sprite live in
     different, non-contiguous sheet regions.
-  - Every resolved rect must fit the 16×16 tile sheet; back-compat: an anim
+  - Every resolved rect must fit the 32×32 tile sheet; an anim
     using neither `frames_rect` nor any `tx:ty` entry parses and resolves
     exactly as before this grammar existed.
 - Validation after the whole section parses (forward references fine);
@@ -1544,7 +1562,7 @@ sprite tools' hex-glyph font.
 | command | output |
 |---------|--------|
 | `map render <cart> [cx,cy,cw,ch] [--zoom Z] [--grid] [--ids] -o out.png` | the region, zoomed, exactly as `map()` would draw it |
-| `map dump <cart> [cx,cy,cw,ch]` | the region as hex rows (2 chars/cell), `#`-header naming the coordinates, mirroring `sprite dump` |
+| `map dump <cart> [cx,cy,cw,ch]` | the region as marked hex3 rows (3 chars/cell), with pipeable `#` format/coordinate headers |
 | `map lint <cart>` | JSON over the whole map: used extent, cell counts by tile id (top N), tile ids referenced whose sprite-sheet region is entirely blank (the map analog of "color unique to one frame" — usually a typo), and % fill. Report-only; agents do the asserting. |
 
 RPC mirrors: `map_render`, `map_dump`, `map_lint` against either the session's
@@ -1570,7 +1588,7 @@ always explicit — unlike `render`/`dump`/`poke` it never defaults to the
 used extent, since a region transform is destructive by nature. `shift`
 drops cells that fall outside the region (no wrap) and fills vacated cells
 with tile 0; `fill`/`clear` take a tile id in the `__map__` alphabet
-directly (1-2 hex digits, `00`-`ff`).
+directly (1-3 hex digits, `000`-`3ff`).
 
 Both rewrite ONLY the changed lines of `__map__`, exactly like `sprite
 edit`/`sprite poke`: a changed row is re-encoded at the full 128-cell width,

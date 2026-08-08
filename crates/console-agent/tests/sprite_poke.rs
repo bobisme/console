@@ -37,7 +37,7 @@ fn args(v: &[&str]) -> Vec<String> {
 }
 
 /// Build a minimal cart: `__lua__` + optional `__gfx_meta__` + `__sprites__`
-/// with the given row lines (each may be shorter than 128 chars; missing
+/// with the given row lines (each may be shorter than 256 chars; missing
 /// suffix and missing trailing rows both default to zero).
 fn cart(gfx_meta: &str, sprite_rows: &[&str]) -> String {
     let mut s = String::from("__lua__\nfunction _init() end\n\n");
@@ -57,8 +57,8 @@ fn cart(gfx_meta: &str, sprite_rows: &[&str]) -> String {
     s
 }
 
-fn row128(segments: &[(usize, &str)]) -> String {
-    let mut chars = vec!['0'; 128];
+fn row256(segments: &[(usize, &str)]) -> String {
+    let mut chars = vec!['0'; 256];
     for (offset, text) in segments {
         for (i, c) in text.chars().enumerate() {
             chars[offset + i] = c;
@@ -135,7 +135,7 @@ fn poke_rows_overwrites_the_region() {
     let out = read(&path);
     let rows: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
     for (y, row) in rows.iter().enumerate() {
-        assert_eq!(*row, row128(&[(0, new_rows[y])]), "row {y}");
+        assert_eq!(*row, row256(&[(0, new_rows[y])]), "row {y}");
     }
 }
 
@@ -171,7 +171,7 @@ fn poke_only_rewrites_rows_that_actually_changed() {
         .filter(|&i| before[i] != after[i])
         .collect();
     assert_eq!(changed, vec![3], "only row 3 actually changed");
-    assert_eq!(after[3], row128(&[(0, "aaaaaaaa")]));
+    assert_eq!(after[3], row256(&[(0, "aaaaaaaa")]));
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn poke_frame_selects_a_displaced_rect() {
     let rows: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
     for row in &rows {
         // frame 1 is displaced one sprite-width (8px) to the right.
-        assert_eq!(*row, row128(&[(8, "ffffffff")]));
+        assert_eq!(*row, row256(&[(8, "ffffffff")]));
     }
 }
 
@@ -249,10 +249,10 @@ fn poke_animation_frames_honor_frames_rect_and_explicit_tiles() {
     let out = read(&path);
     let rows: Vec<&str> = out.split("__sprites__\n").nth(1).unwrap().lines().collect();
     for row in &rows[..8] {
-        assert_eq!(*row, row128(&[(40, "aaaaaaaa")]));
+        assert_eq!(*row, row256(&[(40, "aaaaaaaa")]));
     }
     for row in &rows[24..32] {
-        assert_eq!(*row, row128(&[(16, "bbbbbbbb")]));
+        assert_eq!(*row, row256(&[(16, "bbbbbbbb")]));
     }
 }
 
@@ -483,7 +483,7 @@ fn poke_stdin_reads_rows_and_skips_comment_lines() {
         "18181818",
     ];
     for (y, row) in rows.iter().enumerate() {
-        assert_eq!(*row, row128(&[(0, expected[y])]), "row {y}");
+        assert_eq!(*row, row256(&[(0, expected[y])]), "row {y}");
     }
 }
 

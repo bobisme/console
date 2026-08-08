@@ -298,8 +298,8 @@ __gfx_meta__
 #               tiles 8-11  star     (twinkle 0-3)
 #               tiles 12-13 gem      (sparkle 0-1)
 #   band ty=2 : tiles 12-15 moth     frames 0-1 (2x2 megatiles)
-#   band ty=4 : tiles 0-3   moth     frames 2-3, reached by the frame-offset
-#                                    wrap: tx' = (12 + i*2) % 16, ty' += 2.
+#   band ty=4 : tiles 0-3   moth     frames 2-3. Explicit tile coordinates
+#                                    preserve this layout on the 32-wide atlas.
 
 # Player. Anchor is the feet (ground contact), bottom-centre of the tile.
 sprite player rect=1,0 size=1x1 anchor=4,7
@@ -324,7 +324,7 @@ anim gem.sparkle frames=0,1 fps=4 loop
 # which is where the drift numbers should be measured from for a flier.
 sprite moth rect=12,2 size=2x2 anchor=8,8
 # spread -> up-stroke -> folded -> down-stroke.
-anim moth.flap frames=0,1,2,3 fps=6 loop
+anim moth.flap frames=12:2,14:2,0:4,2:4 fps=6 loop
 
 __sfx__
 # background tune: Am - F - C - G, speed 8 (7.5 rows/sec, 16 rows = ~2.1 s/bar-pair).

@@ -2044,7 +2044,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                     // A live map's used extent is unknown until the selected
                     // stage runs. Preflight against a fully occupied map so
                     // no runtime topology can exceed the visual memory bound.
-                    let full_tiles = Box::new([1u8; console_core::MAP_LEN]);
+                    let full_tiles = Box::new([1 as console_core::TileId; console_core::MAP_LEN]);
                     let (_, _, width_cells, height_cells) =
                         map::parse_region(map.region.as_deref(), &full_tiles).map_err(|error| {
                             format!("stage {index} review map region is invalid: {error}")
@@ -2401,7 +2401,7 @@ fn preflight_review(
         }
     }
     if let Some(map) = map {
-        let full_tiles = Box::new([1u8; console_core::MAP_LEN]);
+        let full_tiles = Box::new([1 as console_core::TileId; console_core::MAP_LEN]);
         let (_, _, width_cells, height_cells) =
             map::parse_region(map.region.as_deref(), &full_tiles).map_err(|error| {
                 format!("stage {review_index} review map region is invalid: {error}")

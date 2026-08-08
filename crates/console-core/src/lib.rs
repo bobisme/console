@@ -69,10 +69,11 @@ pub use crate::ecs::{
 };
 pub use crate::error::Error;
 pub use crate::gfx::{
-    COLOR_ALPHABET, COLOR_COUNT, COLOR_MASK, DrawState, FB_LEN, FILLP_SIZE, Framebuffer,
-    IDENTITY_PAL, MAP_H, MAP_LEN, MAP_W, MAX_MOSAIC, PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN,
-    SHEET_W, SPRITE_SIZE, ShiftTable, SpriteSheet, TextAlign, TextDraw, TextLayout, TileMap,
-    color_char, parse_color_char, text_size,
+    COLOR_ALPHABET, COLOR_COUNT, COLOR_MASK, DrawState, FB_LEN, FILLP_SIZE, Framebuffer, GfxFlags,
+    IDENTITY_PAL, MAP_CELL_HEX_DIGITS, MAP_FORMAT_MARKER, MAP_H, MAP_LEN, MAP_W, MAX_MOSAIC,
+    PALETTE, SCREEN_H, SCREEN_W, SHEET_LEN, SHEET_TILES, SHEET_W, SPRITE_SIZE, SPRITES_PER_ROW,
+    ShiftTable, SpriteSheet, TILE_COUNT, TILE_ID_MAX, TextAlign, TextDraw, TextLayout, TileId,
+    TileMap, color_char, parse_color_char, text_size,
 };
 pub use crate::gfx_meta::{AnimDef, FrameSpec, GfxMeta, SpriteDef};
 pub use crate::rng::Pcg32;
@@ -205,6 +206,7 @@ impl Console {
 
         let st = Rc::new(RefCell::new(state::State::new(
             Box::new(*cart.sprites()),
+            Box::new(*cart.gfx_flags()),
             Box::new(*cart.map()),
             Rc::new(cart.gfx_meta().clone()),
             seed,

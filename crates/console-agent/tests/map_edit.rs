@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use console_agent::map::transform::cli_edit;
-use console_core::Cart;
+use console_core::{Cart, MAP_FORMAT_MARKER, TileId};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -30,7 +30,7 @@ fn args(v: &[&str]) -> Vec<String> {
 }
 
 fn cart(map_rows: &[&str]) -> String {
-    let mut s = String::from("__lua__\nfunction _init() end\n\n__map__\n");
+    let mut s = format!("__lua__\nfunction _init() end\n\n__map__\n{MAP_FORMAT_MARKER}\n");
     for row in map_rows {
         s.push_str(row);
         s.push('\n');
@@ -40,7 +40,7 @@ fn cart(map_rows: &[&str]) -> String {
 
 /// The tile ids of the first `n` cells of row `y`, read back out of a
 /// re-parsed cart — the common shape every op test's assertion takes.
-fn row_tiles(cart: &Cart, y: usize, n: usize) -> Vec<u8> {
+fn row_tiles(cart: &Cart, y: usize, n: usize) -> Vec<TileId> {
     (0..n)
         .map(|x| cart.map()[y * console_core::MAP_W + x])
         .collect()
@@ -53,7 +53,7 @@ fn row_tiles(cart: &Cart, y: usize, n: usize) -> Vec<u8> {
 #[test]
 fn shift_moves_cells_and_clears_vacated() {
     // Row 0: cells 0..4 = [1,2,3,4].
-    let text = cart(&["01020304"]);
+    let text = cart(&["001002003004"]);
     let path = temp_cart("shift-basic", &text);
 
     let code = cli_edit(&args(&[
@@ -73,7 +73,7 @@ fn shift_moves_cells_and_clears_vacated() {
 
 #[test]
 fn shift_dx_defaults_to_zero() {
-    let text = cart(&["01020304"]);
+    let text = cart(&["001002003004"]);
     let path = temp_cart("shift-dx-default", &text);
 
     let code = cli_edit(&args(&[
@@ -91,7 +91,7 @@ fn shift_dx_defaults_to_zero() {
 #[test]
 fn shift_vertically_within_a_column() {
     // Column 0, rows 0..3 = 1,2,3.
-    let text = cart(&["01", "02", "03"]);
+    let text = cart(&["001", "002", "003"]);
     let path = temp_cart("shift-vertical", &text);
 
     let code = cli_edit(&args(&[
@@ -115,7 +115,7 @@ fn shift_vertically_within_a_column() {
 
 #[test]
 fn shift_requires_explicit_region() {
-    let text = cart(&["01"]);
+    let text = cart(&["001"]);
     let path = temp_cart("shift-no-region", &text);
     let before = read(&path);
 
@@ -130,7 +130,7 @@ fn shift_requires_explicit_region() {
 
 #[test]
 fn fill_writes_the_tile_id_across_the_region() {
-    let text = cart(&["00000000", "00000000"]);
+    let text = cart(&["000000000000", "000000000000"]);
     let path = temp_cart("fill-basic", &text);
 
     let code = cli_edit(&args(&[path.to_str().unwrap(), "fill", "0,0,4,2", "1f"]));
@@ -143,7 +143,7 @@ fn fill_writes_the_tile_id_across_the_region() {
 
 #[test]
 fn fill_accepts_a_single_hex_digit() {
-    let text = cart(&["00"]);
+    let text = cart(&["000"]);
     let path = temp_cart("fill-single-digit", &text);
 
     let code = cli_edit(&args(&[path.to_str().unwrap(), "fill", "0,0,1,1", "5"]));
@@ -154,7 +154,7 @@ fn fill_accepts_a_single_hex_digit() {
 
 #[test]
 fn fill_rejects_a_bad_tile_id() {
-    let text = cart(&["00"]);
+    let text = cart(&["000"]);
     let path = temp_cart("fill-bad-id", &text);
     let before = read(&path);
 
@@ -169,7 +169,7 @@ fn fill_rejects_a_bad_tile_id() {
 
 #[test]
 fn clear_zeroes_the_region() {
-    let text = cart(&["01020304"]);
+    let text = cart(&["001002003004"]);
     let path = temp_cart("clear-basic", &text);
 
     let code = cli_edit(&args(&[path.to_str().unwrap(), "clear", "0,0,2,1"]));
@@ -185,7 +185,7 @@ fn clear_zeroes_the_region() {
 
 #[test]
 fn clear_identical_region_is_a_noop() {
-    let text = cart(&["00000000"]);
+    let text = cart(&["000000000000"]);
     let path = temp_cart("clear-noop", &text);
 
     let code = cli_edit(&args(&[path.to_str().unwrap(), "clear", "0,0,4,1"]));
@@ -199,7 +199,7 @@ fn clear_identical_region_is_a_noop() {
 
 #[test]
 fn copy_duplicates_the_region_to_the_destination() {
-    let text = cart(&["01020000"]);
+    let text = cart(&["001002000000"]);
     let path = temp_cart("copy-basic", &text);
 
     let code = cli_edit(&args(&[path.to_str().unwrap(), "copy", "0,0,2,1", "2,0"]));
@@ -217,7 +217,7 @@ fn copy_duplicates_the_region_to_the_destination() {
 fn copy_overlapping_source_and_dest_uses_a_snapshot() {
     // Row 0: [1,2,3,0]. Copy region [0..3) to dest starting at 1: expect
     // [1,1,2,3] -- the write must not read its own half-overwritten output.
-    let text = cart(&["01020300"]);
+    let text = cart(&["001002003000"]);
     let path = temp_cart("copy-overlap", &text);
 
     let code = cli_edit(&args(&[path.to_str().unwrap(), "copy", "0,0,3,1", "1,0"]));
@@ -229,7 +229,7 @@ fn copy_overlapping_source_and_dest_uses_a_snapshot() {
 
 #[test]
 fn copy_destination_out_of_bounds_errors_without_modifying_file() {
-    let text = cart(&["0102"]);
+    let text = cart(&["001002"]);
     let path = temp_cart("copy-oob", &text);
     let before = read(&path);
 
@@ -244,7 +244,7 @@ fn copy_destination_out_of_bounds_errors_without_modifying_file() {
 
 #[test]
 fn dry_run_leaves_the_file_untouched_and_prints_report() {
-    let text = cart(&["00000000"]);
+    let text = cart(&["000000000000"]);
     let path = temp_cart("edit-dry-run", &text);
 
     let code = cli_edit(&args(&[
@@ -260,7 +260,7 @@ fn dry_run_leaves_the_file_untouched_and_prints_report() {
 
 #[test]
 fn unknown_op_is_rejected() {
-    let text = cart(&["00"]);
+    let text = cart(&["000"]);
     let path = temp_cart("edit-unknown-op", &text);
     let before = read(&path);
 

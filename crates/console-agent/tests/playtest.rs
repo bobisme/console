@@ -516,7 +516,11 @@ fn scenario_captures_authored_and_live_maps_from_one_session() {
     let cart = dir.join("test.cart");
     let scenario = dir.join("map.json");
     let artifacts = dir.join("artifacts");
-    fs::write(&cart, "__lua__\nfunction _init() end\n\n__map__\n0102\n").unwrap();
+    fs::write(
+        &cart,
+        "__lua__\nfunction _init() end\n\n__map__\n# map-format=hex3\n001002\n",
+    )
+    .unwrap();
     fs::write(
         &scenario,
         serde_json::to_vec_pretty(&json!({
@@ -560,12 +564,12 @@ fn scenario_captures_authored_and_live_maps_from_one_session() {
     assert!(
         fs::read_to_string(artifacts.join("authored.txt"))
             .unwrap()
-            .contains("0102")
+            .contains("001002")
     );
     assert!(
         fs::read_to_string(artifacts.join("live.txt"))
             .unwrap()
-            .contains("0302")
+            .contains("003002")
     );
     assert!(
         fs::read(artifacts.join("live.png"))
@@ -597,7 +601,7 @@ fn scenario_captures_transparent_semantic_layers_beside_collision_context() {
            draw_tag('') pset(2,2,5)\n\
            draw_tag() pset(1,2,0)\n\
          end\n\
-         __map__\n0102\n",
+         __map__\n# map-format=hex3\n001002\n",
     )
     .unwrap();
     fs::write(
@@ -649,7 +653,7 @@ fn scenario_captures_transparent_semantic_layers_beside_collision_context() {
     assert!(
         fs::read_to_string(artifacts.join("collision.txt"))
             .unwrap()
-            .contains("0102")
+            .contains("001002")
     );
 
     let terrain = console_agent::palette::decode_png_rgba(
@@ -940,7 +944,7 @@ fn scenario_review_consolidates_motion_layers_map_reference_and_diagnostics() {
            draw_tag('actor') pset(frame%32,19,63)\n\
            draw_tag() pset(31,0,0)\n\
          end\n\
-         __map__\n0002\n",
+         __map__\n# map-format=hex3\n000002\n",
     )
     .unwrap();
     let mut reference_rgba = vec![0u8; 32 * 32 * 4];

@@ -8,7 +8,8 @@ use crate::draw_trace::{
     Bounds, DrawEvent, DrawSpec, MAX_DRAW_EVENTS_PER_FRAME, PaletteRemap, ScreenBounds,
 };
 use crate::gfx::{
-    DrawState, FB_LEN, Framebuffer, MAP_LEN, SHEET_LEN, SpriteSheet, TextDraw, TileMap,
+    DrawState, FB_LEN, Framebuffer, GfxFlags, MAP_LEN, SHEET_LEN, SpriteSheet, TILE_COUNT,
+    TextDraw, TileMap,
 };
 use crate::gfx_meta::GfxMeta;
 use crate::rng::Pcg32;
@@ -32,6 +33,9 @@ pub struct State {
     /// cart call (or a fresh console) changes it.
     pub draw: DrawState,
     pub sheet: Box<SpriteSheet>,
+    /// Mutable per-tile flag bytes. Authored values come from `__gfx_flags__`;
+    /// `fset` changes only this running copy.
+    pub gfx_flags: Box<GfxFlags>,
     /// The live 128x64 tile map: the cart's `__map__` at load, then whatever
     /// `mset` has made of it. Mutations persist across frames and are part of
     /// console state, so a replay of the same inputs reproduces them exactly.
@@ -74,6 +78,7 @@ pub struct State {
 impl State {
     pub fn new(
         sheet: Box<SpriteSheet>,
+        gfx_flags: Box<GfxFlags>,
         map: Box<TileMap>,
         gfx_meta: Rc<GfxMeta>,
         seed: u64,
@@ -84,6 +89,7 @@ impl State {
             fb: Box::new([0u8; FB_LEN]),
             draw: DrawState::new(),
             sheet,
+            gfx_flags,
             map,
             gfx_meta,
             input: 0,
@@ -253,7 +259,8 @@ impl Default for State {
     fn default() -> Self {
         State::new(
             Box::new([0u8; SHEET_LEN]),
-            Box::new([0u8; MAP_LEN]),
+            Box::new([0u8; TILE_COUNT]),
+            Box::new([0; MAP_LEN]),
             Rc::new(GfxMeta::default()),
             0,
             AudioBank::default(),

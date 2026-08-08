@@ -1,6 +1,6 @@
 //! `__gfx_meta__`: sprite/anim declaration parsing.
 
-use console_core::{Cart, Console, Error, FrameSpec};
+use console_core::{Cart, Console, Error, FrameSpec, SHEET_W, SPRITES_PER_ROW};
 
 /// Build the classic all-index frame list `Vec<FrameSpec>` from plain
 /// indices, for asserting against `AnimDef::frames` without new-syntax noise
@@ -110,10 +110,11 @@ fn frame_rect_identity_displacement_wrap_and_off_sheet() {
     // Horizontal displacement: one sprite-width to the right.
     assert_eq!(p.frame_rect(1), Some((16, 0, 8, 8)));
     assert_eq!(p.frame_rect(3), Some((32, 0, 8, 8)));
-    // Wrap to the next row band: tx=1 + 15*1 = 16 -> tx'=0, ty'=1.
-    assert_eq!(p.frame_rect(15), Some((0, 8, 8, 8)));
-    // Far enough to fall off the bottom of the 16x16 sheet.
-    assert_eq!(p.frame_rect(255), None);
+    // Wrap to the next row band: tx=1 + 31*1 = 32 -> tx'=0, ty'=1.
+    assert_eq!(p.frame_rect(31), Some((0, 8, 8, 8)));
+    // The complete u8 frame-index range remains on this larger sheet when
+    // starting from the top row.
+    assert_eq!(p.frame_rect(255), Some((0, 64, 8, 8)));
 }
 
 #[test]
@@ -123,18 +124,18 @@ fn frame_rect_with_multi_tile_sprite() {
     assert_eq!(p.frame_rect(0), Some((0, 0, 16, 16)));
     // i=1 displaces by w=2 tiles -> tx'=2.
     assert_eq!(p.frame_rect(1), Some((16, 0, 16, 16)));
-    // i=7: tx=0+7*2=14, fits (14+2=16); i=8: tx=16 -> wraps to tx'=0, ty'=2.
-    assert_eq!(p.frame_rect(7), Some((112, 0, 16, 16)));
-    assert_eq!(p.frame_rect(8), Some((0, 16, 16, 16)));
+    // i=15: tx=0+15*2=30, fits; i=16: tx=32 -> wraps to tx'=0, ty'=2.
+    assert_eq!(p.frame_rect(15), Some((240, 0, 16, 16)));
+    assert_eq!(p.frame_rect(16), Some((0, 16, 16, 16)));
 }
 
 #[test]
 fn anim_off_sheet_frame_is_rejected_at_parse_time() {
-    let text = "__lua__\nx=1\n\n__gfx_meta__\nsprite p rect=15,15 size=1x1\nanim p.bad frames=0,20 fps=10\n";
+    let text = "__lua__\nx=1\n\n__gfx_meta__\nsprite p rect=31,31 size=1x1\nanim p.bad frames=0,20 fps=10\n";
     let err = Cart::parse(text).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("line 2"), "{msg}");
-    assert!(msg.contains("outside the 16x16 tile sheet"), "{msg}");
+    assert!(msg.contains("outside the 32x32 tile sheet"), "{msg}");
 }
 
 // ---------------------------------------------------------------------------
@@ -198,14 +199,14 @@ fn anim_forward_reference_to_a_sprite_is_fine() {
 
 #[test]
 fn bad_rect_range() {
-    expect_cart_error("sprite p rect=16,0 size=1x1\n", 1, "rect tx must be 0-15");
-    expect_cart_error("sprite p rect=0,16 size=1x1\n", 1, "rect ty must be 0-15");
+    expect_cart_error("sprite p rect=32,0 size=1x1\n", 1, "rect tx must be 0-31");
+    expect_cart_error("sprite p rect=0,32 size=1x1\n", 1, "rect ty must be 0-31");
 }
 
 #[test]
 fn bad_size_range() {
-    expect_cart_error("sprite p rect=0,0 size=0x1\n", 1, "size w must be 1-16");
-    expect_cart_error("sprite p rect=0,0 size=1x17\n", 1, "size h must be 1-16");
+    expect_cart_error("sprite p rect=0,0 size=0x1\n", 1, "size w must be 1-32");
+    expect_cart_error("sprite p rect=0,0 size=1x33\n", 1, "size h must be 1-32");
 }
 
 #[test]
@@ -361,25 +362,34 @@ fn demo_cart_gfx_meta_has_the_declared_anims() {
     assert!(sparkle.looped);
 
     let flap = meta.anim("moth.flap").expect("moth.flap anim");
-    assert_eq!(flap.frames, indices(&[0, 1, 2, 3]));
+    assert_eq!(
+        flap.frames,
+        vec![
+            FrameSpec::Rect(12, 2),
+            FrameSpec::Rect(14, 2),
+            FrameSpec::Rect(0, 4),
+            FrameSpec::Rect(2, 4),
+        ]
+    );
     assert_eq!(flap.fps, 6);
     assert!(flap.looped);
 }
 
-/// The moth's frame offsets deliberately run off the right edge of its row
-/// band so the wrap rule (`tx' = (tx + i*w) % 16`, `ty' += h`) is exercised by
-/// a real cart, not just by unit tests.
+/// The migrated demo keeps its old 16-wide physical arrangement using
+/// explicit frame coordinates on the new 32-wide atlas.
 #[test]
-fn demo_cart_moth_frames_wrap_to_the_next_row_band() {
+fn demo_cart_moth_frames_keep_their_physical_layout() {
     let cart = Cart::parse(DEMO).unwrap();
-    let moth = cart.gfx_meta().sprite("moth").unwrap();
+    let meta = cart.gfx_meta();
+    let moth = meta.sprite("moth").unwrap();
+    let flap = meta.anim("moth.flap").unwrap();
 
     // Frames 0 and 1 sit in band ty=2 at tx=12 and tx=14 ...
-    assert_eq!(moth.frame_rect(0), Some((96, 16, 16, 16)));
-    assert_eq!(moth.frame_rect(1), Some((112, 16, 16, 16)));
-    // ... and frames 2 and 3 wrap into band ty=4 at tx=0 and tx=2.
-    assert_eq!(moth.frame_rect(2), Some((0, 32, 16, 16)));
-    assert_eq!(moth.frame_rect(3), Some((16, 32, 16, 16)));
+    assert_eq!(flap.resolve_frame(moth, 0), Some((96, 16, 16, 16)));
+    assert_eq!(flap.resolve_frame(moth, 1), Some((112, 16, 16, 16)));
+    // ... and frames 2 and 3 remain in band ty=4 at tx=0 and tx=2.
+    assert_eq!(flap.resolve_frame(moth, 2), Some((0, 32, 16, 16)));
+    assert_eq!(flap.resolve_frame(moth, 3), Some((16, 32, 16, 16)));
 }
 
 /// Every frame the Lua actually draws must be backed by non-empty pixels, and
@@ -397,7 +407,7 @@ fn demo_cart_anim_frames_have_pixels_at_the_expected_sprite_ids() {
         ("player.idle", &[5, 6]),
         ("star.twinkle", &[8, 9, 10, 11]),
         ("gem.sparkle", &[12, 13]),
-        ("moth.flap", &[44, 46, 64, 66]),
+        ("moth.flap", &[76, 78, 128, 130]),
     ];
 
     for (name, ids) in cases {
@@ -413,17 +423,20 @@ fn demo_cart_anim_frames_have_pixels_at_the_expected_sprite_ids() {
                 .resolve_frame(sprite, pos)
                 .unwrap_or_else(|| panic!("{name} frame {pos} off-sheet"));
 
-            // Sprite id n lives at (n % 16 * 8, n / 16 * 8) -- the address the
+            // Sprite id n lives at (n % 32 * 8, n / 32 * 8) -- the address the
             // Lua passes to spr().
             assert_eq!(
                 (x, y),
-                (u32::from(id) % 16 * 8, u32::from(id) / 16 * 8),
+                (
+                    u32::from(id) % SPRITES_PER_ROW as u32 * 8,
+                    u32::from(id) / SPRITES_PER_ROW as u32 * 8,
+                ),
                 "{name} frame {pos} should be sprite id {id}"
             );
 
             let opaque = (0..h)
                 .flat_map(|dy| (0..w).map(move |dx| (dx, dy)))
-                .filter(|&(dx, dy)| sheet[((y + dy) * 128 + (x + dx)) as usize] != 0)
+                .filter(|&(dx, dy)| sheet[(y + dy) as usize * SHEET_W + (x + dx) as usize] != 0)
                 .count();
             assert!(opaque > 0, "{name} frame {pos} is blank");
         }

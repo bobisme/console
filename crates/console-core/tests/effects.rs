@@ -435,8 +435,8 @@ fn sspr_takes_a_rectangle_from_anywhere_on_the_sheet() {
     assert_eq!(px(&con, 0, 1), 6);
     assert_eq!(px(&con, 1, 1), 7);
 
-    // Source pixels off the 128x128 sheet are skipped, not wrapped.
-    let con = run("cls(9) sspr(126, 126, 8, 8, 0, 0, 8, 8)");
+    // Source pixels off the 256x256 sheet are skipped, not wrapped.
+    let con = run("cls(9) sspr(254, 254, 8, 8, 0, 0, 8, 8)");
     assert_eq!(count(&con, 9), FB_LEN, "off-sheet source draws nothing");
 }
 

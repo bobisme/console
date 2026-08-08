@@ -203,11 +203,11 @@ fn deluxe_scene_uses_authored_variants_and_ambient_animation_metadata() {
             for cy=0,63 do
               for cx=0,17 do
                 local tile=mget(cx,cy)
-                if tile==75 then counts.chip=counts.chip+1
-                elseif tile==76 then counts.rune=counts.rune+1
-                elseif tile==77 then counts.tuft=counts.tuft+1
-                elseif tile==78 then counts.bloom=counts.bloom+1
-                elseif tile==79 then counts.bubble=counts.bubble+1 end
+                if tile==139 then counts.chip=counts.chip+1
+                elseif tile==140 then counts.rune=counts.rune+1
+                elseif tile==141 then counts.tuft=counts.tuft+1
+                elseif tile==142 then counts.bloom=counts.bloom+1
+                elseif tile==143 then counts.bubble=counts.bubble+1 end
               end
             end
             return {counts=counts,

@@ -56,10 +56,25 @@ fn missing_optional_sections_are_defaults() {
     assert_eq!(cart.title(), "untitled");
     assert!(cart.meta().is_empty());
     assert!(cart.sprites().iter().all(|&p| p == 0));
+    assert!(cart.gfx_flags().iter().all(|&flags| flags == 0));
     assert_eq!(cart.lua().trim(), "x = 1");
     assert_eq!(
         cart.preview_palette().indices().as_slice(),
         &(0..COLOR_COUNT as u8).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn overlarge_sprite_sheets_fail_instead_of_truncating() {
+    let too_wide = "0".repeat(SHEET_W + 1);
+    let error = Cart::parse(&format!("__lua__\n\n__sprites__\n{too_wide}\n")).unwrap_err();
+    assert!(error.to_string().contains("256 pixels wide"), "{error}");
+
+    let too_tall = "0\n".repeat(SHEET_W + 1);
+    let error = Cart::parse(&format!("__lua__\n\n__sprites__\n{too_tall}")).unwrap_err();
+    assert!(
+        error.to_string().contains("at most 256 rows tall"),
+        "{error}"
     );
 }
 

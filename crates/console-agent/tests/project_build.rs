@@ -523,6 +523,43 @@ max_colors = 2
 }
 
 #[test]
+fn named_sprite_and_flag_sources_reach_the_last_atlas_tile() {
+    use console_core::{PALETTE, SHEET_W, TILE_ID_MAX};
+
+    let project = Project::new();
+    set_sprite_manifest(
+        &project,
+        "[[sprites]]\nname=\"last\"\nsource=\"last.png\"\ntile=[31,31]\nmapping=\"exact\"\n",
+        "gfx_flags = \"gfx-flags.txt\"\n",
+    );
+    write_png(
+        &project,
+        "last.png",
+        &solid_rgba(8, 8, PALETTE[14], 255),
+        8,
+        8,
+    );
+    let mut flags = format!("{}\n", "00".repeat(32)).repeat(31);
+    flags.push_str(&"00".repeat(31));
+    flags.push_str("a5\n");
+    project.write("gfx-flags.txt", &flags);
+
+    let compiled = console_agent::project::compile_project(&project.0).unwrap();
+    assert_eq!(compiled.sprite_assets[0].tile_ids, vec![TILE_ID_MAX]);
+    let cart = console_core::Cart::parse(&compiled.cart_text).unwrap();
+    assert_eq!(cart.gfx_flags()[usize::from(TILE_ID_MAX)], 0xa5);
+    assert_eq!(cart.sprites()[(SHEET_W - 1) * SHEET_W + (SHEET_W - 1)], 14);
+    assert_eq!(cart.gfx_meta().sprite("last").unwrap().rect, (31, 31));
+
+    let flags_pos = compiled.cart_text.find("__gfx_flags__").unwrap();
+    let meta_pos = compiled.cart_text.find("__gfx_meta__").unwrap();
+    assert!(
+        flags_pos < meta_pos,
+        "gfx flags keep canonical section order"
+    );
+}
+
+#[test]
 fn png_assets_reject_invalid_dimensions_bounds_duplicates_and_overlaps() {
     use console_core::PALETTE;
 
@@ -545,7 +582,7 @@ fn png_assets_reject_invalid_dimensions_bounds_duplicates_and_overlaps() {
     let bounds = Project::new();
     set_sprite_manifest(
         &bounds,
-        "[[sprites]]\nname=\"wide\"\nsource=\"wide.png\"\ntile=[15,15]\n",
+        "[[sprites]]\nname=\"wide\"\nsource=\"wide.png\"\ntile=[31,31]\n",
         "",
     );
     write_png(
@@ -556,7 +593,7 @@ fn png_assets_reject_invalid_dimensions_bounds_duplicates_and_overlaps() {
         8,
     );
     let error = console_agent::project::compile_project(&bounds.0).unwrap_err();
-    assert!(error.contains("outside the 16x16 sprite sheet"), "{error}");
+    assert!(error.contains("outside the 32x32 sprite sheet"), "{error}");
 
     let duplicate = Project::new();
     set_sprite_manifest(

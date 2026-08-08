@@ -22,11 +22,12 @@ scrolling rooms.
 ## Understand the native map
 
 The map is exactly 128×64 cells of 8×8 pixels. Each cell stores one sprite ID
-0–255. Tile 0 is empty and skipped by `map()`. The visible display covers
+0–1023. Tile 0 is empty and skipped by `map()`. The visible display covers
 24×40 cells; the full map covers 1024×512 world pixels.
 
-There is no native collision flag, tile property table, metatile ID, layer, or
-autotiler. Build those as explicit cart conventions. `console scene compile`
+There is one native 8-bit flag byte per tile (`fget`/`fset`), but no predefined
+collision meaning, multi-valued property table, metatile ID, layer, or
+autotiler. Assign flag bits and other conventions explicitly. `console scene compile`
 can compile the conventions into a native atlas, map, and Lua tables, but the
 runtime still sees only the ground-truth 8×8 map and ordinary draw calls.
 
@@ -52,16 +53,16 @@ constants:
 
 ```lua
 local tile = {
-  empty=0x00,
-  stone_fill=0x40,
-  stone_top=0x41,
-  stone_left=0x42,
-  stone_right=0x43,
-  stone_tl=0x44,
-  stone_tr=0x45,
-  grass_top_a=0x50,
-  grass_top_b=0x51,
-  spikes=0x60,
+  empty=0x000,
+  stone_fill=0x040,
+  stone_top=0x041,
+  stone_left=0x042,
+  stone_right=0x043,
+  stone_tl=0x044,
+  stone_tr=0x045,
+  grass_top_a=0x050,
+  grass_top_b=0x051,
+  spikes=0x060,
 }
 ```
 
@@ -183,6 +184,20 @@ local function tile_prop_at_px(x, y)
 end
 ```
 
+For independent boolean properties, reserve stable flag bits and author their
+bytes in `__gfx_flags__` (32×32, two hex digits per tile). Then collision can
+avoid a parallel Lua table:
+
+```lua
+local FLAG_SOLID, FLAG_HAZARD = 0, 1
+local function solid_at(x,y)
+  return fget(mget(flr(x/8),flr(y/8)), FLAG_SOLID)
+end
+```
+
+Use a Lua property table when a tile has one of several richer values or when
+the meaning belongs to a particular game system rather than the shared atlas.
+
 Test the actor's relevant corners/edge, not only its center. Resolve one axis at
 a time to avoid diagonal tunneling:
 
@@ -233,13 +248,13 @@ it instead of inspecting only the source cart:
 The same choice is available to RPC `map_render`, `map_dump`, and `map_lint`
 through `source:"live"`; omitting it deliberately inspects authored state.
 
-Use `map poke` for exact region rows. Each row contains two hex digits per cell:
+Use `map poke` for exact region rows. Each row contains three hex digits per cell:
 
 ```bash
 console map poke game.cart 0,0,4,2 \
-  --rows '44414145,42404043' --dry-run
+  --rows '044041041045,042040040043' --dry-run
 console map poke game.cart 0,0,4,2 \
-  --rows '44414145,42404043'
+  --rows '044041041045,042040040043'
 ```
 
 Use transforms for structural changes:
@@ -247,7 +262,7 @@ Use transforms for structural changes:
 - `copy` duplicates a room/platform region to a named destination origin;
 - `shift` moves a region and zero-fills vacated cells;
 - `fill` lays a repeated tile ID;
-- `clear` restores `00`.
+- `clear` restores `000`.
 
 Every destructive `map edit` operation requires an explicit region. Keep it
 tight so review diffs show only intended rows.

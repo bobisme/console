@@ -3,14 +3,14 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use console_core::{SHEET_LEN, SHEET_W, color_char};
+use console_core::{SHEET_LEN, SHEET_TILES, SHEET_W, TileId, color_char};
 
 use super::{SpriteAssetConfig, SpriteAssetReport, SpriteMapping, resolve_input};
 use crate::palette::{decode_png_rgba, quantize_rgba};
 use crate::sprite::png_io::map_import_pixels;
 
 const TILE_SIZE: u32 = 8;
-const TILE_GRID: u32 = 16;
+const TILE_GRID: u32 = SHEET_TILES as u32;
 const DEFAULT_QUANTIZE_COLORS: usize = 16;
 
 pub(super) struct AssembledSprites {
@@ -132,6 +132,7 @@ pub(super) fn assemble(
             tile: config.tile,
             size_tiles,
             size_pixels: [decoded.width, decoded.height],
+            tile_ids: asset_tile_ids(config.tile, size_tiles),
             anchor,
             mapping: config.mapping.as_str().into(),
             alpha_threshold: config.alpha_threshold,
@@ -154,6 +155,12 @@ pub(super) fn assemble(
         inputs,
         assets: reports,
     })
+}
+
+fn asset_tile_ids(origin: [u32; 2], size: [u32; 2]) -> Vec<TileId> {
+    (origin[1]..origin[1] + size[1])
+        .flat_map(|y| (origin[0]..origin[0] + size[0]).map(move |x| (y * TILE_GRID + x) as TileId))
+        .collect()
 }
 
 fn validate_name(name: &str) -> Result<(), String> {
@@ -182,7 +189,7 @@ fn validate_dimensions(config: &SpriteAssetConfig, width: u32, height: u32) -> R
         || config.tile[1] + height_tiles > TILE_GRID
     {
         return Err(format!(
-            "sprite {:?} at tile {},{} with size {}x{} tiles falls outside the 16x16 sprite sheet",
+            "sprite {:?} at tile {},{} with size {}x{} tiles falls outside the {TILE_GRID}x{TILE_GRID} sprite sheet",
             config.name, config.tile[0], config.tile[1], width_tiles, height_tiles
         ));
     }

@@ -804,11 +804,11 @@ anim alpha.blink frames=0 frames_rect=2,0 fps=4 loop
 fn atlas_reports_declarations_frames_aliases_conflicts_blanks_and_unused_tiles() {
     let cart = Cart::parse(ATLAS_CART).unwrap();
     let atlas = view::atlas(&cart, 2, true).unwrap();
-    assert_eq!((atlas.image.width, atlas.image.height), (257, 257));
+    assert_eq!((atlas.image.width, atlas.image.height), (513, 513));
     assert!(atlas.image.png.starts_with(b"\x89PNG"));
 
     let report = atlas.report;
-    assert_eq!(report["sheet"]["tile_count"], 256);
+    assert_eq!(report["sheet"]["tile_count"], 1024);
     assert_eq!(report["sprites"][0]["name"], "alpha");
     assert_eq!(report["sprites"][0]["anchor"], json!({"x":3,"y":7}));
     assert_eq!(report["sprites"][0]["palette_counts"]["3"], 1);
@@ -829,7 +829,7 @@ fn atlas_reports_declarations_frames_aliases_conflicts_blanks_and_unused_tiles()
         report["unused_tiles"]
             .as_array()
             .unwrap()
-            .contains(&json!(255))
+            .contains(&json!(1023))
     );
     let blanks = report["blank_allocations"].as_array().unwrap();
     assert_eq!(blanks.len(), 3);
@@ -865,7 +865,7 @@ fn atlas_accepts_extreme_legal_anchors_without_overflowing() {
         atlas.report["sprites"][0]["anchor"],
         json!({"x":i32::MAX,"y":i32::MIN})
     );
-    assert_eq!((atlas.image.width, atlas.image.height), (257, 257));
+    assert_eq!((atlas.image.width, atlas.image.height), (513, 513));
 }
 
 // ---------------------------------------------------------------------------
@@ -932,7 +932,7 @@ fn rpc_sprite_verbs_write_images_and_report_sizes() {
         json!({"zoom": 2, "grid": true, "path": p}),
     );
     assert!(resp.get("error").is_none(), "sprite_atlas: {resp}");
-    assert_eq!(resp["result"]["image"]["width"], 257);
+    assert_eq!(resp["result"]["image"]["width"], 513);
     assert_eq!(resp["result"]["sprites"][0]["name"], "dot");
     assert_eq!(resp["result"]["animations"].as_array().unwrap().len(), 4);
     let _ = std::fs::remove_file(&path);

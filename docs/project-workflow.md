@@ -42,6 +42,7 @@ my-game/
 ├── generated/             # atlas, map, Lua, review evidence
 ├── data/
 │   ├── map.txt
+│   ├── gfx-flags.txt
 │   └── gfx-meta.txt
 ├── audio/
 │   └── game.cmusic         # or three headerless instruments/sfx/music files
@@ -91,6 +92,7 @@ max_colors = 8
 
 [sections]
 map = "data/map.txt"
+gfx_flags = "data/gfx-flags.txt"
 gfx_meta = "data/gfx-meta.txt"
 ```
 
@@ -201,7 +203,7 @@ The bundle does not grant runtime filesystem access: global `require` and
 ## Import PNG sprite assets
 
 Repeat `[[sprites]]` for each tile-aligned image. Width and height must be
-nonzero multiples of 8; `tile = [x, y]` is an explicit location on the 16x16
+nonzero multiples of 8; `tile = [x, y]` is an explicit location on the 32x32
 tile sheet. Placements may not overlap and must fit. Names are stable
 `[a-z0-9_]+` identifiers, and manifest order never controls placement.
 
@@ -261,9 +263,12 @@ the executable layered-scene example
 
 The section body formats are unchanged from a cart:
 
-- `sprites`: 128 palette characters per row when preserving a raw sheet instead
+- `sprites`: up to 256 palette characters per row when preserving a raw sheet instead
   of assembling named PNG assets;
-- `map`: up to 64 rows of up to 128 two-digit hexadecimal tile IDs;
+- `map`: a leading `# map-format=hex3` marker, then up to 64 rows of up to 128
+  three-digit hexadecimal tile IDs (`000`–`3ff`);
+- `gfx_flags`: up to 32 rows of 32 two-digit hexadecimal flag bytes, in the
+  same row-major order as the 32x32 tile sheet;
 - `gfx_meta`: named `sprite` and `anim` declarations;
 - `instruments`: reusable voices, wavetables, master processing, and echo;
 - `sfx`: note rows grouped by numeric effect ID;
@@ -271,7 +276,8 @@ The section body formats are unchanged from a cart:
 
 These bodies may live in independent `[sections]` files or the three audio
 bodies may share a versioned `[audio].bundle`. The compiler emits native
-sections in canonical order and unknown sections in name order. It normalizes
+sections in canonical order (`map`, then `gfx_flags`, then `gfx_meta`) and
+unknown sections in name order. It normalizes
 line endings, adds one final newline per section, parses the complete result,
 and only then publishes it.
 

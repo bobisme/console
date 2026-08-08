@@ -16,7 +16,10 @@
 
 use std::collections::BTreeMap;
 
-use console_core::{Cart, MAP_H, MAP_W, SHEET_W, SPRITE_SIZE, SpriteSheet, TileMap};
+use console_core::{
+    Cart, MAP_CELL_HEX_DIGITS, MAP_FORMAT_MARKER, MAP_H, MAP_W, SHEET_W, SPRITE_SIZE, SpriteSheet,
+    TileId, TileMap,
+};
 use serde_json::{Value, json};
 
 use crate::sprite::view::{self, DEFAULT_ZOOM, Image};
@@ -42,9 +45,9 @@ impl Default for MapRenderOpts {
     }
 }
 
-/// The pixel-space rect on the 128x128 sheet for tile id `t`: sprite `t`'s
-/// own rect, same convention as sprite frame 0 (`(t%16*8, t//16*8)`).
-fn tile_rect(t: u8) -> (u32, u32, u32, u32) {
+/// The pixel-space rect on the 256x256 sheet for tile id `t`: sprite `t`'s
+/// own rect, same convention as sprite frame 0 (`(t%32*8, t//32*8)`).
+fn tile_rect(t: TileId) -> (u32, u32, u32, u32) {
     let per_row = (SHEET_W / SPRITE_SIZE as usize) as u32;
     let t = u32::from(t);
     (
@@ -116,7 +119,7 @@ pub fn render_tiles(
     Ok(canvas.finish(1))
 }
 
-/// Overlay each non-empty cell's tile id as two hex-digit glyphs (reusing
+/// Overlay each non-empty cell's tile id as three hex-digit glyphs (reusing
 /// the sprite tools' 3x5 `--indices` glyph font), scaled with `zoom` so the
 /// label stays legible without ever outgrowing its 8x8 cell, and inked by
 /// the same background-luminance rule `--indices` uses.
@@ -128,11 +131,16 @@ fn draw_cell_ids(
 ) {
     let (cx, cy, cw, ch) = region;
     let cell_px = 8 * zoom;
-    // Two 3-wide glyphs plus a 1-unit gap must fit in an 8*zoom cell; scaling
-    // with zoom (rather than a fixed size) keeps the label proportionate at
-    // both tiny and huge zoom levels instead of a hard "too small" cutoff.
+    // Three 3-wide glyphs and their gaps fit comfortably at ordinary zooms.
+    // At zoom=1 the advances overlap by one column so the exact 10-bit ID
+    // remains inside its 8-pixel cell instead of dropping the high digit.
     let scale = (zoom / 4).max(1);
-    let (glyph_w, glyph_h) = (7 * scale, 5 * scale);
+    let advance = if cell_px < 11 * scale {
+        2 * scale
+    } else {
+        4 * scale
+    };
+    let (glyph_w, glyph_h) = (3 * scale + 2 * advance, 5 * scale);
 
     for j in 0..ch {
         for i in 0..cw {
@@ -150,8 +158,9 @@ fn draw_cell_ids(
             };
             let gx = ox + cell_px.saturating_sub(glyph_w) / 2;
             let gy = oy + cell_px.saturating_sub(glyph_h) / 2;
-            draw_hex_glyph(canvas, gx, gy, (t >> 4) & 0xF, scale, ink);
-            draw_hex_glyph(canvas, gx + 4 * scale, gy, t & 0xF, scale, ink);
+            draw_hex_glyph(canvas, gx, gy, ((t >> 8) & 0xF) as u8, scale, ink);
+            draw_hex_glyph(canvas, gx + advance, gy, ((t >> 4) & 0xF) as u8, scale, ink);
+            draw_hex_glyph(canvas, gx + 2 * advance, gy, (t & 0xF) as u8, scale, ink);
         }
     }
 }
@@ -176,7 +185,7 @@ fn draw_hex_glyph(canvas: &mut view::Canvas, x: u32, y: u32, digit: u8, scale: u
     }
 }
 
-/// `map dump` — print `region` as hex rows, top to bottom, 2 lowercase hex
+/// `map dump` — print `region` as hex rows, top to bottom, 3 lowercase hex
 /// chars per cell (the `__map__` alphabet), preceded by a `#`-comment
 /// header naming the region's cell-space coordinates. The header is a
 /// comment specifically so `map dump | map poke --stdin` round-trips
@@ -191,12 +200,12 @@ pub fn dump(cart: &Cart, region: (u32, u32, u32, u32)) -> Result<String, String>
 pub fn dump_tiles(tiles: &TileMap, region: (u32, u32, u32, u32)) -> Result<String, String> {
     let (cx, cy, cw, ch) = region;
     super::validate_region(cx, cy, cw, ch)?;
-    let mut out = format!("# cx={cx} cy={cy} cw={cw} ch={ch}\n");
+    let mut out = format!("{MAP_FORMAT_MARKER}\n# cx={cx} cy={cy} cw={cw} ch={ch}\n");
     for j in 0..ch {
-        let mut row = String::with_capacity((cw * 2) as usize);
+        let mut row = String::with_capacity(cw as usize * MAP_CELL_HEX_DIGITS);
         for i in 0..cw {
             let t = tiles[((cy + j) as usize) * MAP_W + (cx + i) as usize];
-            row.push_str(&format!("{t:02x}"));
+            row.push_str(&format!("{t:03x}"));
         }
         out.push_str(&row);
         out.push('\n');
@@ -218,7 +227,7 @@ pub fn lint(cart: &Cart) -> Value {
 pub fn lint_tiles(cart: &Cart, tiles: &TileMap) -> Value {
     let sheet = cart.sprites();
 
-    let mut hist: BTreeMap<u8, u32> = BTreeMap::new();
+    let mut hist: BTreeMap<TileId, u32> = BTreeMap::new();
     let mut nonzero = 0u32;
     let mut bbox: Option<(u32, u32, u32, u32)> = None;
     for y in 0..MAP_H {
@@ -237,7 +246,7 @@ pub fn lint_tiles(cart: &Cart, tiles: &TileMap) -> Value {
         }
     }
 
-    let mut counts: Vec<(u8, u32)> = hist.into_iter().collect();
+    let mut counts: Vec<(TileId, u32)> = hist.into_iter().collect();
     counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
     let top: Vec<Value> = counts
@@ -272,7 +281,7 @@ pub fn lint_tiles(cart: &Cart, tiles: &TileMap) -> Value {
 /// True when every pixel of tile `t`'s 8x8 sheet rect is color 0 — a tile
 /// referenced by the map but never actually drawn on the sheet, almost
 /// always a typo'd id (transposed digits, off-by-one).
-fn sprite_region_is_blank(sheet: &SpriteSheet, t: u8) -> bool {
+fn sprite_region_is_blank(sheet: &SpriteSheet, t: TileId) -> bool {
     let (x0, y0, w, h) = tile_rect(t);
     (0..h)
         .all(|dy| (0..w).all(|dx| sheet[((y0 + dy) as usize) * SHEET_W + (x0 + dx) as usize] == 0))

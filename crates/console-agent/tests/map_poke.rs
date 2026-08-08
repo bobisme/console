@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use console_agent::map::transform::cli_poke;
 use console_agent::map::view;
-use console_core::Cart;
+use console_core::{Cart, MAP_FORMAT_MARKER};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -39,6 +39,8 @@ fn cart(map_rows: &[&str]) -> String {
     let mut s = String::from("__lua__\nfunction _init() end\n\n");
     if !map_rows.is_empty() {
         s.push_str("__map__\n");
+        s.push_str(MAP_FORMAT_MARKER);
+        s.push('\n');
         for row in map_rows {
             s.push_str(row);
             s.push('\n');
@@ -47,19 +49,28 @@ fn cart(map_rows: &[&str]) -> String {
     s
 }
 
-/// A full 128-cell (256 hex char) row with `segments` (cell offset, hex
-/// pair text) overlaid on an all-zero background — the shape every changed
+/// A full 128-cell (384 hex char) row with `segments` (cell offset, hex
+/// triplet text) overlaid on an all-zero background — the shape every changed
 /// map row takes, since the rewrite always re-encodes a touched row at full
 /// map width.
-fn row256(segments: &[(usize, &str)]) -> String {
-    let mut chars = vec!['0'; 256];
+fn row384(segments: &[(usize, &str)]) -> String {
+    let mut chars = vec!['0'; 384];
     for (cell_offset, text) in segments {
-        let start = cell_offset * 2;
+        let start = cell_offset * 3;
         for (i, c) in text.chars().enumerate() {
             chars[start + i] = c;
         }
     }
     chars.into_iter().collect()
+}
+
+fn map_rows(text: &str) -> Vec<&str> {
+    text.split("__map__\n")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect()
 }
 
 // ---------------------------------------------------------------------
@@ -68,20 +79,21 @@ fn row256(segments: &[(usize, &str)]) -> String {
 
 #[test]
 fn dump_prints_header_and_rows() {
-    let text = cart(&["01020304", "0a0b0c0d"]);
+    let text = cart(&["001002003004", "00a00b00c00d"]);
     let cart_parsed = Cart::parse(&text).unwrap();
 
     let out = view::dump(&cart_parsed, (0, 0, 4, 2)).expect("dump region");
     let mut lines = out.lines();
+    assert_eq!(lines.next().unwrap(), MAP_FORMAT_MARKER);
     assert_eq!(lines.next().unwrap(), "# cx=0 cy=0 cw=4 ch=2");
-    assert_eq!(lines.next().unwrap(), "01020304");
-    assert_eq!(lines.next().unwrap(), "0a0b0c0d");
+    assert_eq!(lines.next().unwrap(), "001002003004");
+    assert_eq!(lines.next().unwrap(), "00a00b00c00d");
     assert!(lines.next().is_none());
 }
 
 #[test]
 fn dump_rejects_out_of_bounds_region() {
-    let text = cart(&["01"]);
+    let text = cart(&["001"]);
     let cart_parsed = Cart::parse(&text).unwrap();
     let err = view::dump(&cart_parsed, (127, 0, 4, 1)).unwrap_err();
     assert!(err.contains("outside"), "{err}");
@@ -93,33 +105,33 @@ fn dump_rejects_out_of_bounds_region() {
 
 #[test]
 fn poke_rows_overwrites_the_region() {
-    let text = cart(&["00000000", "00000000"]);
+    let text = cart(&["000000000000", "000000000000"]);
     let path = temp_cart("poke-basic", &text);
 
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
         "0,0,4,2",
         "--rows",
-        "01020304,0a0b0c0d",
+        "001002003004,00a00b00c00d",
     ]));
     assert_eq!(code, 0);
 
     let out = read(&path);
-    let rows: Vec<&str> = out.split("__map__\n").nth(1).unwrap().lines().collect();
-    assert_eq!(rows[0], row256(&[(0, "01020304")]));
-    assert_eq!(rows[1], row256(&[(0, "0a0b0c0d")]));
+    let rows = map_rows(&out);
+    assert_eq!(rows[0], row384(&[(0, "001002003004")]));
+    assert_eq!(rows[1], row384(&[(0, "00a00b00c00d")]));
 }
 
 #[test]
 fn poke_only_rewrites_rows_that_actually_changed() {
-    let rows: Vec<String> = (0..4u32).map(|y| format!("{y:02x}{y:02x}")).collect();
+    let rows: Vec<String> = (0..4u32).map(|y| format!("{y:03x}{y:03x}")).collect();
     let row_refs: Vec<&str> = rows.iter().map(String::as_str).collect();
     let text = cart(&row_refs);
     let path = temp_cart("poke-selective", &text);
 
     // Same content, except row 2 changes.
     let mut new_rows = rows.clone();
-    new_rows[2] = "aaaa".to_string();
+    new_rows[2] = "0aa0aa".to_string();
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
         "0,0,2,4",
@@ -128,26 +140,26 @@ fn poke_only_rewrites_rows_that_actually_changed() {
     ]));
     assert_eq!(code, 0);
 
-    let before: Vec<&str> = text.split("__map__\n").nth(1).unwrap().lines().collect();
+    let before = map_rows(&text);
     let out = read(&path);
-    let after: Vec<&str> = out.split("__map__\n").nth(1).unwrap().lines().collect();
+    let after = map_rows(&out);
     let changed: Vec<usize> = (0..before.len())
         .filter(|&i| before[i] != after[i])
         .collect();
     assert_eq!(changed, vec![2], "only row 2 actually changed");
-    assert_eq!(after[2], row256(&[(0, "aaaa")]));
+    assert_eq!(after[2], row384(&[(0, "0aa0aa")]));
 }
 
 #[test]
 fn poke_identical_rows_is_a_legal_noop() {
-    let text = cart(&["a0000000"]);
+    let text = cart(&["0a0000000000"]);
     let path = temp_cart("poke-noop", &text);
 
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
         "0,0,4,1",
         "--rows",
-        "a0000000",
+        "0a0000000000",
     ]));
     assert_eq!(code, 0);
     assert_eq!(
@@ -159,35 +171,29 @@ fn poke_identical_rows_is_a_legal_noop() {
 
 #[test]
 fn poke_default_region_targets_the_used_extent() {
-    let text = cart(&["01020000"]);
+    let text = cart(&["001002000000"]);
     let path = temp_cart("poke-default-region", &text);
 
     // Omit the region: it must resolve to the used extent, cx=0 cy=0 cw=2 ch=1
     // (cells 0 and 1 are the only non-zero ones).
-    let code = cli_poke(&args(&[path.to_str().unwrap(), "--rows", "0a0b"]));
+    let code = cli_poke(&args(&[path.to_str().unwrap(), "--rows", "00a00b"]));
     assert_eq!(code, 0);
 
     let out = read(&path);
-    let row0 = out
-        .split("__map__\n")
-        .nth(1)
-        .unwrap()
-        .lines()
-        .next()
-        .unwrap();
-    assert_eq!(row0, row256(&[(0, "0a0b")]));
+    let row0 = map_rows(&out)[0];
+    assert_eq!(row0, row384(&[(0, "00a00b")]));
 }
 
 #[test]
 fn poke_dry_run_leaves_the_file_untouched_and_prints_report() {
-    let text = cart(&["00000000"]);
+    let text = cart(&["000000000000"]);
     let path = temp_cart("poke-dry-run", &text);
 
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
         "0,0,4,1",
         "--rows",
-        "a0000000",
+        "0a0000000000",
         "--dry-run",
     ]));
     assert_eq!(code, 0);
@@ -208,7 +214,7 @@ fn poke_creates_the_map_section_when_absent() {
         path.to_str().unwrap(),
         "0,0,2,1",
         "--rows",
-        "1f2a",
+        "01f02a",
     ]));
     assert_eq!(code, 0);
 
@@ -227,7 +233,7 @@ fn poke_inserts_new_section_after_sprites_before_gfx_meta() {
     let text = "__lua__\nfunction _init() end\n\n__sprites__\na0000000\n\n__gfx_meta__\nsprite p rect=0,0 size=1x1\n";
     let path = temp_cart("poke-section-order", text);
 
-    let code = cli_poke(&args(&[path.to_str().unwrap(), "0,0,1,1", "--rows", "05"]));
+    let code = cli_poke(&args(&[path.to_str().unwrap(), "0,0,1,1", "--rows", "005"]));
     assert_eq!(code, 0);
 
     let out = read(&path);
@@ -246,7 +252,7 @@ fn poke_inserts_new_section_after_sprites_before_gfx_meta() {
 
 #[test]
 fn poke_wrong_row_count_errors_without_modifying_file() {
-    let text = cart(&["00000000", "00000000"]);
+    let text = cart(&["000000000000", "000000000000"]);
     let path = temp_cart("poke-err-count", &text);
     let before = read(&path);
 
@@ -255,7 +261,7 @@ fn poke_wrong_row_count_errors_without_modifying_file() {
         path.to_str().unwrap(),
         "0,0,4,2",
         "--rows",
-        "01020304",
+        "001002003004",
     ]));
     assert_ne!(code, 0);
     assert_eq!(read(&path), before);
@@ -263,11 +269,11 @@ fn poke_wrong_row_count_errors_without_modifying_file() {
 
 #[test]
 fn poke_wrong_row_length_errors_naming_expected_and_got() {
-    let text = cart(&["00000000"]);
+    let text = cart(&["000000000000"]);
     let path = temp_cart("poke-err-length", &text);
     let before = read(&path);
 
-    // Region is 4 cells wide (8 hex chars), row is only 4 chars.
+    // Region is 4 cells wide (12 hex chars), row is only 4 chars.
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
         "0,0,4,1",
@@ -280,7 +286,7 @@ fn poke_wrong_row_length_errors_naming_expected_and_got() {
 
 #[test]
 fn poke_bad_hex_char_errors_without_modifying_file() {
-    let text = cart(&["00000000"]);
+    let text = cart(&["000000000000"]);
     let path = temp_cart("poke-err-hex", &text);
     let before = read(&path);
 
@@ -288,7 +294,7 @@ fn poke_bad_hex_char_errors_without_modifying_file() {
         path.to_str().unwrap(),
         "0,0,4,1",
         "--rows",
-        "00zz0000",
+        "000zz000000",
     ]));
     assert_ne!(code, 0);
     assert_eq!(read(&path), before, "file must be untouched on error");
@@ -296,7 +302,7 @@ fn poke_bad_hex_char_errors_without_modifying_file() {
 
 #[test]
 fn poke_out_of_bounds_region_errors_without_modifying_file() {
-    let text = cart(&["00"]);
+    let text = cart(&["000"]);
     let path = temp_cart("poke-err-region", &text);
     let before = read(&path);
 
@@ -304,7 +310,7 @@ fn poke_out_of_bounds_region_errors_without_modifying_file() {
         path.to_str().unwrap(),
         "127,0,4,1",
         "--rows",
-        "01020304",
+        "001002003004",
     ]));
     assert_ne!(code, 0);
     assert_eq!(read(&path), before);
@@ -312,7 +318,7 @@ fn poke_out_of_bounds_region_errors_without_modifying_file() {
 
 #[test]
 fn poke_requires_rows_or_stdin() {
-    let text = cart(&["00000000"]);
+    let text = cart(&["000000000000"]);
     let path = temp_cart("poke-err-no-source", &text);
     let before = read(&path);
 
@@ -323,7 +329,7 @@ fn poke_requires_rows_or_stdin() {
 
 #[test]
 fn poke_rejects_both_rows_and_stdin() {
-    let text = cart(&["00000000"]);
+    let text = cart(&["000000000000"]);
     let path = temp_cart("poke-err-both-sources", &text);
     let before = read(&path);
 
@@ -331,7 +337,7 @@ fn poke_rejects_both_rows_and_stdin() {
         path.to_str().unwrap(),
         "0,0,4,1",
         "--rows",
-        "00000000",
+        "000000000000",
         "--stdin",
     ]));
     assert_ne!(code, 0);
@@ -344,13 +350,16 @@ fn poke_rejects_both_rows_and_stdin() {
 
 #[test]
 fn dump_then_poke_is_a_noop() {
-    let text = cart(&["12345678", "9abcdef0", "fedcba98"]);
+    let text = cart(&["012034056078", "09a0bc0de0f0", "0fe0dc0ba098"]);
     let path = temp_cart("roundtrip-dump-then-poke", &text);
 
     let cart_parsed = Cart::parse(&text).unwrap();
     let dumped = view::dump(&cart_parsed, (0, 0, 4, 3)).expect("dump region");
     let dumped_rows: Vec<&str> = dumped.lines().filter(|l| !l.starts_with('#')).collect();
-    assert_eq!(dumped_rows, ["12345678", "9abcdef0", "fedcba98"]);
+    assert_eq!(
+        dumped_rows,
+        ["012034056078", "09a0bc0de0f0", "0fe0dc0ba098"]
+    );
 
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
@@ -368,14 +377,14 @@ fn dump_then_poke_is_a_noop() {
 
 #[test]
 fn poke_then_dump_round_trips() {
-    let text = cart(&["00000000", "00000000"]);
+    let text = cart(&["000000000000", "000000000000"]);
     let path = temp_cart("roundtrip-poke-then-dump", &text);
 
     let code = cli_poke(&args(&[
         path.to_str().unwrap(),
         "0,0,4,2",
         "--rows",
-        "11223344,55667788",
+        "011022033044,055066077088",
     ]));
     assert_eq!(code, 0);
 
@@ -383,7 +392,7 @@ fn poke_then_dump_round_trips() {
     let out_cart = Cart::parse(&out_text).unwrap();
     let dumped = view::dump(&out_cart, (0, 0, 4, 2)).expect("dump after poke");
     let dumped_rows: Vec<&str> = dumped.lines().filter(|l| !l.starts_with('#')).collect();
-    assert_eq!(dumped_rows, ["11223344", "55667788"]);
+    assert_eq!(dumped_rows, ["011022033044", "055066077088"]);
 }
 
 // ---------------------------------------------------------------------
@@ -394,7 +403,7 @@ fn poke_then_dump_round_trips() {
 fn poke_stdin_reads_rows_and_skips_comment_lines() {
     use std::io::Write;
 
-    let text = cart(&["00000000", "00000000"]);
+    let text = cart(&["000000000000", "000000000000"]);
     let path = temp_cart("poke-stdin", &text);
 
     let bin = env!("CARGO_BIN_EXE_console");
@@ -406,7 +415,7 @@ fn poke_stdin_reads_rows_and_skips_comment_lines() {
         .spawn()
         .expect("spawn console");
 
-    let stdin_rows = "# cx=0 cy=0 cw=4 ch=2\na1b2c3d4\ne5f60708\n";
+    let stdin_rows = "# map-format=hex3\n# cx=0 cy=0 cw=4 ch=2\n0a10b20c30d4\n0e50f6007008\n";
     child
         .stdin
         .take()
@@ -421,16 +430,16 @@ fn poke_stdin_reads_rows_and_skips_comment_lines() {
     );
 
     let out = read(&path);
-    let rows: Vec<&str> = out.split("__map__\n").nth(1).unwrap().lines().collect();
-    assert_eq!(rows[0], row256(&[(0, "a1b2c3d4")]));
-    assert_eq!(rows[1], row256(&[(0, "e5f60708")]));
+    let rows = map_rows(&out);
+    assert_eq!(rows[0], row384(&[(0, "0a10b20c30d4")]));
+    assert_eq!(rows[1], row384(&[(0, "0e50f6007008")]));
 }
 
 #[test]
 fn real_dump_piped_into_real_poke_is_a_noop() {
     use std::io::Write;
 
-    let text = cart(&["cafebabe", "deadbeef"]);
+    let text = cart(&["0ca0fe0ba0be", "0de0ad0be0ef"]);
     let path = temp_cart("roundtrip-real-pipe", &text);
     let before = read(&path);
 

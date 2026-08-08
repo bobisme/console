@@ -230,7 +230,8 @@ spr(n, x, y, [w=1], [h=1], [flip_x=false], [flip_y=false])
 ```
 
 Draw the `w×h` block of 8×8 tiles beginning at tile ID `n`; `(x,y)` is the
-top-left destination. Tile rows follow the 16-tiles-wide sheet. Source colors
+top-left destination. Tile rows follow the 32-tiles-wide sheet (IDs 0–1023).
+Source colors
 marked transparent by `palt` are skipped before the draw palette remap. Color 0
 is transparent by default.
 
@@ -296,10 +297,16 @@ pixels inside the destination rect but does not move/mirror the anchor.
 |---|---|
 | `map([cel_x=0],[cel_y=0],[sx=0],[sy=0],[cel_w=128],[cel_h=64])` | Draw a source cell block at screen/world destination `(sx,sy)`. Bare `map()` draws the full map. Tile 0 is skipped. |
 | `mget(cx,cy)` | Read a live map tile ID; off-map returns 0. Coordinates floor. |
-| `mset(cx,cy,[v=0])` | Write the live map; value floors/masks to 0–255. Off-map is a no-op. |
+| `mset(cx,cy,[v=0])` | Write the live map; value floors and must be 0–1023. Invalid IDs error instead of wrapping. Off-map is a no-op. |
+| `fget(n,[bit])` | Read tile `n`'s full 8-bit flag byte, or boolean bit 0–7. |
+| `fset(n,flags)` | Replace tile `n`'s runtime flag byte (0–255). |
+| `fset(n,bit,value)` | Set/clear one runtime flag bit; `value` uses Lua truthiness. |
 
 `map` is a sequence of sprite draws, so camera, clip, `pal`, and `palt` apply.
 `mset` mutations persist across frames and reproduce through replay.
+Flags are initialized by optional `__gfx_flags__`, have no engine-defined
+meaning, and are likewise runtime state. Tile IDs outside 0–1023, bits outside
+0–7, and whole flag bytes outside 0–255 are hard Lua errors.
 
 ## Persistent draw state
 

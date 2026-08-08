@@ -14,18 +14,19 @@
 use std::collections::BTreeMap;
 
 use crate::error::Error;
+use crate::gfx::SHEET_TILES;
 
-/// Sheet edge length in tiles (128px sheet / 8px tiles).
-const TILE_GRID: u8 = 16;
+/// Sheet edge length in tiles (256px sheet / 8px tiles).
+const TILE_GRID: u8 = SHEET_TILES as u8;
 
 /// One `sprite <name> rect=<tx>,<ty> size=<w>x<h> [anchor=<px>,<py>]` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteDef {
     /// `[a-z0-9_]+`, unique within the cart.
     pub name: String,
-    /// Top-left tile coordinate, `(tx, ty)`, each `0..=15`.
+    /// Top-left tile coordinate, `(tx, ty)`, each `0..=31`.
     pub rect: (u8, u8),
-    /// Size in tiles, `(w, h)`, each `1..=16`.
+    /// Size in tiles, `(w, h)`, each `1..=32`.
     pub size: (u8, u8),
     /// Pixel offset from the sprite's top-left, relative to which frames are
     /// authored and aligned. Outside the sprite's own pixel bounds is legal
@@ -34,15 +35,15 @@ pub struct SpriteDef {
 }
 
 impl SpriteDef {
-    /// Pixel-space rect `(x, y, w_px, h_px)` on the 128x128 sheet for
+    /// Pixel-space rect `(x, y, w_px, h_px)` on the 256x256 sheet for
     /// animation frame `i`, per the SPEC wrap formula:
     ///
     /// ```text
-    /// tx' = (tx + i*w) % 16
-    /// ty' = ty + ((tx + i*w) / 16) * h
+    /// tx' = (tx + i*w) % 32
+    /// ty' = ty + ((tx + i*w) / 32) * h
     /// ```
     ///
-    /// Returns `None` when the resolved rect does not fit the 16x16 tile
+    /// Returns `None` when the resolved rect does not fit the 32x32 tile
     /// sheet (either edge would spill past it).
     ///
     /// This is the sprite's OWN rect used as the frame-run origin — the
@@ -59,7 +60,7 @@ impl SpriteDef {
 /// The wrap-displacement math shared by [`SpriteDef::frame_rect`] and anim
 /// frame resolution: frame `i` is the `size` rect displaced `i` widths to
 /// the right of `origin`, wrapping down a row band. `None` when the
-/// resolved rect does not fit the 16x16 tile sheet.
+/// resolved rect does not fit the 32x32 tile sheet.
 fn wrap_frame_rect(origin: (u8, u8), size: (u8, u8), i: u8) -> Option<(u32, u32, u32, u32)> {
     let (tx, ty) = (u32::from(origin.0), u32::from(origin.1));
     let (w, h) = (u32::from(size.0), u32::from(size.1));
@@ -76,7 +77,7 @@ fn wrap_frame_rect(origin: (u8, u8), size: (u8, u8), i: u8) -> Option<(u32, u32,
 
 /// An explicit `tx:ty` frame: the sprite's `size` rect anchored directly at
 /// tile `(tx, ty)`, no wrap math, no relation to the sprite's own rect or
-/// any `frames_rect`. `None` when it does not fit the 16x16 tile sheet.
+/// any `frames_rect`. `None` when it does not fit the 32x32 tile sheet.
 fn explicit_frame_rect(tile: (u8, u8), size: (u8, u8)) -> Option<(u32, u32, u32, u32)> {
     let (tx, ty) = (u32::from(tile.0), u32::from(tile.1));
     let (w, h) = (u32::from(size.0), u32::from(size.1));
@@ -149,7 +150,7 @@ impl AnimDef {
     /// everywhere. `sprite` must be the anim's own sprite
     /// (`GfxMeta::sprite(&self.sprite)`); passing a different one produces
     /// nonsense. Returns `None` for an out-of-range `pos` or a frame that
-    /// does not fit the 16x16 tile sheet.
+    /// does not fit the 32x32 tile sheet.
     pub fn resolve_frame(&self, sprite: &SpriteDef, pos: usize) -> Option<(u32, u32, u32, u32)> {
         let spec = *self.frames.get(pos)?;
         resolve_frame_spec(spec, sprite, self.frames_rect)
@@ -302,7 +303,7 @@ impl GfxMeta {
                     return Err(cart_err(
                         raw_anim.line,
                         format!(
-                            "anim {:?} frame {pos} ({desc}) falls outside the 16x16 tile sheet",
+                            "anim {:?} frame {pos} ({desc}) falls outside the 32x32 tile sheet",
                             raw_anim.name
                         ),
                     ));
@@ -617,10 +618,11 @@ mod tests {
         let p = meta.sprite("p").unwrap();
         assert_eq!(p.frame_rect(0), Some((8, 0, 8, 8)));
         assert_eq!(p.frame_rect(1), Some((16, 0, 8, 8)));
-        // tx=1 + 15*1 = 16 -> wraps to tx'=0, ty'=1 band.
-        assert_eq!(p.frame_rect(15), Some((0, 8, 8, 8)));
-        // Off the bottom of the sheet.
-        assert_eq!(p.frame_rect(255), None);
+        // tx=1 + 31*1 = 32 -> wraps to tx'=0, ty'=1 band.
+        assert_eq!(p.frame_rect(31), Some((0, 8, 8, 8)));
+        // A u8 frame index remains addressable from the top of this larger
+        // atlas (frame 255 lands in tile row 8).
+        assert_eq!(p.frame_rect(255), Some((0, 64, 8, 8)));
     }
 
     // -----------------------------------------------------------------
@@ -632,7 +634,7 @@ mod tests {
         // Back-compat: no frames_rect, all-index frames behave exactly like
         // before this bone.
         let meta = GfxMeta::parse(Some(
-            "sprite p rect=1,0 size=1x1\nanim p.a frames=0,1,15 fps=4 loop\n",
+            "sprite p rect=1,0 size=1x1\nanim p.a frames=0,1,31 fps=4 loop\n",
         ))
         .unwrap();
         let a = meta.anim("p.a").unwrap();
@@ -642,7 +644,7 @@ mod tests {
             vec![
                 FrameSpec::Index(0),
                 FrameSpec::Index(1),
-                FrameSpec::Index(15)
+                FrameSpec::Index(31)
             ]
         );
         assert_eq!(a.frames_rect, None);
@@ -673,12 +675,12 @@ mod tests {
         // Origin near the right edge: frame 1 should wrap to the next row
         // band, exactly like the sprite's-own-rect case does.
         let meta = GfxMeta::parse(Some(
-            "sprite p rect=0,0 size=1x1\nanim p.a frames=0,1 fps=4 frames_rect=15,2\n",
+            "sprite p rect=0,0 size=1x1\nanim p.a frames=0,1 fps=4 frames_rect=31,2\n",
         ))
         .unwrap();
         let a = meta.anim("p.a").unwrap();
         let p = meta.sprite("p").unwrap();
-        assert_eq!(a.resolve_frame(p, 0), Some((15 * 8, 2 * 8, 8, 8)));
+        assert_eq!(a.resolve_frame(p, 0), Some((31 * 8, 2 * 8, 8, 8)));
         assert_eq!(a.resolve_frame(p, 1), Some((0, 3 * 8, 8, 8)));
     }
 
@@ -709,7 +711,7 @@ mod tests {
     #[test]
     fn frames_rect_off_sheet_is_a_parse_error() {
         let err = GfxMeta::parse(Some(
-            "sprite p rect=0,0 size=2x2\nanim p.a frames=0 fps=4 frames_rect=15,15\n",
+            "sprite p rect=0,0 size=2x2\nanim p.a frames=0 fps=4 frames_rect=31,31\n",
         ))
         .unwrap_err();
         let msg = err.to_string();
@@ -719,16 +721,16 @@ mod tests {
 
     #[test]
     fn explicit_tile_frame_off_sheet_is_a_parse_error() {
-        // Sprite is 2x2 tiles; explicit tile (15,15) is a valid in-range
+        // Sprite is 2x2 tiles; explicit tile (31,31) is a valid in-range
         // coordinate on its own but the 2x2 rect anchored there spills past
         // the sheet edge.
         let err = GfxMeta::parse(Some(
-            "sprite p rect=0,0 size=2x2\nanim p.a frames=0,15:15 fps=4\n",
+            "sprite p rect=0,0 size=2x2\nanim p.a frames=0,31:31 fps=4\n",
         ))
         .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("p.a"), "{msg}");
-        // Position 1 (0-based) is the offending 15:15 entry.
+        // Position 1 (0-based) is the offending 31:31 entry.
         assert!(msg.contains("frame 1"), "{msg}");
     }
 

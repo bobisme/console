@@ -102,7 +102,7 @@ name = "layered_subset"
 seed = 91
 
 [atlas]
-origin = [8, 8]
+origin = [28, 30]
 size = [4, 2]
 mapping = "{mapping}"
 alpha_threshold = 128
@@ -284,6 +284,15 @@ fn scene_compile_exercises_semantics_metatiles_autotiles_variants_and_review_out
     assert_eq!(report["mapping"], "exact");
     assert_eq!(report["atlas"]["capacity"], 8);
     assert!(report["atlas"]["used"].as_u64().unwrap() < 8);
+    assert!(
+        report["atlas"]["tiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|tile| tile["id"].as_u64().unwrap() > 255),
+        "fixture must exercise wide tile IDs: {}",
+        report["atlas"]["tiles"]
+    );
     assert_eq!(report["map"]["autotile_cells"], 2);
     assert_eq!(report["map"]["variant_cells"], 4);
     assert_eq!(report["map"]["stamps"], 1);
@@ -334,6 +343,13 @@ fn scene_compile_exercises_semantics_metatiles_autotiles_variants_and_review_out
             "{file} must be byte-stable"
         );
     }
+    let map_text = fs::read_to_string(first.join("map.txt")).unwrap();
+    assert!(map_text.starts_with("# map-format=hex3\n"), "{map_text}");
+    assert!(map_text.lines().skip(1).any(|line| {
+        line.as_bytes().chunks_exact(3).any(|digits| {
+            u16::from_str_radix(std::str::from_utf8(digits).unwrap(), 16).unwrap() > 255
+        })
+    }));
     let atlas =
         console_agent::palette::decode_png_rgba(&fs::read(first.join("atlas.png")).unwrap())
             .unwrap();
@@ -683,7 +699,7 @@ fn invalid_capacity_paths_masks_bounds_and_anchors_publish_nothing() {
             "atlas-overflow",
             "size = [4, 2]",
             "size = [4294967295, 2]",
-            "falls outside the 16x16 sheet",
+            "falls outside the 32x32 sheet",
         ),
         (
             "mask",

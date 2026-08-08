@@ -11,7 +11,7 @@
 //! the specific hex rows whose cells actually changed. Every other byte of
 //! the cart file survives verbatim.
 //!
-//! Changed rows are always rewritten at the full 128-cell (256 hex char)
+//! Changed rows are always rewritten at the full 128-cell (384 hex char)
 //! width, matching `sprite::transform::encode_row`'s convention: a touched
 //! row may grow past whatever short form it had, but the rewrite still only
 //! touches the specific file lines whose cells actually changed.
@@ -26,7 +26,9 @@
 //! `Cart::parse` before anything is written to disk; a parse failure aborts
 //! with no write.
 
-use console_core::{Cart, MAP_H, MAP_W, TileMap};
+use console_core::{
+    Cart, MAP_CELL_HEX_DIGITS, MAP_FORMAT_MARKER, MAP_H, MAP_W, TILE_ID_MAX, TileId, TileMap,
+};
 
 use super::{parse_region, validate_region};
 
@@ -38,7 +40,7 @@ pub const POKE_USAGE: &str = "\
 usage:
   console map poke <cart> [cx,cy,cw,ch] --rows <hex,hex,...> [--dry-run]
   console map poke <cart> [cx,cy,cw,ch] --stdin [--dry-run]
-  (rows run top to bottom, one per region row, each exactly 2*cw hex digits;
+  (rows run top to bottom, one per region row, each exactly 3*cw hex digits;
    with --stdin, lines starting with '#' are skipped, so `map dump`'s own
    output pipes straight into `--stdin`; region defaults to the used extent
    when omitted)";
@@ -128,32 +130,37 @@ fn run_poke(text: &str, region_arg: Option<&str>, rows: &[String]) -> Result<Edi
             rows.len()
         ));
     }
-    let mut values = vec![0u8; cw_us * ch_us];
+    let mut values = vec![0 as TileId; cw_us * ch_us];
     for (j, row) in rows.iter().enumerate() {
         let bytes = row.as_bytes();
-        if bytes.len() != cw_us * 2 {
+        if bytes.len() != cw_us * MAP_CELL_HEX_DIGITS {
             return Err(format!(
-                "poke: row {j}: region is {cw} cell(s) wide, expected {} hex char(s) (2 per cell), got {} ({row:?})",
-                cw_us * 2,
+                "poke: row {j}: region is {cw} cell(s) wide, expected {} hex char(s) ({MAP_CELL_HEX_DIGITS} per cell), got {} ({row:?})",
+                cw_us * MAP_CELL_HEX_DIGITS,
                 bytes.len()
             ));
         }
         for i in 0..cw_us {
-            let hi = (bytes[i * 2] as char).to_digit(16).ok_or_else(|| {
-                format!(
-                    "poke: row {j}: invalid hex digit {:?} at column {} ({row:?})",
-                    bytes[i * 2] as char,
-                    i * 2
-                )
-            })?;
-            let lo = (bytes[i * 2 + 1] as char).to_digit(16).ok_or_else(|| {
-                format!(
-                    "poke: row {j}: invalid hex digit {:?} at column {} ({row:?})",
-                    bytes[i * 2 + 1] as char,
-                    i * 2 + 1
-                )
-            })?;
-            values[j * cw_us + i] = (hi * 16 + lo) as u8;
+            let start = i * MAP_CELL_HEX_DIGITS;
+            let value = bytes[start..start + MAP_CELL_HEX_DIGITS]
+                .iter()
+                .enumerate()
+                .try_fold(0 as TileId, |value, (offset, &digit)| {
+                    let nibble = (digit as char).to_digit(16).ok_or_else(|| {
+                        format!(
+                            "poke: row {j}: invalid hex digit {:?} at column {} ({row:?})",
+                            digit as char,
+                            start + offset
+                        )
+                    })?;
+                    Ok::<TileId, String>(value * 16 + nibble as TileId)
+                })?;
+            if value > TILE_ID_MAX {
+                return Err(format!(
+                    "poke: row {j}: tile id {value:03x} at cell {i} exceeds {TILE_ID_MAX:03x}"
+                ));
+            }
+            values[j * cw_us + i] = value;
         }
     }
 
@@ -178,7 +185,7 @@ usage:
   console map edit <cart> fill  <cx,cy,cw,ch> <tile-hex> [--dry-run]
   console map edit <cart> clear <cx,cy,cw,ch> [--dry-run]
   (region is required and explicit -- unlike render/dump/poke it never
-   defaults to the used extent; tile ids are 1-2 hex digits, 00-ff, the
+   defaults to the used extent; tile ids are 1-3 hex digits, 000-3ff, the
    __map__ alphabet; shift drops cells that fall off the region and fills
    vacated cells with tile 0)";
 
@@ -261,13 +268,19 @@ fn required_region(s: &str) -> Result<(u32, u32, u32, u32), String> {
     Ok((cx, cy, cw, ch))
 }
 
-fn parse_tile_hex(s: &str) -> Result<u8, String> {
+fn parse_tile_hex(s: &str) -> Result<TileId, String> {
     let hex = s
         .strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
         .unwrap_or(s);
-    u8::from_str_radix(hex, 16)
-        .map_err(|e| format!("bad tile id {s:?} (want 1-2 hex digits, 00-ff): {e}"))
+    let tile = TileId::from_str_radix(hex, 16)
+        .map_err(|e| format!("bad tile id {s:?} (want 1-3 hex digits, 000-3ff): {e}"))?;
+    if hex.is_empty() || hex.len() > MAP_CELL_HEX_DIGITS || tile > TILE_ID_MAX {
+        return Err(format!(
+            "bad tile id {s:?} (want 1-3 hex digits, 000-{TILE_ID_MAX:03x})"
+        ));
+    }
+    Ok(tile)
 }
 
 fn parse_point(s: &str) -> Result<(u32, u32), String> {
@@ -356,7 +369,7 @@ fn idx(cx: u32, cy: u32) -> usize {
 fn op_shift(tiles: &mut TileMap, region: (u32, u32, u32, u32), dx: i64, dy: i64) {
     let (cx0, cy0, cw, ch) = region;
     let (wi, hi) = (cw as i64, ch as i64);
-    let mut src = vec![0u8; (cw * ch) as usize];
+    let mut src = vec![0 as TileId; (cw * ch) as usize];
     for j in 0..ch {
         for i in 0..cw {
             src[(j * cw + i) as usize] = tiles[idx(cx0 + i, cy0 + j)];
@@ -375,7 +388,7 @@ fn op_shift(tiles: &mut TileMap, region: (u32, u32, u32, u32), dx: i64, dy: i64)
     }
 }
 
-fn op_fill(tiles: &mut TileMap, region: (u32, u32, u32, u32), tile: u8) {
+fn op_fill(tiles: &mut TileMap, region: (u32, u32, u32, u32), tile: TileId) {
     let (cx0, cy0, cw, ch) = region;
     for j in 0..ch {
         for i in 0..cw {
@@ -387,7 +400,7 @@ fn op_fill(tiles: &mut TileMap, region: (u32, u32, u32, u32), tile: u8) {
 fn op_copy(tiles: &mut TileMap, region: (u32, u32, u32, u32), dest: (u32, u32)) {
     let (cx0, cy0, cw, ch) = region;
     let (dcx, dcy) = dest;
-    let mut buf = vec![0u8; (cw * ch) as usize];
+    let mut buf = vec![0 as TileId; (cw * ch) as usize];
     for j in 0..ch {
         for i in 0..cw {
             buf[(j * cw + i) as usize] = tiles[idx(cx0 + i, cy0 + j)];
@@ -537,6 +550,18 @@ fn locate_map_layout(lines: &[&str]) -> (Vec<usize>, Option<usize>) {
     (row_lines, insert_at)
 }
 
+fn map_has_format_marker(lines: &[&str]) -> bool {
+    let mut in_map = false;
+    for raw in lines {
+        if let Some(name) = section_header(strip_cr(raw)) {
+            in_map = name == "map";
+        } else if in_map && strip_cr(raw).trim() == MAP_FORMAT_MARKER {
+            return true;
+        }
+    }
+    false
+}
+
 /// Where to splice a brand-new `__map__` section when the cart has none:
 /// right after the last `__sprites__` section's body ends, or — if there is
 /// no `__sprites__` section either — right before the first `__gfx_meta__`
@@ -599,14 +624,14 @@ fn splice_new_section(owned: &mut Vec<String>, pos: usize, header: &str, rows: V
 }
 
 fn encode_row(tiles: &TileMap, y: usize) -> String {
-    let mut s = String::with_capacity(MAP_W * 2);
+    let mut s = String::with_capacity(MAP_W * MAP_CELL_HEX_DIGITS);
     for x in 0..MAP_W {
-        s.push_str(&format!("{:02x}", tiles[y * MAP_W + x]));
+        s.push_str(&format!("{:03x}", tiles[y * MAP_W + x]));
     }
     s
 }
 
-fn row_slice(tiles: &TileMap, y: usize) -> &[u8] {
+fn row_slice(tiles: &TileMap, y: usize) -> &[TileId] {
     &tiles[y * MAP_W..(y + 1) * MAP_W]
 }
 
@@ -639,6 +664,7 @@ fn rewrite_map(
 
     let lines: Vec<&str> = text.split('\n').collect();
     let (row_lines, insert_at) = locate_map_layout(&lines);
+    let has_format_marker = map_has_format_marker(&lines);
     let mut owned: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
 
     for &y in &changed_rows {
@@ -655,7 +681,7 @@ fn rewrite_map(
 
     if max_row >= row_lines.len() {
         let append_from = row_lines.len();
-        let zero_row = "0".repeat(MAP_W * 2);
+        let zero_row = "0".repeat(MAP_W * MAP_CELL_HEX_DIGITS);
         let gap_rows: Vec<String> = (append_from..=max_row)
             .map(|y| {
                 if changed_rows.binary_search(&y).is_ok() {
@@ -669,13 +695,22 @@ fn rewrite_map(
         match insert_at {
             Some(pos) => {
                 let eol = eol_hint(&lines, Some(pos));
-                for (offset, row) in gap_rows.into_iter().enumerate() {
-                    owned.insert(pos + offset, format!("{row}{eol}"));
+                let row_offset = if !has_format_marker {
+                    owned.insert(pos, format!("{MAP_FORMAT_MARKER}{eol}"));
+                    1
+                } else {
+                    0
+                };
+                for (index, row) in gap_rows.into_iter().enumerate() {
+                    owned.insert(pos + row_offset + index, format!("{row}{eol}"));
                 }
             }
             None => {
                 let anchor = new_section_anchor(&lines);
-                splice_new_section(&mut owned, anchor, "__map__", gap_rows);
+                let mut marked_rows = Vec::with_capacity(gap_rows.len() + 1);
+                marked_rows.push(MAP_FORMAT_MARKER.to_string());
+                marked_rows.extend(gap_rows);
+                splice_new_section(&mut owned, anchor, "__map__", marked_rows);
             }
         }
     }
@@ -712,8 +747,8 @@ mod tests {
     #[test]
     fn rewrite_appends_new_section_when_absent() {
         let text = "__lua__\nfunction _init() end\n";
-        let old = [0u8; MAP_W * MAP_H];
-        let mut new = [0u8; MAP_W * MAP_H];
+        let old = [0 as TileId; MAP_W * MAP_H];
+        let mut new = [0 as TileId; MAP_W * MAP_H];
         new[0] = 5;
 
         let (new_text, report) = rewrite_map(text, &old, &new).expect("row 0 changed");
@@ -727,7 +762,7 @@ mod tests {
     #[test]
     fn rewrite_inserts_between_sprites_and_gfx_meta() {
         let text = "__lua__\nfunction _init() end\n\n__sprites__\na0000000\n\n__gfx_meta__\nsprite p rect=0,0 size=1x1\n";
-        let old = [0u8; MAP_W * MAP_H];
+        let old = [0 as TileId; MAP_W * MAP_H];
         let mut new = old;
         new[0] = 0x1f;
 

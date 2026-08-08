@@ -39,8 +39,12 @@ matter.
   sprites and tile 0 empty on maps.
 - Treat 8×8 as the addressable art unit, not the ideal size of every object.
   Favor roughly 16–24px silhouettes for primary actors on a phone display.
-- Budget the fixed 128×128 sprite sheet: 256 tile IDs shared by actors, terrain,
+- Budget the fixed 256×256 sprite sheet: 1024 tile IDs shared by actors, terrain,
   animation frames, and decorative variants.
+- Encode every nonempty `__map__` with the required `# map-format=hex3`
+  marker and three-digit IDs `000`–`3ff`; two-digit legacy rows are rejected.
+- Use `__gfx_flags__` plus `fget`/`fset` for cart-defined boolean tile
+  properties. The 1024 flag bytes are runtime-mutable and reset from the cart.
 - Keep execution deterministic: use `rnd`/`srand`, frame counters, stable numeric
   iteration, and input-driven state. Never use wall-clock or unordered `pairs`
   iteration where order affects state, pixels, or audio.

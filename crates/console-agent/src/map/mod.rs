@@ -104,4 +104,4 @@ usage:
   console map edit   <cart> <copy|shift|fill|clear> ... [--dry-run]
   (region cx,cy,cw,ch defaults to the used extent -- the bounding box of
    non-zero cells -- when omitted from render/dump/poke; map edit requires
-   it explicitly. Rows are 2 hex chars per cell, matching __map__ itself.)";
+   it explicitly. Rows are 3 hex chars per cell, matching __map__ itself.)";

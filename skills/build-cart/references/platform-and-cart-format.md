@@ -26,8 +26,9 @@ palette indices, or editing any cart data section.
 | Frame rate | 60 fixed updates per second; `_update()` then `_draw()` |
 | Framebuffer | 61,440 bytes, row-major, one palette index per pixel |
 | Palette | 64 fixed Apollo64 colors, indices 0–63 |
-| Sprite sheet | 128×128 pixels; 16×16 addressable 8×8 tiles; 256 IDs |
-| Tile map | 128×64 cells; each cell stores one sprite ID 0–255 |
+| Sprite sheet | 256×256 pixels; 32×32 addressable 8×8 tiles; 1024 IDs |
+| Sprite flags | One mutable 8-bit flag byte per tile ID; 1024 entries |
+| Tile map | 128×64 cells; each cell stores one sprite ID 0–1023 |
 | Visible tile area | 24×40 cells at 8×8 pixels |
 | Audio | 44,100 Hz mono; 735 samples/frame; 6 channels |
 | Notes | C0–B7, 96 semitones |
@@ -127,6 +128,7 @@ max_colors = 8
 
 [sections]
 map = "map.txt"
+gfx_flags = "gfx-flags.txt"
 gfx_meta = "gfx-meta.txt"
 ```
 
@@ -165,7 +167,7 @@ build rather than risking a lexical collision.
 Repeat `[[sprites]]` for PNG assets. Every asset has a stable `[a-z0-9_]+`
 name, a project-relative `source`, and explicit `tile = [x, y]` placement.
 Dimensions must be nonzero multiples of 8 and the occupied tile rectangles may
-not overlap or leave the 16x16 sheet. `anchor` is optional and defaults to
+not overlap or leave the 32x32 sheet. `anchor` is optional and defaults to
 bottom-center. Tables are emitted name-sorted, so reordering them does not move
 or rename art.
 
@@ -221,6 +223,7 @@ __meta__
 __lua__
 __sprites__
 __map__
+__gfx_flags__
 __gfx_meta__
 __instruments__
 __sfx__
@@ -264,29 +267,42 @@ optional. See [lua-api.md](lua-api.md) for the complete console API and sandbox.
 
 ### `__sprites__`
 
-Write up to 128 rows of up to 128 palette characters. Short and missing rows
-are zero-filled. Pixel `(x,y)` is the character at column `x`, row `y`.
+Write up to 256 rows of up to 256 palette characters. Short and missing rows
+are zero-filled; over-wide or over-tall data is rejected, never truncated.
+Pixel `(x,y)` is the character at column `x`, row `y`.
 Addressable tile `n` starts at:
 
 ```text
-tx = n % 16
-ty = floor(n / 16)
+tx = n % 32
+ty = floor(n / 32)
 pixel_x = tx * 8
 pixel_y = ty * 8
 ```
 
-Reserve tile 0 as blank by convention because map cell `00` means empty. Color
+Reserve tile 0 as blank by convention because map cell `000` means empty. Color
 0 is the default transparent sprite ink.
 
 ### `__map__`
 
-Write up to 64 rows of up to 128 cells. Each cell is exactly two hexadecimal
-digits (`00`–`ff`) naming a sprite tile. Short/missing rows zero-fill. Blank and
-comment lines do not consume map rows. Odd-length rows, non-hex digits, rows
-wider than 128 cells, and more than 64 data rows are parse errors.
+Begin with the required `# map-format=hex3` marker, then write up to 64 rows of
+up to 128 cells. Each cell is exactly three hexadecimal digits (`000`–`3ff`)
+naming a sprite tile. Short/missing rows zero-fill. Blank and comment lines do
+not consume map rows. A non-triplet row length, ID above `3ff`, non-hex digit,
+row wider than 128 cells, or more than 64 data rows is a parse error. A legacy
+two-digit map without the marker fails with a direct migration hint rather than
+being ambiguously decoded.
 
-Map cell `00` is empty and `map()` skips it without reading sprite 0. Runtime
-`mset` mutates the live map copy, not the cart text.
+Map cell `000` is empty and `map()` skips it without reading sprite 0. Runtime
+`mset` accepts 0–1023 and mutates the live map copy, not the cart text.
+
+### `__gfx_flags__`
+
+Write up to 32 rows of up to 32 bytes, exactly two hex digits per flag byte.
+The grid maps row-major to tile IDs 0–1023; short/missing rows zero-fill and
+over-wide/tall or malformed rows fail. `fget(n)` reads the whole byte,
+`fget(n,bit)` reads a boolean bit, `fset(n,flags)` replaces it, and
+`fset(n,bit,value)` changes one bit. Runtime writes affect only the live copy;
+a reset restores the authored bytes. The engine assigns no meaning to bits.
 
 ## Metadata
 
@@ -341,7 +357,7 @@ anim <sprite>.<label> frames=<frame,...> fps=<1-60> [loop] [frames_rect=<tx>,<ty
 ```
 
 - Names match `[a-z0-9_]+` and are unique.
-- Sprite rect/size use tile coordinates and must fit the 16×16 tile sheet.
+- Sprite rect/size use tile coordinates and must fit the 32×32 tile sheet.
 - Default anchor is bottom-center: `(width_px/2, height_px-1)`.
 - An integer frame displaces the chosen frame origin horizontally by the
   sprite width and wraps down by the sprite height.
@@ -386,8 +402,8 @@ SFX loop ranges are ignored during music playback.
 - Unknown Lua globals are ordinary Lua behavior; unknown declared animation,
   SFX, pattern, instrument, or wavetable references are hard errors where the
   engine can validate them.
-- Numeric draw colors are floored and masked to 0–63; map values are floored
-  and masked to 0–255. Prefer valid explicit values rather than relying on wrap.
+- Numeric draw colors are floored and masked to 0–63. Map and flag tile IDs
+  are floored but must remain 0–1023; invalid IDs error instead of wrapping.
 - Coordinate inputs are floored. Off-screen drawing is clipped; off-map `mget`
   returns 0 and off-map `mset` does nothing.
 - `console` write commands preserve unrelated cart text and reparse the

@@ -501,9 +501,10 @@ console map edit <cart> fill <cx,cy,cw,ch> <tile-hex> [--dry-run]
 console map edit <cart> clear <cx,cy,cw,ch> [--dry-run]
 ```
 
-`render --ids` labels nonempty cells. `dump` emits two hex digits/cell with a
-pipeable comment header. `lint` reports extent, counts, fill, and map IDs whose
-8×8 sheet tiles are blank. Poke rows must be exactly `2*cw` hex characters.
+`render --ids` labels nonempty cells. `dump` emits the required
+`# map-format=hex3` marker, a pipeable coordinate comment, then three hex
+digits/cell (`000`–`3ff`). `lint` reports extent, counts, fill, and map IDs whose
+8×8 sheet tiles are blank. Poke rows must be exactly `3*cw` hex characters.
 Shift drops cells leaving the named region and zero-fills the vacancy; it does
 not wrap.
 

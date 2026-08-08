@@ -13,20 +13,34 @@ pub const SCREEN_H: usize = 320;
 /// Framebuffer length in bytes (one palette index per pixel, row-major).
 pub const FB_LEN: usize = SCREEN_W * SCREEN_H;
 
-/// Sprite sheet edge length in pixels (16x16 sprites of 8x8).
-pub const SHEET_W: usize = 128;
+/// Sprite sheet edge length in pixels (32x32 sprites of 8x8).
+pub const SHEET_W: usize = 256;
 /// Sprite sheet length in bytes.
 pub const SHEET_LEN: usize = SHEET_W * SHEET_W;
 /// Edge length of a single sprite in pixels.
 pub const SPRITE_SIZE: i32 = 8;
 /// Sprites per sheet row.
-pub const SPRITES_PER_ROW: i32 = 16;
+pub const SPRITES_PER_ROW: i32 = 32;
+/// Edge length of the sheet in addressable 8x8 tiles.
+pub const SHEET_TILES: usize = SHEET_W / SPRITE_SIZE as usize;
+/// Number of addressable tile IDs in the sheet.
+pub const TILE_COUNT: usize = SHEET_TILES * SHEET_TILES;
+/// Integer type used by the map and sprite-addressing tools.
+pub type TileId = u16;
+/// Largest valid tile ID for this sheet.
+pub const TILE_ID_MAX: TileId = (TILE_COUNT - 1) as TileId;
+/// Fixed hexadecimal width of one `__map__` cell.
+pub const MAP_CELL_HEX_DIGITS: usize = 3;
+/// Required comment marker before nonempty `__map__` data. It makes the
+/// breaking two-to-three-digit transition unambiguous even for row lengths
+/// divisible by both widths.
+pub const MAP_FORMAT_MARKER: &str = "# map-format=hex3";
 
 /// Tile map width in cells.
 pub const MAP_W: usize = 128;
 /// Tile map height in cells.
 pub const MAP_H: usize = 64;
-/// Tile map length in bytes (one tile id per cell, row-major).
+/// Tile map length in cells (one tile id per cell, row-major).
 pub const MAP_LEN: usize = MAP_W * MAP_H;
 
 /// A screen's worth of palette indices.
@@ -34,11 +48,13 @@ pub type Framebuffer = [u8; FB_LEN];
 /// One horizontal shift per scanline, already reduced to `0..SCREEN_W` (see
 /// [`DrawState::set_rshift`]). All zeros = no raster displacement.
 pub type ShiftTable = [u8; SCREEN_H];
-/// A full 128x128 sprite sheet of palette indices.
+/// A full 256x256 sprite sheet of palette indices.
 pub type SpriteSheet = [u8; SHEET_LEN];
+/// One mutable eight-bit flag set for every addressable tile.
+pub type GfxFlags = [u8; TILE_COUNT];
 /// A full 128x64 tile map: one sprite index per cell. Tile 0 is the empty
 /// cell — [`map`] skips it entirely rather than drawing sprite 0.
-pub type TileMap = [u8; MAP_LEN];
+pub type TileMap = [TileId; MAP_LEN];
 
 /// Horizontal anchor used by [`print_aligned`]. Existing four-argument Lua
 /// `print` calls use [`TextAlign::Left`].
@@ -938,7 +954,7 @@ const SSPR_SHIFT: u32 = 16;
 ///
 /// A degenerate rectangle — zero or negative `sw`/`sh`/`dw`/`dh` — draws
 /// nothing. Negative sizes do **not** mirror (PICO-8 does not either); use the
-/// `flip` flags. Source pixels outside the 128x128 sheet are skipped.
+/// `flip` flags. Source pixels outside the 256x256 sheet are skipped.
 pub fn sspr(
     fb: &mut Framebuffer,
     ds: &DrawState,

@@ -176,7 +176,7 @@ fn extreme_map_cell_ranges_keep_visible_offset_tiles_in_bounds() {
     }
     let text = format!(
         "__lua__\nfunction _draw() map(-268435456,0,-2147483648,0,268435457,1) end\n\
-         __sprites__\n{sprites}__map__\n01\n"
+         __sprites__\n{sprites}__map__\n# map-format=hex3\n001\n"
     );
     let mut console = Console::new(&text, 0).unwrap();
     console.set_draw_tracing(true);

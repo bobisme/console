@@ -9,7 +9,7 @@ pub mod png_io;
 pub mod transform;
 pub mod view;
 
-use console_core::{Cart, GfxMeta, SpriteDef};
+use console_core::{Cart, GfxMeta, SHEET_TILES, SpriteDef};
 
 /// Canonical command inventory used by generated top-level help.
 pub const COMMANDS: &[&str] = &[
@@ -38,7 +38,14 @@ pub fn parse_target(s: &str, meta: &GfxMeta) -> Result<Target, String> {
         let nums: Result<Vec<u8>, _> = parts.iter().map(|p| p.trim().parse::<u8>()).collect();
         let nums = nums.map_err(|e| format!("bad rect target {s:?}: {e}"))?;
         let (tx, ty, w, h) = (nums[0], nums[1], nums[2], nums[3]);
-        if tx > 15 || ty > 15 || w == 0 || h == 0 || tx + w > 16 || ty + h > 16 {
+        let grid = SHEET_TILES as u8;
+        if tx >= grid
+            || ty >= grid
+            || w == 0
+            || h == 0
+            || tx.checked_add(w).is_none_or(|right| right > grid)
+            || ty.checked_add(h).is_none_or(|bottom| bottom > grid)
+        {
             return Err(format!("rect target out of sheet bounds: {s:?}"));
         }
         return Ok(Target::Rect { tx, ty, w, h });
@@ -75,7 +82,7 @@ fn known_targets(meta: &GfxMeta) -> String {
     }
 }
 
-/// Pixel-space rect (x, y, w, h) on the 128x128 sheet for a target's frame
+/// Pixel-space rect (x, y, w, h) on the 256x256 sheet for a target's frame
 /// `i`. For an animation target, `i` indexes the animation's declared frame
 /// list and therefore honors `frames_rect` and explicit `tx:ty` entries. For
 /// a sprite target, it remains the raw sprite-relative frame index. Rects

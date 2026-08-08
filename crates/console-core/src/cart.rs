@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 use crate::audio::{AudioBank, Echo, Instrument, Master, Pattern, Sfx, Wavetable};
 use crate::error::Error;
 use crate::gfx::{
-    COLOR_COUNT, IDENTITY_PAL, MAP_H, MAP_LEN, MAP_W, SHEET_LEN, SHEET_W, SpriteSheet, TileMap,
+    COLOR_COUNT, GfxFlags, IDENTITY_PAL, MAP_CELL_HEX_DIGITS, MAP_FORMAT_MARKER, MAP_H, MAP_LEN,
+    MAP_W, SHEET_LEN, SHEET_TILES, SHEET_W, SpriteSheet, TILE_COUNT, TILE_ID_MAX, TileId, TileMap,
     parse_color_char,
 };
 use crate::gfx_meta::GfxMeta;
@@ -48,6 +49,7 @@ pub struct Cart {
     meta: BTreeMap<String, String>,
     lua: String,
     sprites: Box<SpriteSheet>,
+    gfx_flags: Box<GfxFlags>,
     map: Box<TileMap>,
     audio: AudioBank,
     gfx_meta: GfxMeta,
@@ -101,9 +103,14 @@ impl Cart {
             None => Box::new([0u8; SHEET_LEN]),
         };
 
+        let gfx_flags = match sections.get("gfx_flags") {
+            Some(text) => parse_gfx_flags(text)?,
+            None => Box::new([0u8; TILE_COUNT]),
+        };
+
         let map = match sections.get("map") {
             Some(text) => parse_map(text)?,
-            None => Box::new([0u8; MAP_LEN]),
+            None => Box::new([0 as TileId; MAP_LEN]),
         };
 
         let audio = AudioBank::parse(
@@ -118,6 +125,7 @@ impl Cart {
             meta,
             lua,
             sprites,
+            gfx_flags,
             map,
             audio,
             gfx_meta,
@@ -132,9 +140,15 @@ impl Cart {
         &self.lua
     }
 
-    /// The 128x128 sprite sheet (all zeros if the cart had no sprites).
+    /// The 256x256 sprite sheet (all zeros if the cart had no sprites).
     pub fn sprites(&self) -> &SpriteSheet {
         &self.sprites
+    }
+
+    /// Initial eight-bit flags for all 1024 sprite tiles. A running console
+    /// owns a mutable copy for `fset`; resetting restores these authored bits.
+    pub fn gfx_flags(&self) -> &GfxFlags {
+        &self.gfx_flags
     }
 
     /// The cart's 128x64 tile map from `__map__` (all zeros — i.e. every cell
@@ -305,18 +319,29 @@ fn parse_preview_palette(value: Option<&String>) -> Result<PreviewPalette, Error
 fn parse_sprites(text: &str) -> Result<Box<SpriteSheet>, Error> {
     let mut sheet = Box::new([0u8; SHEET_LEN]);
     let mut y = 0usize;
-    for line in text.lines() {
-        let line = line.trim();
+    for (line_index, raw) in text.lines().enumerate() {
+        let line = raw.trim();
         if line.is_empty() {
             continue;
         }
         if y >= SHEET_W {
-            break;
+            return Err(Error::Cart(format!(
+                "__sprites__ line {}: sprite sheet is at most {SHEET_W} rows tall",
+                line_index + 1
+            )));
         }
-        for (x, ch) in line.chars().take(SHEET_W).enumerate() {
+        let width = line.chars().count();
+        if width > SHEET_W {
+            return Err(Error::Cart(format!(
+                "__sprites__ line {}: sprite sheet is {SHEET_W} pixels wide, found {width}",
+                line_index + 1
+            )));
+        }
+        for (x, ch) in line.chars().enumerate() {
             let v = parse_color_char(ch).ok_or_else(|| {
                 Error::Cart(format!(
-                    "__sprites__ row {y}: expected a 64-color palette character, found {ch:?}"
+                    "__sprites__ line {}: expected a 64-color palette character, found {ch:?}",
+                    line_index + 1
                 ))
             })?;
             sheet[y * SHEET_W + x] = v;
@@ -326,16 +351,54 @@ fn parse_sprites(text: &str) -> Result<Box<SpriteSheet>, Error> {
     Ok(sheet)
 }
 
+fn parse_gfx_flags(text: &str) -> Result<Box<GfxFlags>, Error> {
+    let mut flags = Box::new([0u8; TILE_COUNT]);
+    let mut y = 0usize;
+    for (line_index, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if y >= SHEET_TILES {
+            return Err(Error::Cart(format!(
+                "__gfx_flags__ line {}: flag grid is at most {SHEET_TILES} rows tall",
+                line_index + 1
+            )));
+        }
+        if line.len() % 2 != 0 {
+            return Err(Error::Cart(format!(
+                "__gfx_flags__ line {}: each flag is 2 hex digits, found odd row length {}",
+                line_index + 1,
+                line.len()
+            )));
+        }
+        let cells = line.len() / 2;
+        if cells > SHEET_TILES {
+            return Err(Error::Cart(format!(
+                "__gfx_flags__ line {}: flag grid is {SHEET_TILES} cells wide, found {cells}",
+                line_index + 1
+            )));
+        }
+        for (x, pair) in line.as_bytes().chunks_exact(2).enumerate() {
+            let hi = hex_nibble("__gfx_flags__", line_index + 1, pair[0])? as u8;
+            let lo = hex_nibble("__gfx_flags__", line_index + 1, pair[1])? as u8;
+            flags[y * SHEET_TILES + x] = hi * 16 + lo;
+        }
+        y += 1;
+    }
+    Ok(flags)
+}
+
 const MAP_SEC: &str = "__map__";
 
 fn map_err(line: usize, msg: impl AsRef<str>) -> Error {
     Error::Cart(format!("{MAP_SEC} line {line}: {}", msg.as_ref()))
 }
 
-/// `__map__`: rows of tile ids, **two hex digits per cell**. It shares the
+/// `__map__`: rows of tile ids, **three hex digits per cell**. It shares the
 /// sprite grid's comment, blank-line, padding, and row-count conventions, but
-/// deliberately keeps a hex alphabet because tile ids are bytes rather than
-/// palette indices.
+/// deliberately keeps a hex alphabet because tile IDs are wider than palette
+/// indices.
 ///
 /// Short rows pad with tile 0 and missing rows are all tile 0, so the common
 /// case (a small map at the top-left) stays a small block of text. Unlike
@@ -343,14 +406,27 @@ fn map_err(line: usize, msg: impl AsRef<str>) -> Error {
 /// map row that runs past the edge is nearly always a miscount, and losing
 /// terrain quietly is much worse than failing to load.
 fn parse_map(text: &str) -> Result<Box<TileMap>, Error> {
-    let mut tiles = Box::new([0u8; MAP_LEN]);
+    let mut tiles = Box::new([0 as TileId; MAP_LEN]);
     let mut y = 0usize;
+    let mut format_seen = false;
 
     for (i, raw) in text.lines().enumerate() {
         let lineno = i + 1;
         let line = raw.trim();
+        if line == MAP_FORMAT_MARKER {
+            format_seen = true;
+            continue;
+        }
         if line.is_empty() || line.starts_with('#') {
             continue;
+        }
+        if !format_seen {
+            return Err(map_err(
+                lineno,
+                format!(
+                    "missing required {MAP_FORMAT_MARKER:?} before map data; this may be a legacy two-hex-digit row. Convert every cell to three digits (for example 01 -> 001) and add the marker"
+                ),
+            ));
         }
         if y >= MAP_H {
             return Err(map_err(
@@ -359,16 +435,16 @@ fn parse_map(text: &str) -> Result<Box<TileMap>, Error> {
             ));
         }
         let bytes = line.as_bytes();
-        if bytes.len() % 2 != 0 {
+        if bytes.len() % MAP_CELL_HEX_DIGITS != 0 {
             return Err(map_err(
                 lineno,
                 format!(
-                    "each cell is 2 hex digits, so a row needs an even length, found {}",
-                    bytes.len()
+                    "each cell is {MAP_CELL_HEX_DIGITS} hex digits, so a row length must be a multiple of {MAP_CELL_HEX_DIGITS}, found {}",
+                    bytes.len(),
                 ),
             ));
         }
-        let cells = bytes.len() / 2;
+        let cells = bytes.len() / MAP_CELL_HEX_DIGITS;
         if cells > MAP_W {
             return Err(map_err(
                 lineno,
@@ -376,23 +452,37 @@ fn parse_map(text: &str) -> Result<Box<TileMap>, Error> {
             ));
         }
         let row = y * MAP_W;
-        for (x, pair) in bytes.chunks_exact(2).enumerate() {
-            let hi = map_hex(lineno, pair[0])?;
-            let lo = map_hex(lineno, pair[1])?;
-            tiles[row + x] = hi * 16 + lo;
+        for (x, digits) in bytes.chunks_exact(MAP_CELL_HEX_DIGITS).enumerate() {
+            let value = digits.iter().try_fold(0 as TileId, |value, &digit| {
+                Ok::<TileId, Error>(value * 16 + map_hex(lineno, digit)?)
+            })?;
+            if value > TILE_ID_MAX {
+                return Err(map_err(
+                    lineno,
+                    format!("cell {x} has tile id {value:03x}; expected 000-{TILE_ID_MAX:03x}"),
+                ));
+            }
+            tiles[row + x] = value;
         }
         y += 1;
     }
     Ok(tiles)
 }
 
-fn map_hex(line: usize, b: u8) -> Result<u8, Error> {
-    char::from(b).to_digit(16).map(|v| v as u8).ok_or_else(|| {
-        map_err(
-            line,
-            format!("expected hex digit, found {:?}", char::from(b)),
-        )
-    })
+fn map_hex(line: usize, b: u8) -> Result<TileId, Error> {
+    hex_nibble(MAP_SEC, line, b)
+}
+
+fn hex_nibble(section: &str, line: usize, b: u8) -> Result<TileId, Error> {
+    char::from(b)
+        .to_digit(16)
+        .map(|v| v as TileId)
+        .ok_or_else(|| {
+            Error::Cart(format!(
+                "{section} line {line}: expected hex digit, found {:?}",
+                char::from(b)
+            ))
+        })
 }
 
 #[cfg(test)]
