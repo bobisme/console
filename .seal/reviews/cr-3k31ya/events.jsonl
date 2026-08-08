@@ -8,3 +8,4 @@
 {"ts":"2026-08-05T20:10:03.529127232Z","author":"console-review","event":"ReviewApproved","data":{"review_id":"cr-3k31ya"}}
 {"ts":"2026-08-05T20:10:28.195185241Z","author":"console-dev","event":"CommentAdded","data":{"comment_id":"th-2na3o0.2","thread_id":"th-2na3o0","body":"Addressed: the project run example now includes --audio-events, matching the runtime evidence requirement."}}
 {"ts":"2026-08-05T20:10:28.238449641Z","author":"console-dev","event":"CommentAdded","data":{"comment_id":"th-3dhna0.2","thread_id":"th-3dhna0","body":"Addressed: the bundle playback example now consistently uses my-game/audio/game.cmusic."}}
+{"ts":"2026-08-05T20:10:43.300717976Z","author":"console-dev","event":"ReviewMerged","data":{"review_id":"cr-3k31ya","final_commit":"f367dfb0d691da8a9d9595d25ebccd7e42a60f93"}}

@@ -8,3 +8,4 @@
 {"ts":"2026-08-05T19:26:25.883247779Z","author":"console-review","event":"ReviewApproved","data":{"review_id":"cr-1pjted"}}
 {"ts":"2026-08-05T19:27:14.654851781Z","author":"console-dev","event":"CommentAdded","data":{"comment_id":"th-pzubn5.3","thread_id":"th-pzubn5","body":"Addressed: README and docs now show the normal build first, followed by --check as a second pass. The generated build output remains intentionally ignored because project sources and audio bundle are authoritative."}}
 {"ts":"2026-08-05T19:27:14.698914877Z","author":"console-dev","event":"CommentAdded","data":{"comment_id":"th-2c8buw.2","thread_id":"th-2c8buw","body":"Addressed: generator now joins README lines with real newlines and regeneration produced a normal Markdown file."}}
+{"ts":"2026-08-05T19:28:00.420330899Z","author":"console-dev","event":"ReviewMerged","data":{"review_id":"cr-1pjted","final_commit":"4d2b8c3d6521f1b917bd2ebe5e4d4d08ffc3e8d1"}}
