@@ -32,6 +32,7 @@ fn top_level_help_is_complete_and_successful() {
         assert!(text.contains("build <project|console.toml>"));
         assert!(text.contains("pack <cart|project>"));
         assert!(text.contains("serve <cart|project>"));
+        assert_eq!(text.matches("--target web|tiptap").count(), 2);
     }
 }
 

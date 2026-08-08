@@ -70,7 +70,7 @@ pub const RPC_USAGE: &str = "usage:\n  console rpc";
 /// inventory so a newly-added leaf cannot silently disappear from discovery.
 pub fn usage() -> String {
     format!(
-        "{RUN_USAGE}\n  {}\n  console playtest <cart|project> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console rpc\n  {}\n  console pack <cart|project> -o <out.html> [--engine FILE] [--template FILE]\n  console serve <cart|project> [--host HOST] [--port PORT] [--engine FILE] [--template FILE]\n  console palette <{}> ...\n  console sprite <{}> ...\n  console map <{}> ...\n  console music <{}> ...\n  console scene <{}> ...",
+        "{RUN_USAGE}\n  {}\n  console playtest <cart|project> --scenario <scenario.json> [--artifacts DIR] [--seed N] [--format text|pretty|json]\n  console rpc\n  {}\n  console pack <cart|project> -o <out.html> [--target web|tiptap] [--engine FILE] [--template FILE]\n  console serve <cart|project> [--host HOST] [--port PORT] [--target web|tiptap] [--engine FILE] [--template FILE]\n  console palette <{}> ...\n  console sprite <{}> ...\n  console map <{}> ...\n  console music <{}> ...\n  console scene <{}> ...",
         hooks::USAGE
             .lines()
             .nth(1)
