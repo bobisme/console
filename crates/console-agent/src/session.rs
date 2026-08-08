@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, VecDeque};
 
 use console_core::{
     CHANNEL_COUNT, COLOR_COUNT, COLOR_MASK, ChannelInfo, Console, DevHookInfo, DevHookPhase,
-    DevValue, DrawEvent, DrawTraceFrame, Error, FB_LEN, LAYER_TRANSPARENT, PALETTE,
-    SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W, TextDraw, color_char, input,
+    DevValue, DrawEvent, DrawTraceFrame, Error, FB_LEN, LAYER_TRANSPARENT, PALETTE, PlatformEvent,
+    PlatformEventFrame, SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W, TextDraw, color_char, input,
 };
 use serde::Serialize;
 
@@ -99,6 +99,28 @@ pub struct DrawTraceReport {
     pub capacity: usize,
     pub dropped: u64,
     pub events: Vec<DrawEventRecord>,
+}
+
+/// Maximum cart-to-platform events retained by a native agent session.
+pub const MAX_SESSION_PLATFORM_EVENTS: usize = 65_536;
+
+/// One core platform event stamped with the agent session's completed frame
+/// and stable within-frame order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PlatformEventRecord {
+    pub frame: u64,
+    pub index: u64,
+    #[serde(flatten)]
+    pub event: PlatformEvent,
+}
+
+/// Serializable host-neutral platform diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PlatformEventReport {
+    pub capacity: usize,
+    pub dropped: u64,
+    pub max_submitted_score: Option<u64>,
+    pub events: Vec<PlatformEventRecord>,
 }
 
 /// A transparent PNG for one isolated `draw_tag()` layer.
@@ -250,6 +272,38 @@ fn record_draw_events(
     *next_index = next_index.saturating_add(u64::from(trace.dropped));
 }
 
+fn record_platform_events(
+    events: &mut VecDeque<PlatformEventRecord>,
+    dropped: &mut u64,
+    index_frame: &mut Option<u64>,
+    next_index: &mut u64,
+    max_submitted_score: &mut Option<u64>,
+    frame: u64,
+    platform: PlatformEventFrame,
+) {
+    if *index_frame != Some(frame) {
+        *index_frame = Some(frame);
+        *next_index = 0;
+    }
+    *dropped = dropped.saturating_add(u64::from(platform.dropped));
+    for event in platform.events {
+        if let PlatformEvent::ScoreSubmit { score } = event {
+            *max_submitted_score = Some(max_submitted_score.map_or(score, |best| best.max(score)));
+        }
+        if events.len() == MAX_SESSION_PLATFORM_EVENTS {
+            events.pop_front();
+            *dropped = dropped.saturating_add(1);
+        }
+        events.push_back(PlatformEventRecord {
+            frame,
+            index: *next_index,
+            event,
+        });
+        *next_index = next_index.saturating_add(1);
+    }
+    *next_index = next_index.saturating_add(u64::from(platform.dropped));
+}
+
 /// Errors from session operations that aren't Lua/cart errors (those are
 /// carried as `console_core::Error` and mapped to `-32000` by the RPC
 /// layer). These map to other JSON-RPC codes.
@@ -321,6 +375,13 @@ pub struct Session {
     prev_pattern: Option<u8>,
     /// Every text draw since load/reset, including frame-zero `_init` calls.
     text_events: Vec<TextEvent>,
+    /// Bounded cart-to-host platform diagnostics. The submitted maximum is
+    /// host-owned and deliberately absent from cart state and save states.
+    platform_events: VecDeque<PlatformEventRecord>,
+    platform_events_dropped: u64,
+    platform_event_index_frame: Option<u64>,
+    platform_event_next_index: u64,
+    max_submitted_score: Option<u64>,
     /// Opt-in bounded draw-call diagnostics. This host-side switch survives
     /// load/reset/load_state even though each operation replaces the core.
     draw_tracing: bool,
@@ -351,6 +412,11 @@ impl Default for Session {
             prev_channels: idle_channels(),
             prev_pattern: None,
             text_events: Vec::new(),
+            platform_events: VecDeque::new(),
+            platform_events_dropped: 0,
+            platform_event_index_frame: None,
+            platform_event_next_index: 0,
+            max_submitted_score: None,
             draw_tracing: false,
             draw_events: VecDeque::new(),
             draw_events_dropped: 0,
@@ -381,6 +447,13 @@ impl Session {
         self.draw_event_next_index = 0;
     }
 
+    fn clear_platform_log(&mut self) {
+        self.platform_events.clear();
+        self.platform_events_dropped = 0;
+        self.platform_event_index_frame = None;
+        self.platform_event_next_index = 0;
+    }
+
     /// Load a new cart from source text and (re)build the console. Clears
     /// the input log, audio log, event log and any save states from a
     /// previous cart, since a save state's replay only makes sense against
@@ -402,6 +475,7 @@ impl Session {
         console.set_draw_tracing(self.draw_tracing);
         console.set_layer_capture(self.layer_capture);
         let init_draws = console.take_text_draws();
+        let init_platform = console.take_platform_events();
         self.cart_text = Some(text.to_string());
         self.seed = seed;
         self.initial_save = initial_save.map(str::to_string);
@@ -411,9 +485,20 @@ impl Session {
         self.saved_states.clear();
         self.clear_audio_log();
         self.text_events.clear();
+        self.clear_platform_log();
+        self.max_submitted_score = None;
         self.clear_draw_log();
         self.ecs_watches.clear();
         record_text_draws(&mut self.text_events, 0, init_draws);
+        record_platform_events(
+            &mut self.platform_events,
+            &mut self.platform_events_dropped,
+            &mut self.platform_event_index_frame,
+            &mut self.platform_event_next_index,
+            &mut self.max_submitted_score,
+            0,
+            init_platform,
+        );
         Ok(())
     }
 
@@ -431,6 +516,7 @@ impl Session {
         console.set_draw_tracing(self.draw_tracing);
         console.set_layer_capture(self.layer_capture);
         let init_draws = console.take_text_draws();
+        let init_platform = console.take_platform_events();
         self.seed = seed;
         self.initial_save = initial_save;
         self.console = Some(console);
@@ -438,9 +524,19 @@ impl Session {
         self.replay_log.clear();
         self.clear_audio_log();
         self.text_events.clear();
+        self.clear_platform_log();
         self.clear_draw_log();
         self.ecs_watches.reset_baselines();
         record_text_draws(&mut self.text_events, 0, init_draws);
+        record_platform_events(
+            &mut self.platform_events,
+            &mut self.platform_events_dropped,
+            &mut self.platform_event_index_frame,
+            &mut self.platform_event_next_index,
+            &mut self.max_submitted_score,
+            0,
+            init_platform,
+        );
         Ok(())
     }
 
@@ -503,6 +599,15 @@ impl Session {
                 &mut self.draw_event_next_index,
                 event_frame,
                 console.take_draw_events(),
+            );
+            record_platform_events(
+                &mut self.platform_events,
+                &mut self.platform_events_dropped,
+                &mut self.platform_event_index_frame,
+                &mut self.platform_event_next_index,
+                &mut self.max_submitted_score,
+                event_frame,
+                console.take_platform_events(),
             );
             match result {
                 Ok(()) => {
@@ -677,6 +782,15 @@ impl Session {
             frame,
             console.take_draw_events(),
         );
+        record_platform_events(
+            &mut self.platform_events,
+            &mut self.platform_events_dropped,
+            &mut self.platform_event_index_frame,
+            &mut self.platform_event_next_index,
+            &mut self.max_submitted_score,
+            frame,
+            console.take_platform_events(),
+        );
         Ok(result?)
     }
 
@@ -749,6 +863,15 @@ impl Session {
             &mut self.draw_event_next_index,
             frame_count,
             console.take_draw_events(),
+        );
+        record_platform_events(
+            &mut self.platform_events,
+            &mut self.platform_events_dropped,
+            &mut self.platform_event_index_frame,
+            &mut self.platform_event_next_index,
+            &mut self.max_submitted_score,
+            frame_count,
+            console.take_platform_events(),
         );
         Ok(DevHookInvocation {
             name: name.to_string(),
@@ -841,11 +964,25 @@ impl Session {
         let mut audio_log = Vec::new();
         let mut audio_events = Vec::new();
         let mut text_events = Vec::new();
+        let mut platform_events = VecDeque::new();
+        let mut platform_events_dropped = 0;
+        let mut platform_event_index_frame = None;
+        let mut platform_event_next_index = 0;
+        let mut max_submitted_score = self.max_submitted_score;
         let mut draw_events = VecDeque::new();
         let mut draw_events_dropped = 0;
         let mut draw_event_index_frame = None;
         let mut draw_event_next_index = 0;
         record_text_draws(&mut text_events, 0, console.take_text_draws());
+        record_platform_events(
+            &mut platform_events,
+            &mut platform_events_dropped,
+            &mut platform_event_index_frame,
+            &mut platform_event_next_index,
+            &mut max_submitted_score,
+            0,
+            console.take_platform_events(),
+        );
         let mut prev_channels = idle_channels();
         let mut prev_pattern = None;
         let mut halt_message = None;
@@ -866,6 +1003,15 @@ impl Session {
                     event_frame,
                     console.take_draw_events(),
                 );
+                record_platform_events(
+                    &mut platform_events,
+                    &mut platform_events_dropped,
+                    &mut platform_event_index_frame,
+                    &mut platform_event_next_index,
+                    &mut max_submitted_score,
+                    event_frame,
+                    console.take_platform_events(),
+                );
                 continue;
             }
             let ReplayEvent::Step(mask) = event else {
@@ -885,6 +1031,15 @@ impl Session {
                 &mut draw_event_next_index,
                 event_frame,
                 console.take_draw_events(),
+            );
+            record_platform_events(
+                &mut platform_events,
+                &mut platform_events_dropped,
+                &mut platform_event_index_frame,
+                &mut platform_event_next_index,
+                &mut max_submitted_score,
+                event_frame,
+                console.take_platform_events(),
             );
             match result {
                 Ok(()) => {
@@ -922,6 +1077,11 @@ impl Session {
         self.prev_channels = prev_channels;
         self.prev_pattern = prev_pattern;
         self.text_events = text_events;
+        self.platform_events = platform_events;
+        self.platform_events_dropped = platform_events_dropped;
+        self.platform_event_index_frame = platform_event_index_frame;
+        self.platform_event_next_index = platform_event_next_index;
+        self.max_submitted_score = max_submitted_score;
         self.draw_events = draw_events;
         self.draw_events_dropped = draw_events_dropped;
         self.draw_event_index_frame = draw_event_index_frame;
@@ -945,6 +1105,7 @@ impl Session {
             meta: console.cart().meta().clone(),
             input_log_len: self.input_log.len(),
             saved_states: self.saved_states.keys().cloned().collect(),
+            max_submitted_score: self.max_submitted_score,
         })
     }
 
@@ -1028,6 +1189,26 @@ impl Session {
             .filter(|event| from_frame.is_none_or(|frame| event.frame >= frame))
             .cloned()
             .collect())
+    }
+
+    /// Ordered score/leaderboard requests, optionally filtered by completed
+    /// frame. The host-only submitted maximum is never readable from Lua.
+    pub fn platform_events(
+        &self,
+        from_frame: Option<u64>,
+    ) -> Result<PlatformEventReport, SessionError> {
+        self.console()?;
+        Ok(PlatformEventReport {
+            capacity: MAX_SESSION_PLATFORM_EVENTS,
+            dropped: self.platform_events_dropped,
+            max_submitted_score: self.max_submitted_score,
+            events: self
+                .platform_events
+                .iter()
+                .filter(|event| from_frame.is_none_or(|frame| event.frame >= frame))
+                .cloned()
+                .collect(),
+        })
     }
 
     /// Enable or disable trace collection for subsequent draw calls. Changing
@@ -1141,6 +1322,7 @@ pub struct Info {
     pub meta: BTreeMap<String, String>,
     pub input_log_len: usize,
     pub saved_states: Vec<String>,
+    pub max_submitted_score: Option<u64>,
 }
 
 /// Encode a framebuffer as an RGBA PNG at 1:1 scale using the fixed palette.

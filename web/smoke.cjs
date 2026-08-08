@@ -226,6 +226,20 @@ function hex64(v) {
   const con_color_count = Module.cwrap("con_color_count", "number", []);
   const con_palette = Module.cwrap("con_palette", "number", []);
   const con_error = Module.cwrap("con_error", "number", []);
+  for (const symbol of [
+    "_con_platform_events",
+    "_con_platform_event_kind",
+    "_con_platform_event_score",
+    "_con_platform_events_dropped",
+  ]) {
+    if (typeof Module[symbol] !== "function") {
+      fatal(`${symbol} is exported`, `add ${symbol} to -sEXPORTED_FUNCTIONS`);
+    }
+  }
+  const con_platform_events = Module.cwrap("con_platform_events", "number", []);
+  const con_platform_event_kind = Module.cwrap("con_platform_event_kind", "number", ["number"]);
+  const con_platform_event_score = Module.cwrap("con_platform_event_score", "number", ["number"]);
+  const con_platform_events_dropped = Module.cwrap("con_platform_events_dropped", "number", []);
 
   // web/template.html feature-detects the raw symbol before cwrap'ing it, so a
   // missing -sEXPORTED_FUNCTIONS entry degrades to a silently mute console
@@ -256,6 +270,19 @@ function hex64(v) {
     return p ? Module.UTF8ToString(p) : null;
   };
 
+  const takePlatformEvents = () => {
+    const count = con_platform_events();
+    const dropped = con_platform_events_dropped();
+    const events = [];
+    for (let i = 0; i < count; i++) {
+      events.push({
+        kind: con_platform_event_kind(i),
+        score: con_platform_event_score(i),
+      });
+    }
+    return { dropped, events };
+  };
+
   // A detached copy: ALLOW_MEMORY_GROWTH can swap the backing buffer out from
   // under a live view, so take the view fresh and slice immediately.
   const audioFrame = () =>
@@ -270,6 +297,7 @@ function hex64(v) {
   // con_init took ownership of cartPtr; do not free it here.
   if (!check(rc === 0, "con_init returns 0", `rc=${rc} err=${currentError()}`)) process.exit(1);
   check(currentError() === null, "con_error is null after init");
+  check(takePlatformEvents().events.length === 0, "demo init emits no platform events");
 
   // --- palette ---
   const COLOR_COUNT = con_color_count();
@@ -367,6 +395,33 @@ function hex64(v) {
         `frame ${options.frames} has >= ${minDistinct} distinct palette values`, `got ${dN}`);
   if (!options.generic) {
     check(!equalBytes(frame1, frameLast), `frame 1 differs from frame ${options.frames}`);
+  }
+
+  // --- Lua/API parity: host-neutral score and leaderboard event stream ---
+  {
+    const platformCart = new TextEncoder().encode(
+      "__lua__\n" +
+      "score_update(9007199254740991) score_submit() score_submit()\n" +
+      "score_update(9007199254740991) score_submit() leaderboard_show()\n",
+    );
+    const p = con_alloc(platformCart.length);
+    Module.HEAPU8.set(platformCart, p);
+    if (!check(con_init(p, platformCart.length) === 0, "con_init loads platform-event probe",
+               currentError())) process.exit(1);
+    const platform = takePlatformEvents();
+    check(platform.dropped === 0, "platform-event probe drops no events", `got ${platform.dropped}`);
+    check(
+      JSON.stringify(platform.events) === JSON.stringify([
+        { kind: 1, score: 9007199254740991 },
+        { kind: 2, score: 9007199254740991 },
+        { kind: 1, score: 9007199254740991 },
+        { kind: 2, score: 9007199254740991 },
+        { kind: 3, score: 0 },
+      ]),
+      "wasm platform events preserve score, submit de-duplication, new-result, and UI order",
+      JSON.stringify(platform.events),
+    );
+    check(takePlatformEvents().events.length === 0, "wasm platform events drain exactly once");
   }
   check(invalidPixelAt === null,
         `all stepped palette indices are in 0..${COLOR_COUNT - 1}`, invalidPixelAt);

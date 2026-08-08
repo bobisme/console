@@ -285,6 +285,7 @@ Version 1 schema:
       "wav":"jump.wav",
       "spectrogram":"jump-spectrum.png",
       "audio_events":"jump-events.json",
+      "platform_events":"jump-platform-events.json",
       "audio_stats":"jump-stats.json",
       "map":{
         "source":"live",
@@ -704,10 +705,11 @@ One line is one request. Important error codes: `-32700` parse error,
 | `logs` | `{}` | Drain `printh` lines as `{logs}`. |
 | `save_state` | `{name}` | Save a replay checkpoint by name. |
 | `load_state` | `{name}` | Reset/replay it; return frame/halt state. |
-| `info` | `{}` | Frame, seed, halt, title/meta, input-log length, saved-state names. |
+| `info` | `{}` | Frame, seed, halt, title/meta, input-log length, saved-state names, host-only submitted maximum. |
 | `wav` | `{path,from_frame?,to_frame?}` | Write retained range; return frames/samples/duration. |
 | `audio_state` | `{}` | Current music pattern and per-channel sequencer state. |
 | `audio_events` | `{from_frame?}` | Sequencer events at/after the bound. |
+| `platform_events` | `{from_frame?}` | Bounded score/leaderboard events with frame/order, drops, and host-only submitted maximum. |
 | `audio_stats` | `{window_frames?=6}` | RMS/peak/clipped counts over mix windows. |
 | `text_events` | `{from_frame?}` | `print` calls at/after the bound with anchors, bounds, alignment, visibility, and clipping. |
 | `draw_trace` | `{enabled,clear?}` | Enable/disable bounded recording for later calls; mode changes or `clear:true` clear the trace. |

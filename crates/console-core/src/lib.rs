@@ -29,6 +29,7 @@ mod error;
 mod font;
 mod gfx;
 mod gfx_meta;
+mod platform;
 mod rng;
 mod save;
 mod state;
@@ -76,6 +77,7 @@ pub use crate::gfx::{
     TileMap, color_char, parse_color_char, text_size,
 };
 pub use crate::gfx_meta::{AnimDef, FrameSpec, GfxMeta, SpriteDef};
+pub use crate::platform::{MAX_PLATFORM_EVENTS, MAX_SCORE, PlatformEvent, PlatformEventFrame};
 pub use crate::rng::Pcg32;
 pub use crate::save::{
     MAX_SAVE_BYTES, MAX_SAVE_DEPTH, MAX_SAVE_KEY_BYTES, MAX_SAVE_NODES, SAVE_MAX_SAFE_INTEGER,
@@ -264,14 +266,15 @@ impl Console {
             self.audio.fill(0.0);
             return Err(err.clone());
         }
-        {
+        let platform_checkpoint = {
             let mut s = self.state.borrow_mut();
             s.text_draws.clear();
             s.clear_draw_events();
             s.clear_layer_framebuffers();
             s.prev_input = s.input;
             s.input = input & input::MASK;
-        }
+            s.platform.checkpoint()
+        };
 
         let save_checkpoint = self.state.borrow().save.clone();
         let result = self.run_frame();
@@ -292,7 +295,9 @@ impl Console {
             Err(e) => {
                 let mut state = self.state.borrow_mut();
                 state.save = save_checkpoint;
+                state.platform.rollback(platform_checkpoint);
                 state.audio.silence();
+                drop(state);
                 self.audio.fill(0.0);
                 self.halted = Some(e.clone());
                 Err(e)
@@ -504,6 +509,13 @@ impl Console {
         std::mem::take(&mut self.state.borrow_mut().text_draws)
     }
 
+    /// Drain bounded, ordered score and leaderboard requests made by cart
+    /// Lua since the previous drain. Reading these events never feeds host
+    /// state back into the simulation.
+    pub fn take_platform_events(&mut self) -> PlatformEventFrame {
+        self.state.borrow_mut().platform.take_events()
+    }
+
     /// The error that halted the console, if any.
     pub fn halted(&self) -> Option<&Error> {
         self.halted.as_ref()
@@ -524,12 +536,19 @@ impl Console {
     /// but does refresh the framebuffer snapshot in case the code drew.
     pub fn eval(&mut self, code: &str) -> Result<Value, Error> {
         let save_checkpoint = self.state.borrow().save.clone();
+        let platform_checkpoint = self.state.borrow().platform.checkpoint();
         let result = self
             .lua
             .load(code)
             .set_name("@eval")
             .eval::<Value>()
             .map_err(Error::from);
+        if result.is_err() {
+            self.state
+                .borrow_mut()
+                .platform
+                .rollback(platform_checkpoint);
+        }
         self.sync_framebuffer();
         if result.is_ok() {
             self.sync_save_output();
@@ -588,6 +607,7 @@ impl Console {
         // them before entering the callback and without halting the cart.
         devhooks::validate_phase(&self.lua, &self.devhooks, name, expected_phase)?;
         let save_checkpoint = self.state.borrow().save.clone();
+        let platform_checkpoint = self.state.borrow().platform.checkpoint();
         let result =
             devhooks::invoke_validated(&self.lua, &self.devhooks, name, expected_phase, args);
         self.sync_framebuffer();
@@ -597,6 +617,10 @@ impl Console {
                 Ok(value)
             }
             Err(error) => {
+                self.state
+                    .borrow_mut()
+                    .platform
+                    .rollback(platform_checkpoint);
                 // A callback may have mutated state before raising or before
                 // returning an invalid value. Halting prevents an
                 // unreplayable partially-mutated session from continuing.

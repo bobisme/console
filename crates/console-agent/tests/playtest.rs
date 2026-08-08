@@ -510,6 +510,66 @@ fn scenario_captures_text_layout_events() {
 }
 
 #[test]
+fn scenario_captures_platform_events_and_local_submitted_maximum() {
+    let dir = scratch("platform-events");
+    fs::create_dir_all(&dir).unwrap();
+    let cart = dir.join("test.cart");
+    let scenario = dir.join("platform.json");
+    let artifacts = dir.join("artifacts");
+    fs::write(
+        &cart,
+        "__lua__\nfunction _update() score_update(42) score_submit() leaderboard_show() end\n",
+    )
+    .unwrap();
+    fs::write(
+        &scenario,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "stages": [
+                {"op":"input", "frames":1},
+                {"op":"capture", "platform_events":"platform-events.json", "from_frame":1}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&[
+        "playtest",
+        as_str(&cart),
+        "--scenario",
+        as_str(&scenario),
+        "--artifacts",
+        as_str(&artifacts),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.status.success(),
+        "playtest failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["stages"][1]["artifacts"][0]["kind"],
+        "platform_events"
+    );
+    let artifact: Value =
+        serde_json::from_slice(&fs::read(artifacts.join("platform-events.json")).unwrap()).unwrap();
+    assert_eq!(artifact["capacity"], 65_536);
+    assert_eq!(artifact["dropped"], 0);
+    assert_eq!(artifact["max_submitted_score"], 42);
+    assert_eq!(
+        artifact["events"],
+        json!([
+            {"frame":1,"index":0,"kind":"score_update","score":42},
+            {"frame":1,"index":1,"kind":"score_submit","score":42},
+            {"frame":1,"index":2,"kind":"leaderboard_show"}
+        ])
+    );
+}
+
+#[test]
 fn scenario_captures_authored_and_live_maps_from_one_session() {
     let dir = scratch("live-map");
     fs::create_dir_all(&dir).unwrap();

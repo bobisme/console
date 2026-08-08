@@ -8,6 +8,7 @@ use mlua::{Lua, Result as LuaResult, Table, Value, Variadic};
 use crate::draw_trace::{Bounds, DrawDetails, DrawSpec, ScreenBounds, clamp_i32};
 use crate::gfx::{self, MAP_H, MAP_W, SPRITES_PER_ROW, TILE_ID_MAX, TileId, col, fl};
 use crate::gfx_meta::{AnimDef, GfxMeta, SpriteDef};
+use crate::platform::MAX_SCORE;
 use crate::state::State;
 
 /// Number of buttons in the input mask.
@@ -82,6 +83,28 @@ fn num(v: f64) -> Value {
     } else {
         Value::Number(v)
     }
+}
+
+fn platform_score(value: Value, name: &str) -> LuaResult<u64> {
+    let valid = match value {
+        Value::Integer(value) => u64::try_from(value).ok(),
+        Value::Number(value)
+            if value.is_finite()
+                && value.fract() == 0.0
+                && value >= 0.0
+                && value <= MAX_SCORE as f64 =>
+        {
+            Some(value as u64)
+        }
+        _ => None,
+    }
+    .filter(|value| *value <= MAX_SCORE);
+
+    valid.ok_or_else(|| {
+        mlua::Error::RuntimeError(format!(
+            "{name}: score must be an integer in 0..={MAX_SCORE}"
+        ))
+    })
 }
 
 /// Flat index of map cell `(cx, cy)`, or `None` when it is off the map.
@@ -1010,6 +1033,34 @@ pub fn register(lua: &Lua, state: &Shared) -> LuaResult<()> {
     )?;
 
     // ---- host --------------------------------------------------------------
+    let st = state.clone();
+    g.set(
+        "score_update",
+        lua.create_function(move |_, value: Value| {
+            let score = platform_score(value, "score_update")?;
+            st.borrow_mut().platform.update_score(score);
+            Ok(())
+        })?,
+    )?;
+
+    let st = state.clone();
+    g.set(
+        "score_submit",
+        lua.create_function(move |_, ()| {
+            st.borrow_mut().platform.submit_score();
+            Ok(())
+        })?,
+    )?;
+
+    let st = state.clone();
+    g.set(
+        "leaderboard_show",
+        lua.create_function(move |_, ()| {
+            st.borrow_mut().platform.show_leaderboard();
+            Ok(())
+        })?,
+    )?;
+
     let st = state.clone();
     g.set(
         "printh",

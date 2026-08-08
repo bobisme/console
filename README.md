@@ -220,6 +220,11 @@ before cart `_init`; native runs remain ephemeral unless `--save-file` is
 explicit. See [SPEC.md](SPEC.md) for value, migration, transaction, and host
 adapter details.
 
+The write-only `score_update`, `score_submit`, and `leaderboard_show` Lua APIs
+use the TipTap score service when available. Ordinary web bundles persist a
+host-only maximum by the same stable `save_id`, in a record separate from cart
+save data; gameplay cannot read either host leaderboard state or that maximum.
+
 Open `dist/demo.html` in any browser (double-click it — `file://` works, no
 server needed). The default engine and HTML shell are embedded in `console`,
 so packing works from any directory. Rebuilding the embedded wasm engine from

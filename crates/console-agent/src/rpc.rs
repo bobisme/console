@@ -169,6 +169,7 @@ fn dispatch(session: &mut Session, method: &str, params: &Value) -> Result<Value
         "wav" => m_wav(session, params),
         "audio_state" => m_audio_state(session),
         "audio_events" => m_audio_events(session, params),
+        "platform_events" => m_platform_events(session, params),
         "audio_stats" => m_audio_stats(session, params),
         "text_events" => m_text_events(session, params),
         "draw_trace" => m_draw_trace(session, params),
@@ -562,6 +563,7 @@ fn m_info(session: &Session) -> Result<Value, RpcErr> {
         "meta": info.meta,
         "input_log_len": info.input_log_len,
         "saved_states": info.saved_states,
+        "max_submitted_score": info.max_submitted_score,
     }))
 }
 
@@ -595,6 +597,16 @@ fn m_audio_events(session: &Session, params: &Value) -> Result<Value, RpcErr> {
     let events = session.audio_events(from_frame)?;
     serde_json::to_value(events)
         .map_err(|e| RpcErr::new(-32000, format!("failed to serialize audio events: {e}")))
+}
+
+fn m_platform_events(session: &Session, params: &Value) -> Result<Value, RpcErr> {
+    let from_frame = u64_param(params, "from_frame");
+    serde_json::to_value(session.platform_events(from_frame)?).map_err(|error| {
+        RpcErr::new(
+            -32000,
+            format!("failed to serialize platform events: {error}"),
+        )
+    })
 }
 
 fn m_audio_stats(session: &Session, params: &Value) -> Result<Value, RpcErr> {

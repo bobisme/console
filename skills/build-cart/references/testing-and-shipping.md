@@ -207,6 +207,7 @@ Promote valuable smoke scripts into strict versioned JSON:
       "text_events":"jump-text.json",
       "draw_trace":"jump-draws.json",
       "audio_events":"jump-events.json",
+      "platform_events":"jump-platform-events.json",
       "audio_stats":"jump-stats.json",
       "save":"jump-save.json"
     }
@@ -360,6 +361,8 @@ dry-run alone cannot catch runtime integration errors.
 Running checks:
 
 - `audio_events`: correct trigger frame, pattern, row, and SFX stealing;
+- `platform_events`: live score cadence, one completed submission, and a
+  separate leaderboard request at the intended successful boundary;
 - `text_events`: intended alignment, camera-adjusted bounds, and no clipping;
 - `audio_state`: channel ownership/current note;
 - `audio_stats`: RMS/peak/clipped windows;

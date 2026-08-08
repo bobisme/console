@@ -266,6 +266,12 @@ var diagnostic = {
   wasmMemoryBytes: null,
   peakWasmMemoryBytes: null,
   wasmMemoryGrowthEvents: 0,
+  platformBackend: null,
+  platformEvents: 0,
+  platformDropped: 0,
+  platformUnavailableCalls: 0,
+  platformFailures: 0,
+  maxSubmittedScore: null,
   readStatus: null,
   readScreen: null,
   readAudio: null,
@@ -304,6 +310,12 @@ window.__console = Object.freeze({
       wasmMemoryBytes: diagnostic.wasmMemoryBytes,
       peakWasmMemoryBytes: diagnostic.peakWasmMemoryBytes,
       wasmMemoryGrowthEvents: diagnostic.wasmMemoryGrowthEvents,
+      platformBackend: diagnostic.platformBackend,
+      platformEvents: diagnostic.platformEvents,
+      platformDropped: diagnostic.platformDropped,
+      platformUnavailableCalls: diagnostic.platformUnavailableCalls,
+      platformFailures: diagnostic.platformFailures,
+      maxSubmittedScore: diagnostic.maxSubmittedScore,
       inputMask: live.inputMask,
       paused: live.paused,
       dead: live.dead
@@ -703,6 +715,21 @@ window.__console = Object.freeze({
   var con_color_count = Module.cwrap("con_color_count", "number", []);
   var con_palette = Module.cwrap("con_palette", "number", []);
   var con_error = Module.cwrap("con_error", "number", []);
+  var platformSymbols = [
+    "_con_platform_events",
+    "_con_platform_event_kind",
+    "_con_platform_event_score",
+    "_con_platform_events_dropped"
+  ];
+  for (var platformSymbol of platformSymbols) {
+    if (typeof Module[platformSymbol] !== "function") {
+      return fatal("Engine platform-event API missing; rebuild web/engine.js");
+    }
+  }
+  var con_platform_events = Module.cwrap("con_platform_events", "number", []);
+  var con_platform_event_kind = Module.cwrap("con_platform_event_kind", "number", ["number"]);
+  var con_platform_event_score = Module.cwrap("con_platform_event_score", "number", ["number"]);
+  var con_platform_events_dropped = Module.cwrap("con_platform_events_dropped", "number", []);
   // Audio is optional: engines built before the synth existed lack con_audio.
   var con_audio = typeof Module["_con_audio"] === "function"
     ? Module.cwrap("con_audio", "number", [])
@@ -711,6 +738,77 @@ window.__console = Object.freeze({
   var con_dpal = typeof Module["_con_dpal"] === "function"
     ? Module.cwrap("con_dpal", "number", [])
     : null;
+
+  // Select one score host for the page lifetime. TipTap is optional and is
+  // never imported by the cart. Missing methods, synchronous throws and
+  // rejected promises are diagnostics only; none can affect con_step().
+  var tipTapHost = typeof window !== "undefined" && window.TipTap
+    ? window.TipTap
+    : null;
+  var localMaxScore = null;
+  var localScoreKey = null;
+  diagnostic.platformBackend = tipTapHost ? "tiptap" : (browserStorage ? "local" : "ephemeral");
+
+  // Ordinary browser best scores use the cart's explicit stable save
+  // identity, but remain a separate host record from cart-authored save data.
+  // TipTap-target pages have no browserStorage primitive and therefore can
+  // never enter this path.
+  function configureLocalScore(config) {
+    if (tipTapHost || !browserStorage || !config ||
+        typeof config.id !== "string" ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(config.id)) return;
+    localScoreKey = "console.score." + config.id;
+    var stored = browserStorage.get(localScoreKey);
+    if (stored === null) return;
+    if (!/^(0|[1-9][0-9]*)$/.test(stored)) { platformFailure(); return; }
+    var value = Number(stored);
+    if (!Number.isSafeInteger(value)) { platformFailure(); return; }
+    localMaxScore = value;
+    diagnostic.maxSubmittedScore = value;
+  }
+
+  function platformFailure() {
+    diagnostic.platformFailures++;
+  }
+
+  function callTipTap(method, args) {
+    var target;
+    try { target = tipTapHost && tipTapHost[method]; }
+    catch (e) { platformFailure(); return; }
+    if (typeof target !== "function") {
+      diagnostic.platformUnavailableCalls++;
+      return;
+    }
+    try {
+      var result = target.apply(tipTapHost, args);
+      if (result && typeof result.then === "function") {
+        Promise.resolve(result).catch(platformFailure);
+      }
+    } catch (e) {
+      platformFailure();
+    }
+  }
+
+  function dispatchPlatformEvents() {
+    var count = con_platform_events();
+    diagnostic.platformDropped += con_platform_events_dropped();
+    for (var i = 0; i < count; i++) {
+      var kind = con_platform_event_kind(i);
+      var score = con_platform_event_score(i);
+      diagnostic.platformEvents++;
+      if (tipTapHost) {
+        if (kind === 1) callTipTap("updateScore", [score]);
+        else if (kind === 2) callTipTap("submitScore", [score]);
+        else if (kind === 3) callTipTap("showLeaderboard", []);
+      } else if (kind === 2) {
+        localMaxScore = localMaxScore === null ? score : Math.max(localMaxScore, score);
+        diagnostic.maxSubmittedScore = localMaxScore;
+        if (localScoreKey && !browserStorage.set(localScoreKey, String(localMaxScore))) {
+          platformFailure();
+        }
+      }
+    }
+  }
 
   function currentError() {
     var p = con_error();
@@ -723,6 +821,7 @@ window.__console = Object.freeze({
   if (cartText[0] === "\n") cartText = cartText.slice(1);
   var cartBytes = new TextEncoder().encode(cartText);
   var saveConfig = cartSaveConfig(cartText);
+  configureLocalScore(saveConfig);
   var saveBackend = persistenceAdapter(saveConfig);
   diagnostic.persistence.backend = saveBackend.kind;
   // TipTap loadState is asynchronous. Await it before entering the core so
@@ -789,6 +888,7 @@ window.__console = Object.freeze({
     try {
       var restartSave = currentSaveDocument();
       if (initConsole(restartSave)) {
+        dispatchPlatformEvents();
         dead = false;
         diagnostic.phase = "ready";
         diagnostic.error = null;
@@ -815,6 +915,7 @@ window.__console = Object.freeze({
     return fatal("Cart failed to load:\n" + (currentError() || "unknown error"));
   }
   flushSave();
+  dispatchPlatformEvents();
   resetRuntimeTelemetry();
 
   var palPtr = con_palette();
@@ -1087,6 +1188,7 @@ window.__console = Object.freeze({
       var batchStarted = performance.now();
       while (acc >= STEP && steps < 4) {
         con_step(mask);
+        dispatchPlatformEvents();
         pushAudio();
         acc -= STEP;
         steps++;

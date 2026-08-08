@@ -39,7 +39,7 @@ export RUSTFLAGS="\
 -C link-arg=-sMODULARIZE=1 \
 -C link-arg=-sEXPORT_NAME=ConsoleEngine \
 -C link-arg=-sALLOW_MEMORY_GROWTH=1 \
--C link-arg=-sEXPORTED_FUNCTIONS=_main,_con_alloc,_con_free,_con_init,_con_init_save,_con_step,_con_width,_con_height,_con_fb,_con_audio,_con_color_count,_con_palette,_con_dpal,_con_error,_con_save_revision,_con_save_len,_con_save,_con_save_error \
+-C link-arg=-sEXPORTED_FUNCTIONS=_main,_con_alloc,_con_free,_con_init,_con_init_save,_con_step,_con_width,_con_height,_con_fb,_con_audio,_con_color_count,_con_palette,_con_dpal,_con_platform_events,_con_platform_event_kind,_con_platform_event_score,_con_platform_events_dropped,_con_error,_con_save_revision,_con_save_len,_con_save,_con_save_error \
 -C link-arg=-sEXPORTED_RUNTIME_METHODS=cwrap,UTF8ToString,HEAPU8"
 
 echo "build-engine: emcc $(emcc -dumpversion), target $target"

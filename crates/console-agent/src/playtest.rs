@@ -233,6 +233,8 @@ pub enum Stage {
         #[serde(default)]
         audio_events: Option<String>,
         #[serde(default)]
+        platform_events: Option<String>,
+        #[serde(default)]
         audio_stats: Option<String>,
         #[serde(default)]
         text_events: Option<String>,
@@ -2109,6 +2111,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                 wav,
                 spectrogram,
                 audio_events,
+                platform_events,
                 audio_stats,
                 text_events,
                 draw_trace,
@@ -2128,6 +2131,7 @@ fn validate_scenario(scenario: &Scenario, artifacts: Option<&Path>) -> Result<()
                     wav.as_deref(),
                     spectrogram.as_deref(),
                     audio_events.as_deref(),
+                    platform_events.as_deref(),
                     audio_stats.as_deref(),
                     text_events.as_deref(),
                     draw_trace.as_deref(),
@@ -2990,6 +2994,7 @@ fn execute_stage(
             wav,
             spectrogram,
             audio_events,
+            platform_events,
             audio_stats,
             text_events,
             draw_trace,
@@ -3070,6 +3075,17 @@ fn execute_stage(
                 report
                     .artifacts
                     .push(write_artifact(root, name, "audio_events", &bytes)?);
+            }
+            if let Some(name) = platform_events {
+                let events = session
+                    .platform_events(*from_frame)
+                    .map_err(|error| error.to_string())?;
+                let mut bytes = serde_json::to_vec_pretty(&events)
+                    .map_err(|error| format!("serializing platform events: {error}"))?;
+                bytes.push(b'\n');
+                report
+                    .artifacts
+                    .push(write_artifact(root, name, "platform_events", &bytes)?);
             }
             if let Some(name) = audio_stats {
                 let windows = session

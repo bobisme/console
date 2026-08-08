@@ -113,12 +113,45 @@ for CLI/RPC input specs: `L R U D A B M` (e.g. `"RA"` = right + A).
 | `srand(seed)` | reseed PRNG (reset seeds it to 0 unless overridden) |
 | `t()` | seconds since cart start = frame_count / 60 (exact, from frame counter) |
 | `flr(x)`, `ceil(x)`, `abs(x)`, `min/max/mid(...)`, `sin(x)`, `cos(x)` | conveniences; sin/cos take **turns** (PICO-8 style: `sin(0.25) = -1`... actually use standard sign: `sin(t)` = `math.sin(t*2π)`, PICO-8 inverts — we do NOT invert) |
+| `score_update(score)` | publish the current live score as an integer in `0..=9007199254740991`; identical unfinished-result updates are coalesced |
+| `score_submit()` | submit the most recently published score as one completed result (zero before the first update); duplicate submits are coalesced |
+| `leaderboard_show()` | request host leaderboard UI; every call is a distinct request |
 | `printh(s)` | log line to host (harness `logs`, browser console). Never draws. |
 | `ecs.world(name, [options])` | create one named deterministic entity world; `options.capacity` defaults to 1024 and is capped at 4096 |
 | `ecs.inspect(name, [options])` | return the same bounded, read-only projection used by the host `ecs_query` RPC; intended for diagnostics rather than game logic |
 | `devhook.register(name, spec)` | register a deterministic host-invokable development hook during cart top-level or `_init`; see below |
 
 All draw coordinates are floats, truncated toward negative infinity (`flr`) before use.
+
+### Score and leaderboard output
+
+The score API is a deterministic, write-only cart-to-host event stream. It is
+not a TipTap API and exposes no personal-best, SDK availability, request
+result, promise, or other asynchronous host state to gameplay. The upper bound
+is JavaScript's exact-integer ceiling; a selected adapter or game service may
+enforce a narrower configured maximum outside the core.
+
+`score_submit()` commits the current score once. Repeating it without an
+intervening `score_update` emits nothing. Any update after a submit begins a
+new result, even if its value equals the submitted value, so an in-process
+retry can call `score_update(0)` and submit normally. Repeating the same update
+before submission is coalesced. Every `leaderboard_show()` remains an explicit
+UI request and is not coalesced.
+
+Events commit only when their containing top-level/init, frame, eval, or
+development-hook execution boundary succeeds. A Lua error discards events and
+score-state changes from that failed boundary. Core queues are bounded to 256
+events between host drains and report drops; agent sessions retain the newest
+65,536. Native sessions retain the maximum submitted score as host-owned state
+across reset and replay, but clear it when another cart is loaded. It is
+separate from cart save data and cannot be read from Lua.
+
+The packed web host maps events to TipTap `updateScore`, `submitScore`, and
+`showLeaderboard` when the SDK is present. Ordinary web bundles retain the
+maximum submitted score under `console.score.<save_id>` when the cart declares
+the stable persistence identity; this host record is deliberately separate
+from the `console.save.<save_id>` cart envelope. Without a stable ID it remains
+session-only. TipTap-target bundles contain no browser-storage adapter.
 
 ### Development hooks
 
@@ -871,6 +904,10 @@ platform and target. No wall clock, no OS entropy, no float
 non-determinism (avoid trig on the Rust side of the render path; Lua floats are
 IEEE 754 doubles everywhere and are fine).
 
+The same run also emits the same ordered score/leaderboard event stream.
+Whether a host SDK exists or accepts an event is outside simulation: missing,
+throwing, or asynchronously rejecting adapters never alter or halt cart code.
+
 Save states retain the seed and ordered step/development-hook replay log;
 loading rebuilds the cart and registrations, then replays that stream. Replays
 double as regression tests:
@@ -946,13 +983,17 @@ one response per line on stdout. Methods:
 - `text_events {from_frame?}` — every `print` call with frame, text, alignment,
   world/screen anchor, screen-space logical bounds, color, visibility, and
   clipping state
+- `platform_events {from_frame?}` — bounded score updates, submissions and
+  leaderboard requests with completed frame/order, drop count, capacity, and
+  the native host's maximum submitted score
 - `draw_trace {enabled,clear?}` — enable/disable bounded draw-call recording;
   changing the mode or passing `clear:true` clears the retained trace
 - `draw_events {from_frame?,tag?,clear?}` — bounded draw calls with frame/order,
   operation, semantic tag, world/screen/visible bounds, camera, clip, palette,
   fill, sprite/animation identity, and dropped-event count
 - `save_state {name}` / `load_state {name}` — replay ordered inputs and hook calls
-- `info {}` — frame count, cart meta, seed, input log length
+- `info {}` — frame count, cart meta, seed, input log length, and the
+  host-only maximum submitted score (never exposed to Lua)
 
 Plus the audio-inspection verbs (`audio_state`, `audio_events`,
 `audio_stats`, `spectrogram {path}`, `wav {path}`) and the read-only cart
@@ -1028,8 +1069,9 @@ are:
   stage, consolidate prior named still/motion evidence and optional semantic
   layers, map context, and reference art into a diagnostic board/report;
 - `{"op":"capture",...}` — write one or more `screenshot`, `screen_text`,
-  `wav`, `spectrogram`, `audio_events`, `audio_stats`, `text_events`, or
-  `draw_trace` artifacts, an optional `layers` mapping, plus an optional nested
+  `wav`, `spectrogram`, `audio_events`, `audio_stats`, `text_events`,
+  `platform_events`, or `draw_trace` artifacts, an optional `layers` mapping,
+  plus an optional nested
   `map` capture; `"save":"path.json"` writes the canonical save envelope.
 
 Every stage may have a unique `name`. A scenario declares `version: 1`, an
@@ -1223,7 +1265,12 @@ changed or the console is reset.
   backing, and CSS dimensions, color count, FNV-1a framebuffer hash, distinct
   and invalid index counts, plus a copied display-palette array.
   `audioState()` reports mode/errors/frames pushed, last/ever-nonzero audio,
-  context state, sample rate, and volume. Returned objects/arrays are frozen.
+  context state, sample rate, and volume. `status()` also reports the selected
+  score backend, event/drop/failure counts, and the ordinary host's submitted
+  maximum. TipTap hosts feature-detect and best-effort call
+  `TipTap.updateScore(score)`, `TipTap.submitScore(score)`, and
+  `TipTap.showLeaderboard()`; missing methods, throws, and rejected promises
+  are diagnostic-only. Returned objects/arrays are frozen.
   The handle intentionally exposes no engine module, heap, reset, step, eval,
   or other mutation surface.
   Exceptions from post-boot animation-frame and reset callbacks are contained:
@@ -1251,7 +1298,10 @@ changed or the console is reset.
   `con_palette() -> *const u8` (`con_color_count()`×3 RGB),
   `con_dpal() -> *const u8` (`con_color_count()` bytes: the display palette, index → index;
   identity unless the cart called `pal(c0, c1, 1)` — the shell composes
-  `palette[dpal[idx]]`), `con_error() -> *const u8` (NUL-terminated
+  `palette[dpal[idx]]`), `con_platform_events() -> usize` (drain count),
+  `con_platform_event_kind(i) -> u32` (1 update, 2 submit, 3 leaderboard),
+  `con_platform_event_score(i) -> f64`,
+  `con_platform_events_dropped() -> u32`, `con_error() -> *const u8` (NUL-terminated
   UTF-8 or NULL), `con_alloc(len) -> *mut u8` / `con_free(ptr, len)` for the cart copy.
 
 ## Local browser server (`console serve`)

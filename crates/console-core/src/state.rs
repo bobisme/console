@@ -12,6 +12,7 @@ use crate::gfx::{
     TextDraw, TileMap,
 };
 use crate::gfx_meta::GfxMeta;
+use crate::platform::PlatformState;
 use crate::rng::Pcg32;
 use crate::save::SaveState;
 
@@ -61,6 +62,9 @@ pub struct State {
     pub save: SaveState,
     /// `printh` output, drained by the host.
     pub logs: Vec<String>,
+    /// Ordered cart-to-host score and leaderboard requests. The host drains
+    /// this bounded queue; host outcomes never enter core state.
+    pub platform: PlatformState,
     /// Calls to `print` since the current frame began. Core clears this at the
     /// next step so web hosts stay bounded; agent hosts drain it into a log.
     pub text_draws: Vec<TextDraw>,
@@ -99,6 +103,7 @@ impl State {
             audio: Audio::new(bank),
             save,
             logs: Vec::new(),
+            platform: PlatformState::default(),
             text_draws: Vec::new(),
             draw_trace_enabled: false,
             draw_tag: None,

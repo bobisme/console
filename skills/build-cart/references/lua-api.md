@@ -17,6 +17,7 @@ sandbox. Function arguments in square brackets are optional.
 - [Input](#input)
 - [Time, random, and math](#time-random-and-math)
 - [Audio](#audio)
+- [Score and leaderboard output](#score-and-leaderboard-output)
 - [Logging](#logging)
 - [Sandbox and determinism](#sandbox-and-determinism)
 - [Practical patterns](#practical-patterns)
@@ -452,6 +453,33 @@ toggles, and menu selection.
 
 Audio calls from `_update` or `_draw` affect the same frame's 735 samples.
 Runtime IDs/ranges are checked; invalid values halt the cart.
+
+## Score and leaderboard output
+
+Use the host-neutral write-only surface, never a vendor SDK from cart Lua:
+
+```lua
+score_update(score) -- live score, exact integer 0..9007199254740991
+score_submit()      -- complete the current result once
+leaderboard_show()  -- separate explicit UI request
+```
+
+Repeated `score_update` calls with the same value are coalesced until submit,
+and repeated `score_submit()` calls emit one result. An update after submit
+starts a new result even at the same value, so retries do not require a runtime
+reload. `score_submit()` before any update submits zero. `leaderboard_show()`
+requests are never coalesced.
+
+There is intentionally no best-score readback. Platform availability, narrower
+configured score caps, and SDK success/failure are host concerns and never
+change simulation. Events from a frame, eval, or development hook that raises
+a Lua error are discarded with that failed execution boundary. Inspect the
+ordered stream through RPC/playtest `platform_events`; native diagnostics also
+report a host-only maximum submitted score separate from cart saves.
+The packed web adapter forwards to TipTap when present. Otherwise it retains
+the maximum under `console.score.<save_id>` when the cart declares a stable
+save identity; carts without one get only a session-local diagnostic maximum.
+This record is not part of `save_load()` data and is never visible to Lua.
 
 ## Logging
 

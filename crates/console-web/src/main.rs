@@ -32,6 +32,9 @@
 //! * `con_dpal()` points into a thread-local array that is never reallocated,
 //!   so the pointer stays valid for the life of the module; its *contents* are
 //!   refreshed on each `con_dpal()` call.
+//! * `con_platform_events()` drains the core's bounded platform-event queue
+//!   into a thread-local snapshot. Its indexed getters remain valid until the
+//!   next drain or `con_init`.
 //! * `con_error()` points into a `CString` owned by this module. It stays valid
 //!   until the next `con_init` / `con_step`.
 //! * `con_save()` points into a module-owned canonical JSON buffer. Copy
@@ -43,7 +46,8 @@ use std::ffi::CString;
 use std::ptr;
 
 use console_core::{
-    COLOR_COUNT, Console, FB_LEN, IDENTITY_PAL, SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W,
+    COLOR_COUNT, Console, FB_LEN, IDENTITY_PAL, MAX_PLATFORM_EVENTS, PlatformEventFrame,
+    SAMPLES_PER_FRAME, SCREEN_H, SCREEN_W,
 };
 
 /// A real `static` copy of the palette: `console_core::PALETTE` is a `const`,
@@ -60,6 +64,12 @@ thread_local! {
     static AUDIO: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     /// Persistent display-palette mirror handed out by `con_dpal`.
     static DPAL: RefCell<[u8; COLOR_COUNT]> = const { RefCell::new(IDENTITY_PAL) };
+    /// Most recently drained cart-to-host platform events.
+    static PLATFORM_EVENTS: RefCell<PlatformEventFrame> = const { RefCell::new(PlatformEventFrame {
+        capacity: MAX_PLATFORM_EVENTS,
+        dropped: 0,
+        events: Vec::new(),
+    }) };
     /// Last error (init failure or runtime halt), NUL-terminated.
     static ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
     /// Current canonical persistence envelope and successful write revision.
@@ -171,6 +181,11 @@ pub unsafe extern "C" fn con_init_save(
     SAVE.with(|slot| slot.borrow_mut().clear());
     SAVE_REVISION.with(|slot| *slot.borrow_mut() = 0);
     SAVE_DIAGNOSTIC.with(|slot| *slot.borrow_mut() = None);
+    PLATFORM_EVENTS.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        slot.events.clear();
+        slot.dropped = 0;
+    });
 
     if cart_ptr.is_null() {
         if !save_ptr.is_null() {
@@ -362,6 +377,57 @@ pub extern "C" fn con_dpal() -> *const u8 {
     })
 }
 
+/// Drain pending score/leaderboard requests and return their retained count.
+/// Call the indexed getters below before the next `con_platform_events()`.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_platform_events() -> usize {
+    let frame = CONSOLE.with(|slot| {
+        slot.borrow_mut()
+            .as_mut()
+            .map(Console::take_platform_events)
+    });
+    PLATFORM_EVENTS.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        *slot = frame.unwrap_or(PlatformEventFrame {
+            capacity: MAX_PLATFORM_EVENTS,
+            dropped: 0,
+            events: Vec::new(),
+        });
+        slot.events.len()
+    })
+}
+
+/// Stable event kind at `index`: 1=score update, 2=score submit,
+/// 3=leaderboard show, or 0 for an invalid index.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_platform_event_kind(index: usize) -> u32 {
+    PLATFORM_EVENTS.with(|slot| {
+        slot.borrow()
+            .events
+            .get(index)
+            .map_or(0, console_core::PlatformEvent::abi_kind)
+    })
+}
+
+/// Exact JavaScript-number score payload at `index`, or 0 for a leaderboard
+/// event/invalid index. Inspect `con_platform_event_kind` to distinguish them.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_platform_event_score(index: usize) -> f64 {
+    PLATFORM_EVENTS.with(|slot| {
+        slot.borrow()
+            .events
+            .get(index)
+            .and_then(console_core::PlatformEvent::score)
+            .map_or(0.0, |score| score as f64)
+    })
+}
+
+/// Number of requests dropped by the bounded core queue before this drain.
+#[unsafe(no_mangle)]
+pub extern "C" fn con_platform_events_dropped() -> u32 {
+    PLATFORM_EVENTS.with(|slot| slot.borrow().dropped)
+}
+
 /// NUL-terminated UTF-8 error message, or null when there is no error.
 ///
 /// Covers both `con_init` failures and runtime halts. Valid until the next
@@ -379,4 +445,52 @@ pub extern "C" fn con_error() -> *const u8 {
 fn main() {
     // Intentionally empty: this binary exists to be built for
     // wasm32-unknown-emscripten; the real surface is the con_* C ABI.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_event_abi_drains_in_order_with_exact_scores() {
+        let cart = b"__lua__\nscore_update(9007199254740991) score_submit() leaderboard_show()\n";
+        let ptr = con_alloc(cart.len());
+        assert!(!ptr.is_null());
+        // SAFETY: `ptr` is a fresh `con_alloc(cart.len())` allocation.
+        unsafe { std::ptr::copy_nonoverlapping(cart.as_ptr(), ptr, cart.len()) };
+        // SAFETY: the pointer/length pair came from `con_alloc` and ownership
+        // is intentionally transferred to `con_init`.
+        assert_eq!(unsafe { con_init(ptr, cart.len()) }, 0);
+
+        assert_eq!(con_platform_events(), 3);
+        assert_eq!(con_platform_events_dropped(), 0);
+        assert_eq!(con_platform_event_kind(0), 1);
+        assert_eq!(con_platform_event_score(0), 9_007_199_254_740_991.0);
+        assert_eq!(con_platform_event_kind(1), 2);
+        assert_eq!(con_platform_event_score(1), 9_007_199_254_740_991.0);
+        assert_eq!(con_platform_event_kind(2), 3);
+        assert_eq!(con_platform_event_score(2), 0.0);
+        assert_eq!(con_platform_event_kind(3), 0);
+        assert_eq!(con_platform_events(), 0, "the core queue drains once");
+    }
+
+    #[test]
+    fn halted_frame_never_reaches_the_platform_event_abi() {
+        let cart =
+            b"__lua__\nfunction _update() score_update(44) score_submit() error('boom') end\n";
+        let ptr = con_alloc(cart.len());
+        assert!(!ptr.is_null());
+        // SAFETY: `ptr` is a fresh `con_alloc(cart.len())` allocation.
+        unsafe { std::ptr::copy_nonoverlapping(cart.as_ptr(), ptr, cart.len()) };
+        // SAFETY: ownership of the matching pointer/length is transferred.
+        assert_eq!(unsafe { con_init(ptr, cart.len()) }, 0);
+        assert_eq!(con_platform_events(), 0);
+        con_step(0);
+        assert!(!con_error().is_null());
+        assert_eq!(
+            con_platform_events(),
+            0,
+            "failed-frame events must roll back before any host can drain them"
+        );
+    }
 }
